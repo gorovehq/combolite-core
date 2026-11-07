@@ -17,7 +17,12 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ACCEL = os.path.join(HERE, "..", "accel", "vulkan")
+if os.path.isdir(os.path.join(HERE, "..", "..", "combolite-accelerator", "vulkan")):
+    ACCEL = os.path.abspath(os.path.join(HERE, "..", "..", "combolite-accelerator", "vulkan"))
+elif os.path.isdir(os.path.join(HERE, "..", "vulkan")):
+    ACCEL = os.path.abspath(os.path.join(HERE, "..", "vulkan"))
+else:
+    ACCEL = os.path.abspath(os.path.join(HERE, "..", "accel", "vulkan"))
 SHADERS = os.path.join(ACCEL, "shaders")
 OUT_H = os.path.join(ACCEL, "cav_spirv.h")
 OUT_C = os.path.join(ACCEL, "cav_spirv.c")
