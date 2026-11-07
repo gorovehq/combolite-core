@@ -17,18 +17,45 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-if os.path.isdir(os.path.join(HERE, "..", "..", "combolite-accelerator", "vulkan")):
-    ACCEL = os.path.abspath(os.path.join(HERE, "..", "..", "combolite-accelerator", "vulkan"))
-elif os.path.isdir(os.path.join(HERE, "..", "vulkan")):
-    ACCEL = os.path.abspath(os.path.join(HERE, "..", "vulkan"))
-else:
-    ACCEL = os.path.abspath(os.path.join(HERE, "..", "accel", "vulkan"))
+
+
+def find_accel_dir():
+    # 1. Environment variable override
+    env_dir = os.environ.get("COMBOLITE_ACCEL_DIR")
+    if env_dir and os.path.isdir(env_dir):
+        return os.path.abspath(env_dir)
+
+    # 2. CLI argument if a directory was passed
+    for arg in sys.argv[1:]:
+        if os.path.isdir(arg) and os.path.exists(os.path.join(arg, "cav_spirv.c")):
+            return os.path.abspath(arg)
+
+    # 3. Known relative layouts
+    candidates = [
+        os.path.join(HERE, "..", "..", "combolite-accelerator", "vulkan"),
+        os.path.join(HERE, "..", "combolite-accelerator", "vulkan"),
+        os.path.join(HERE, "..", "vulkan"),
+        os.path.join(HERE, "vulkan"),
+        os.path.join(HERE, "..", "accel", "vulkan"),
+    ]
+    for c in candidates:
+        if os.path.isdir(c) and os.path.exists(os.path.join(c, "cav_spirv.c")):
+            return os.path.abspath(c)
+    for c in candidates:
+        if os.path.isdir(c):
+            return os.path.abspath(c)
+    return os.path.abspath(candidates[0])
+
+
+ACCEL = find_accel_dir()
 SHADERS = os.path.join(ACCEL, "shaders")
 OUT_H = os.path.join(ACCEL, "cav_spirv.h")
 OUT_C = os.path.join(ACCEL, "cav_spirv.c")
 
 
 def sources():
+    if not os.path.isdir(SHADERS):
+        sys.exit(f"Shader directory not found: {SHADERS}")
     return sorted(f for f in os.listdir(SHADERS) if f.endswith((".comp", ".glsl")))
 
 
@@ -89,6 +116,8 @@ def generate(version):
 
 
 def recorded():
+    if not os.path.exists(OUT_C):
+        sys.exit(f"Generated source file not found: {OUT_C}")
     with open(OUT_C) as f:
         lines = f.read().splitlines()[:4]
     version = lines[2].split("glslc: ", 1)[1]
@@ -98,7 +127,7 @@ def recorded():
 
 def main():
     version = glslc_version()
-    if len(sys.argv) > 1 and sys.argv[1] == "--check":
+    if len(sys.argv) > 1 and "--check" in sys.argv:
         rec_version, rec_sha = recorded()
         if rec_sha != digest():
             sys.exit("cav_spirv.c is out of date: the shader sources changed; run tools/gen_spirv.py")
