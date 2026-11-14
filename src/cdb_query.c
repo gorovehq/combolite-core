@@ -165,7 +165,7 @@ cdb_status cdb_query_write_aggregate(cdb_query_writer *w, size_t n_groups, size_
 cdb_status cdb_query_write_aggregate_output(cdb_query_writer *w, const char *alias, size_t alias_len, uint8_t fn)
 {
     cdb_status s;
-    if (fn < CDB_AGG_COUNT || fn > CDB_AGG_MAX)
+    if (fn < CDB_AGG_COUNT || fn > CDB_AGG__HIGHEST)
         return (w->error = CDB_E_INVALID_ARG);
     if ((s = w_str(w, alias, alias_len)) != CDB_OK)
         return s;
@@ -589,7 +589,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
             if (s != CDB_OK)
                 return s;
             s = r_byte(p, end, &fn);
-            if (s != CDB_OK || fn < CDB_AGG_COUNT || fn > CDB_AGG_MAX)
+            if (s != CDB_OK || fn < CDB_AGG_COUNT || fn > CDB_AGG__HIGHEST)
                 return CDB_E_INVALID_ARG;
             s = cdb_query_skip_expr(p, end);
             if (s != CDB_OK)
@@ -1000,7 +1000,7 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
             if (s != CDB_OK)
                 return s;
             s = r_byte(p, end, &fn);
-            if (s != CDB_OK || fn < CDB_AGG_COUNT || fn > CDB_AGG_MAX)
+            if (s != CDB_OK || fn < CDB_AGG_COUNT || fn > CDB_AGG__HIGHEST)
                 return CDB_E_INVALID_ARG;
             s = cdb_query_skip_expr(p, end);
             if (s != CDB_OK)

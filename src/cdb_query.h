@@ -119,11 +119,14 @@
 #define CDB_AGG_SUM 0x02u
 #define CDB_AGG_AVG 0x03u
 #define CDB_AGG_MIN 0x04u
-#define CDB_AGG_MAX 0x05u
+#define CDB_AGG_MAX 0x05u    /* the MAX aggregate (largest value), not a range bound */
 #define CDB_AGG_FIRST 0x06u
 #define CDB_AGG_LAST 0x07u
-#define CDB_AGG_STDDEV 0x08u
-#define CDB_AGG_VARIANCE 0x09u
+#define CDB_AGG_STDDEV 0x08u    /* sample standard deviation (n-1); NULL when count < 2 */
+#define CDB_AGG_VARIANCE 0x09u  /* sample variance (n-1); NULL when count < 2 */
+/* Inclusive range bound for a valid aggregate opcode. Use this for range
+ * checks, NOT CDB_AGG_MAX (which is the MAX aggregate's opcode, 0x05). */
+#define CDB_AGG__HIGHEST CDB_AGG_VARIANCE
 
 /* Math, Geometry, DSP and Linear Algebra function IDs (CDB_QUERY_EXPR_CALL). */
 /* Trigonometry & Hyperbolics */

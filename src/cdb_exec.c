@@ -1169,9 +1169,12 @@ typedef struct cdb_exec_agg_desc {
 typedef struct cdb_exec_agg_group {
     cdb_value group_vals[CDB_EXEC_MAX_FIELDS];
     double sum[CDB_EXEC_MAX_AGGS];
+    double sumsq[CDB_EXEC_MAX_AGGS];   /* sum of squares, for STDDEV/VARIANCE */
     uint64_t count[CDB_EXEC_MAX_AGGS];
     cdb_value min_val[CDB_EXEC_MAX_AGGS];
     cdb_value max_val[CDB_EXEC_MAX_AGGS];
+    cdb_value first_val[CDB_EXEC_MAX_AGGS]; /* first non-null in scan order, for FIRST */
+    cdb_value last_val[CDB_EXEC_MAX_AGGS];  /* last non-null in scan order, for LAST */
     int has_val[CDB_EXEC_MAX_AGGS];
 } cdb_exec_agg_group;
 
@@ -1342,6 +1345,18 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
 
                 grp->count[i]++;
                 grp->sum[i] += dval;
+                grp->sumsq[i] += dval * dval;   /* for STDDEV / VARIANCE */
+
+                /* FIRST / LAST keep the non-null value itself (scan order), so
+                 * pin a copy: FIRST on the first non-null row, LAST every row. */
+                {
+                    cdb_value lv = aval;
+                    if ((st = pin_value(cur, &a->pool, &lv)) != CDB_OK)
+                        return st;
+                    if (!grp->has_val[i])
+                        grp->first_val[i] = lv;
+                    grp->last_val[i] = lv;
+                }
 
                 /* MIN and MAX keep a value across rows, so it is pinned;
                  * only when it changes, which keeps the pool small */
@@ -1416,6 +1431,33 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
             case CDB_AGG_MAX:
                 res = grp->max_val[i];
                 break;
+            case CDB_AGG_FIRST:
+                if (grp->has_val[i])
+                    res = grp->first_val[i];
+                else
+                    cdb_eval_make_null(&res);
+                break;
+            case CDB_AGG_LAST:
+                if (grp->has_val[i])
+                    res = grp->last_val[i];
+                else
+                    cdb_eval_make_null(&res);
+                break;
+            case CDB_AGG_VARIANCE:
+            case CDB_AGG_STDDEV: {
+                /* Sample (n-1): NULL when fewer than two values. */
+                uint64_t n = grp->count[i];
+                if (n < 2) {
+                    cdb_eval_make_null(&res);
+                } else {
+                    double mean = grp->sum[i] / (double)n;
+                    double var = (grp->sumsq[i] - (double)n * mean * mean) / (double)(n - 1);
+                    if (var < 0.0)
+                        var = 0.0; /* guard tiny negative from rounding */
+                    cdb_eval_make_f64(&res, a->aggs[i].fn == CDB_AGG_STDDEV ? cdb_math_sqrt(var) : var);
+                }
+                break;
+            }
             default:
                 cdb_eval_make_null(&res);
                 break;
