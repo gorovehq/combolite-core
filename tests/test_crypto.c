@@ -232,6 +232,55 @@ static void test_key_wrapping(void)
     TEST_ASSERT_EQUAL_INT(CDB_E_CORRUPT, cdb_crypto_unwrap_key(master, wrapped, recovered));
 }
 
+static void test_key_wrapping_nonce_unique(void)
+{
+    /* Regression (CWE-323): one master key wrapping two different enclave keys
+     * must NOT reuse the AES-256-GCM keystream. Under a fixed nonce the two
+     * ciphertexts satisfy ct_a ^ ct_b == key_a ^ key_b (the CTR keystream
+     * cancels); a per-wrap random nonce breaks that relation. */
+    uint8_t master[CDB_CRYPTO_KEY_SIZE];
+    uint8_t key_a[CDB_CRYPTO_KEY_SIZE];
+    uint8_t key_b[CDB_CRYPTO_KEY_SIZE];
+    uint8_t wa[CDB_WRAPPED_KEY_SIZE];
+    uint8_t wb[CDB_WRAPPED_KEY_SIZE];
+    uint8_t wa2[CDB_WRAPPED_KEY_SIZE];
+    uint8_t rec[CDB_CRYPTO_KEY_SIZE];
+    const uint8_t *ct_a;
+    const uint8_t *ct_b;
+    size_t ct_off = (size_t)CDB_AEAD_NONCE_SIZE + (size_t)CDB_AEAD_TAG_SIZE;
+    int keystream_reused = 1;
+    size_t i;
+
+    memset(master, 0x11, sizeof master);
+    memset(key_a, 0xAA, sizeof key_a);
+    memset(key_b, 0x55, sizeof key_b);
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crypto_wrap_key(master, key_a, wa));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crypto_wrap_key(master, key_b, wb));
+
+    ct_a = wa + ct_off;
+    ct_b = wb + ct_off;
+    for (i = 0; i < (size_t)CDB_CRYPTO_KEY_SIZE; i++) {
+        if ((uint8_t)(ct_a[i] ^ ct_b[i]) != (uint8_t)(key_a[i] ^ key_b[i])) {
+            keystream_reused = 0;
+            break;
+        }
+    }
+    TEST_ASSERT_FALSE_MESSAGE(keystream_reused,
+        "AES-256-GCM keystream reused across wraps (fixed-nonce regression, CWE-323)");
+
+    /* The per-wrap nonce must differ even when wrapping the same key twice. */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crypto_wrap_key(master, key_a, wa2));
+    TEST_ASSERT_TRUE_MESSAGE(memcmp(wa, wa2, (size_t)CDB_AEAD_NONCE_SIZE) != 0,
+        "per-wrap nonce is not unique");
+
+    /* Both wrapped keys still round-trip. */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crypto_unwrap_key(master, wa, rec));
+    TEST_ASSERT_EQUAL_MEMORY(key_a, rec, CDB_CRYPTO_KEY_SIZE);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crypto_unwrap_key(master, wb, rec));
+    TEST_ASSERT_EQUAL_MEMORY(key_b, rec, CDB_CRYPTO_KEY_SIZE);
+}
+
 static cdb_status custom_mock_provider(const char *uri, uint8_t key_out[CDB_CRYPTO_KEY_SIZE], void *user_data)
 {
     (void)user_data;
@@ -329,6 +378,7 @@ int main(void)
     RUN_TEST(test_subkey_derivation);
     RUN_TEST(test_subkey_known_answers);
     RUN_TEST(test_key_wrapping);
+    RUN_TEST(test_key_wrapping_nonce_unique);
     RUN_TEST(test_key_providers);
     RUN_TEST(test_identities_and_signatures);
     RUN_TEST(test_crypto_wipe);
