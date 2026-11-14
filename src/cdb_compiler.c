@@ -1447,6 +1447,10 @@ static cdb_status proc_parse_arg(proc_compiler *pc, cdb_proc_writer *pw, uint8_t
 }
 
 static cdb_status proc_parse_ref(proc_compiler *pc, cdb_proc_writer *pw, uint8_t r_store, uint8_t r_entry) {
+    /* Flux forms label the ref ("from: [10, 100]"); the caller consumed the
+     * "from"/"to" keyword, so an optional leading ':' separates the label from
+     * the value. SQL forms ("FROM 10:100") have no leading ':', so this no-ops. */
+    proc_match(pc, CDB_TOK_COLON, NULL);
     int has_bracket = proc_match(pc, CDB_TOK_LBRACKET, NULL);
     cdb_status s = proc_parse_arg(pc, pw, r_store);
     if (s != CDB_OK) return s;
@@ -1961,12 +1965,25 @@ static cdb_status proc_compile_statement(proc_compiler *pc, cdb_proc_writer *pw)
 
             uint64_t card = 3;
             if (proc_match_str(pc, "CARDINALITY")) {
+                /* Written as <left>:<right> (three tokens: 1:1, 1:N, N:M). An
+                 * all-in-one token ("1:1") is also tolerated for back-compat. */
                 cdb_token ctok;
                 if (cdb_lexer_peek(&pc->lex, &ctok) == CDB_OK) {
-                    if (cdb_token_equals_ci(&ctok, "1:1")) card = 1;
-                    else if (cdb_token_equals_ci(&ctok, "1:N")) card = 2;
-                    else if (cdb_token_equals_ci(&ctok, "N:M")) card = 3;
-                    cdb_lexer_next(&pc->lex, &ctok);
+                    if (cdb_token_equals_ci(&ctok, "1:1")) { card = 1; cdb_lexer_next(&pc->lex, &ctok); }
+                    else if (cdb_token_equals_ci(&ctok, "1:N")) { card = 2; cdb_lexer_next(&pc->lex, &ctok); }
+                    else if (cdb_token_equals_ci(&ctok, "N:M")) { card = 3; cdb_lexer_next(&pc->lex, &ctok); }
+                    else {
+                        cdb_token left, right;
+                        cdb_lexer_next(&pc->lex, &left);           /* left side */
+                        proc_match(pc, CDB_TOK_COLON, NULL);        /* ':' */
+                        int have_right = (cdb_lexer_peek(&pc->lex, &right) == CDB_OK);
+                        if (have_right) cdb_lexer_next(&pc->lex, &right);
+                        int left_one = (left.kind == CDB_TOK_INT && left.num_val.i64 == 1);
+                        int right_one = (have_right && right.kind == CDB_TOK_INT && right.num_val.i64 == 1);
+                        if (left_one && right_one) card = 1;        /* 1:1 */
+                        else if (left_one) card = 2;                /* 1:N */
+                        else card = 3;                              /* N:M */
+                    }
                 }
             }
             uint8_t c_enc[16]; size_t cl = encode_int_val((int64_t)card, c_enc, sizeof(c_enc));
@@ -2258,7 +2275,6 @@ static cdb_status proc_compile_statement(proc_compiler *pc, cdb_proc_writer *pw)
         cdb_lexer_next(&pc->lex, &tok);
         proc_match_str(pc, "TIMESERIES");
         proc_match_str(pc, "TS");
-        proc_match_str(pc, "SOURCE");
         uint8_t r_s_store = proc_alloc_temp_reg(pc);
         uint8_t r_s_series = proc_alloc_temp_reg(pc);
         uint8_t r_d_store = proc_alloc_temp_reg(pc);
@@ -2268,19 +2284,26 @@ static cdb_status proc_compile_statement(proc_compiler *pc, cdb_proc_writer *pw)
         uint8_t r_to = proc_alloc_temp_reg(pc);
         uint8_t m_args[7];
 
+        /* SOURCE is matched after the optional '(' so the flux form
+         * "downsample(source: [..], ...)" sees "source" here, not before the paren. */
         int in_paren = proc_match(pc, CDB_TOK_LPAREN, NULL);
+        proc_match_str(pc, "SOURCE");
+        proc_match(pc, CDB_TOK_COLON, NULL); /* flux "source:" label separator */
         proc_parse_ref(pc, pw, r_s_store, r_s_series);
         if (in_paren) proc_match(pc, CDB_TOK_COMMA, NULL);
         proc_match_str(pc, "INTO");
         proc_parse_ref(pc, pw, r_d_store, r_d_series);
         if (in_paren) proc_match(pc, CDB_TOK_COMMA, NULL);
         proc_match_str(pc, "STEP");
+        proc_match(pc, CDB_TOK_COLON, NULL); /* flux "step: N" label separator */
         proc_parse_arg(pc, pw, r_step);
         if (in_paren) proc_match(pc, CDB_TOK_COMMA, NULL);
         proc_match_str(pc, "FROM");
+        proc_match(pc, CDB_TOK_COLON, NULL); /* flux "from: N" label separator */
         proc_parse_arg(pc, pw, r_from);
         if (in_paren) proc_match(pc, CDB_TOK_COMMA, NULL);
         proc_match_str(pc, "TO");
+        proc_match(pc, CDB_TOK_COLON, NULL); /* flux "to: N" label separator */
         proc_parse_arg(pc, pw, r_to);
         if (in_paren) proc_expect(pc, CDB_TOK_RPAREN, "Expected ')'", NULL);
 
@@ -2660,9 +2683,19 @@ static cdb_status proc_compile_statement(proc_compiler *pc, cdb_proc_writer *pw)
         }
     }
 
-    /* Fallback: consume token */
-    cdb_lexer_next(&pc->lex, &tok);
-    return CDB_OK;
+    /* No statement matched: reject the unrecognized/malformed token (fail closed)
+     * instead of silently skipping it and reporting success (CWE-20). */
+    {
+        cdb_token bad;
+        int have = (cdb_lexer_peek(&pc->lex, &bad) == CDB_OK);
+        if (pc->err) {
+            pc->err->line = have ? bad.line : pc->lex.line;
+            pc->err->col = have ? bad.col : pc->lex.col;
+            snprintf(pc->err->msg, sizeof(pc->err->msg), "%s",
+                     "Unrecognized or malformed statement");
+        }
+    }
+    return CDB_E_INVALID_ARG;
 }
 
 cdb_status cdb_compile_proc(const char *src, size_t len,
