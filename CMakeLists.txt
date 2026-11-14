@@ -21,6 +21,11 @@ else()
 endif()
 option(CDB_SANITIZE "Build with AddressSanitizer and UBSan" ${CDB_SANITIZE_DEFAULT})
 
+# Clang source-based coverage (llvm-cov): instruments the library and, being PUBLIC, the tests
+# that link it, so `ctest` runs emit .profraw for a line+branch+region report. Off by default;
+# use a dedicated build dir (e.g. -B build-cov -DCDB_COVERAGE=ON -DCDB_SANITIZE=OFF).
+option(CDB_COVERAGE "Build with clang source-based coverage instrumentation" OFF)
+
 # Build profile (spec 17): host sizes a process's limits for a host and
 # grows working memory through the environment's allocator; mcu keeps
 # everything in caller memory. Both read and write the same files.
@@ -152,6 +157,10 @@ endif()
 if(CDB_SANITIZE)
   target_compile_options(combolite PUBLIC ${CDB_SANITIZER_FLAGS})
   target_link_options(combolite PUBLIC ${CDB_SANITIZER_FLAGS})
+endif()
+if(CDB_COVERAGE)
+  target_compile_options(combolite PUBLIC -fprofile-instr-generate -fcoverage-mapping)
+  target_link_options(combolite PUBLIC -fprofile-instr-generate -fcoverage-mapping)
 endif()
 if(CDB_PROFILE STREQUAL "mcu")
   target_compile_definitions(combolite PUBLIC CDB_PROFILE_MCU=1)
