@@ -13,6 +13,8 @@ static cdb_status compile(const char *src){
 static const char *const bad[] = {
     "FOOBAR baz;", "@#$%^&*(", "123 456;", "notakeyword \"x\";",
     "WOBBLE 5;", "ZZZ;",
+    /* F-C1c: MODEL present but missing / unknown store model must be rejected */
+    "CREATE STORE \"x\" MODEL;", "CREATE STORE \"x\" MODEL notamodel;",
 };
 static const char *const good[] = {
     "", ";",

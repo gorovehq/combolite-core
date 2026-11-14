@@ -2013,18 +2013,31 @@ static cdb_status proc_compile_statement(proc_compiler *pc, cdb_proc_writer *pw)
             uint8_t r_model = proc_alloc_temp_reg(pc);
             uint8_t m_args[2];
             proc_parse_val_to_reg(pc, pw, r_name);
-            proc_match_str(pc, "MODEL");
-
+            /* MODEL is optional (defaults to document); but when present it must
+             * be followed by a recognized model type -- reject fail-open on a
+             * missing/unknown type rather than silently defaulting (F-C1c). */
             uint64_t model = 2;
-            cdb_token mtok;
-            if (cdb_lexer_peek(&pc->lex, &mtok) == CDB_OK) {
-                if (cdb_token_equals_ci(&mtok, "relational") || cdb_token_equals_ci(&mtok, "table")) model = 1;
-                else if (cdb_token_equals_ci(&mtok, "document") || cdb_token_equals_ci(&mtok, "doc")) model = 2;
-                else if (cdb_token_equals_ci(&mtok, "vector") || cdb_token_equals_ci(&mtok, "vec")) model = 3;
-                else if (cdb_token_equals_ci(&mtok, "timeseries") || cdb_token_equals_ci(&mtok, "ts")) model = 4;
-                else if (cdb_token_equals_ci(&mtok, "link") || cdb_token_equals_ci(&mtok, "links")) model = 5;
-                else if (mtok.kind == CDB_TOK_INT) model = (uint64_t)mtok.num_val.i64;
-                cdb_lexer_next(&pc->lex, &mtok);
+            if (proc_match_str(pc, "MODEL")) {
+                cdb_token mtok; int matched = 0;
+                if (cdb_lexer_peek(&pc->lex, &mtok) == CDB_OK) {
+                    if (cdb_token_equals_ci(&mtok, "relational") || cdb_token_equals_ci(&mtok, "table")) { model = 1; matched = 1; }
+                    else if (cdb_token_equals_ci(&mtok, "document") || cdb_token_equals_ci(&mtok, "doc")) { model = 2; matched = 1; }
+                    else if (cdb_token_equals_ci(&mtok, "vector") || cdb_token_equals_ci(&mtok, "vec")) { model = 3; matched = 1; }
+                    else if (cdb_token_equals_ci(&mtok, "timeseries") || cdb_token_equals_ci(&mtok, "ts")) { model = 4; matched = 1; }
+                    else if (cdb_token_equals_ci(&mtok, "link") || cdb_token_equals_ci(&mtok, "links")) { model = 5; matched = 1; }
+                    else if (mtok.kind == CDB_TOK_INT) { model = (uint64_t)mtok.num_val.i64; matched = 1; }
+                    if (matched) cdb_lexer_next(&pc->lex, &mtok);
+                }
+                if (!matched) {
+                    cdb_token bad; int have = (cdb_lexer_peek(&pc->lex, &bad) == CDB_OK);
+                    if (pc->err) {
+                        pc->err->line = have ? bad.line : pc->lex.line;
+                        pc->err->col = have ? bad.col : pc->lex.col;
+                        snprintf(pc->err->msg, sizeof(pc->err->msg), "%s",
+                                 "Expected a store model after MODEL");
+                    }
+                    return CDB_E_INVALID_ARG;
+                }
             }
             uint8_t m_enc[16]; size_t ml = encode_int_val((int64_t)model, m_enc, sizeof(m_enc));
             cdb_proc_write_load_const(pw, r_model, m_enc, ml);
