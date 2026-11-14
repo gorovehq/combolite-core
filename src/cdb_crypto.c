@@ -284,41 +284,46 @@ cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
                                const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
                                uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE])
 {
-    uint8_t nonce[CDB_AEAD_NONCE_SIZE];
-    uint8_t tag[CDB_AEAD_TAG_SIZE];
+    /* Layout: nonce[12] || tag[16] || ciphertext[32]. */
+    uint8_t *nonce = wrapped_out;
+    uint8_t *tag = wrapped_out + CDB_AEAD_NONCE_SIZE;
+    uint8_t *ciphertext = wrapped_out + CDB_AEAD_NONCE_SIZE + CDB_AEAD_TAG_SIZE;
     cdb_status s;
 
     if (master_key == NULL || enclave_key == NULL || wrapped_out == NULL)
         return CDB_E_INVALID_ARG;
 
-    /* Wrap using AES-256-GCM with a dedicated wrap track ID. */
-    cdb_crypto_make_nonce(0x57524150u /* "WRAP" */, 1, nonce);
-    s = cdb_crypto_aead_encrypt(CDB_AEAD_AES_256_GCM, master_key, nonce,
-                                NULL, 0,
-                                enclave_key, CDB_CRYPTO_KEY_SIZE,
-                                wrapped_out + CDB_AEAD_TAG_SIZE,
-                                tag);
+    /* A fresh random nonce per wrap. AES-256-GCM must never reuse a (key, nonce)
+     * pair, and one master key wraps many enclave keys and re-wraps on rotation;
+     * a fixed nonce would be catastrophic reuse (CWE-323). The nonce is stored
+     * with the wrapped key so unwrap can reproduce it. */
+    s = cdb_crypto_random_bytes(nonce, CDB_AEAD_NONCE_SIZE);
     if (s != CDB_OK)
         return s;
 
-    memcpy(wrapped_out, tag, CDB_AEAD_TAG_SIZE);
-    return CDB_OK;
+    return cdb_crypto_aead_encrypt(CDB_AEAD_AES_256_GCM, master_key, nonce,
+                                   NULL, 0,
+                                   enclave_key, CDB_CRYPTO_KEY_SIZE,
+                                   ciphertext,
+                                   tag);
 }
 
 cdb_status cdb_crypto_unwrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
                                  const uint8_t wrapped_in[CDB_WRAPPED_KEY_SIZE],
                                  uint8_t enclave_key_out[CDB_CRYPTO_KEY_SIZE])
 {
-    uint8_t nonce[CDB_AEAD_NONCE_SIZE];
+    /* Layout: nonce[12] || tag[16] || ciphertext[32]. */
+    const uint8_t *nonce = wrapped_in;
+    const uint8_t *tag = wrapped_in + CDB_AEAD_NONCE_SIZE;
+    const uint8_t *ciphertext = wrapped_in + CDB_AEAD_NONCE_SIZE + CDB_AEAD_TAG_SIZE;
 
     if (master_key == NULL || wrapped_in == NULL || enclave_key_out == NULL)
         return CDB_E_INVALID_ARG;
 
-    cdb_crypto_make_nonce(0x57524150u /* "WRAP" */, 1, nonce);
     return cdb_crypto_aead_decrypt(CDB_AEAD_AES_256_GCM, master_key, nonce,
                                    NULL, 0,
-                                   wrapped_in + CDB_AEAD_TAG_SIZE, CDB_CRYPTO_KEY_SIZE,
-                                   wrapped_in,
+                                   ciphertext, CDB_CRYPTO_KEY_SIZE,
+                                   tag,
                                    enclave_key_out);
 }
 
