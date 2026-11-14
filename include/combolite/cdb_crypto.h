@@ -138,9 +138,11 @@ cdb_status cdb_crypto_derive_subkey(const uint8_t base_key[CDB_CRYPTO_KEY_SIZE],
                                     uint8_t subkey_out[CDB_CRYPTO_KEY_SIZE]);
 
 /* Key wrapping for envelope encryption (spec 12.2):
- * Wraps a 32-byte enclave key using the 32-byte master key into a 48-byte wrapped buffer
- * (16-byte tag + 32-byte ciphertext). */
-#define CDB_WRAPPED_KEY_SIZE (CDB_CRYPTO_KEY_SIZE + CDB_AEAD_TAG_SIZE)
+ * Wraps a 32-byte enclave key using the 32-byte master key into a 60-byte wrapped buffer
+ * (12-byte random nonce + 16-byte tag + 32-byte ciphertext). A fresh random nonce is stored
+ * per wrap because one master key wraps many enclave keys and re-wraps them on rotation;
+ * a fixed nonce would reuse the AES-256-GCM (key, nonce) pair (CWE-323). */
+#define CDB_WRAPPED_KEY_SIZE (CDB_AEAD_NONCE_SIZE + CDB_AEAD_TAG_SIZE + CDB_CRYPTO_KEY_SIZE)
 
 cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
                                const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
