@@ -96,6 +96,26 @@ static void test_proc_math_call(void)
     TEST_ASSERT_EQUAL_FLOAT(3.0f, (float)ret.as.f64);
 }
 
+/* Regression (CWE-457/908): a CALL_MATH that supplies fewer arguments than the
+ * function consumes must be rejected, not read uninitialized args[] slots.
+ * HAVERSINE consumes 4; supply only 1. */
+static void test_proc_math_call_arity_guard(void)
+{
+    uint8_t bc[128];
+    cdb_proc_writer w;
+    cdb_proc_vm vm;
+    cdb_value ret;
+    uint8_t args[1] = {0};
+
+    cdb_proc_writer_init(&w, bc, sizeof(bc), 4, 0);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_proc_write_call_math(&w, 1, CDB_FN_HAVERSINE, 1, args));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_proc_write_return(&w, 1));
+
+    cdb_proc_vm_init(&vm, NULL, CDB_ORDER_LITTLE, NULL, 0, 1000);
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED,
+                          cdb_proc_exec(&vm, bc, cdb_proc_writer_len(&w), &ret));
+}
+
 /* 4. Test Instruction Budget Exceeded */
 static void test_proc_instruction_budget(void)
 {
@@ -181,6 +201,7 @@ int main(void)
     RUN_TEST(test_proc_load_const_and_return);
     RUN_TEST(test_proc_params_and_move);
     RUN_TEST(test_proc_math_call);
+    RUN_TEST(test_proc_math_call_arity_guard);
     RUN_TEST(test_proc_instruction_budget);
     RUN_TEST(test_proc_open_cursor_and_next);
     RUN_TEST(test_proc_savepoint_needs_transaction);
