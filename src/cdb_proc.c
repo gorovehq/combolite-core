@@ -1052,7 +1052,8 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         case CDB_BC_CALL_MATH: {
             uint8_t dst, argc, a;
             uint16_t fn_id;
-            double args[8];
+            unsigned need;
+            double args[8] = {0}; /* zero-init: never read an unfilled slot (CWE-457) */
             if (p + 4 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
             dst = *p++;
             fn_id = (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
@@ -1066,6 +1067,18 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
                 if (reg >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
                 args[a] = to_double(&vm->regs[reg]);
             }
+
+            /* Reject a call that supplies fewer arguments than the function
+             * consumes: otherwise the handlers below read unfilled args[]
+             * slots. Every other opcode validates its arity the same way. */
+            switch (fn_id) {
+            case CDB_FN_HAVERSINE: case CDB_FN_BEARING: need = 4u; break;
+            case CDB_FN_POW: need = 2u; break;
+            case CDB_FN_SIN: case CDB_FN_COS: case CDB_FN_SQRT:
+            case CDB_FN_SIGMOID: case CDB_FN_RELU: case CDB_FN_GELU: need = 1u; break;
+            default: need = 0u; break; /* unhandled -> null result, reads no args */
+            }
+            if (argc < need) { st = CDB_E_MALFORMED; goto cleanup; }
 
             switch (fn_id) {
             case CDB_FN_SIN: cdb_eval_make_f64(&vm->regs[dst], cdb_math_sin(args[0])); break;
