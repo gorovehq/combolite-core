@@ -580,7 +580,7 @@ static cdb_status array_key(cdb_db *db, const idx *x, const uint8_t *arr, size_t
             break;
         if (n == x->n)
             return CDB_E_INVALID_ARG;
-        if (item.type != CDB_TYPE_NULL && !indexable(item.type))
+        if (item.type != CDB_TYPE_NULL && !indexable((int)item.type))
             return CDB_E_INVALID_ARG;
         if ((s = key_part(&kb, &item, item.type != CDB_TYPE_NULL)) != CDB_OK)
             return s == CDB_E_BUFFER_TOO_SMALL ? CDB_E_OVERFLOW : s;
