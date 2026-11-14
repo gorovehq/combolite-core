@@ -2722,7 +2722,14 @@ cdb_status cdb_compile_proc(const char *src, size_t len,
     }
 
     cdb_proc_write_halt(&pw);
-    cdb_proc_writer_finish(&pw);
+    {
+        /* Propagate any writer failure (e.g. the output buffer was too small):
+         * reporting CDB_OK while the emitted bytecode is truncated would hand the
+         * caller an invalid program (fail-open). */
+        cdb_status fin = cdb_proc_writer_finish(&pw);
+        if (fin != CDB_OK)
+            return fin;
+    }
 
     size_t bclen = cdb_proc_writer_len(&pw);
     if (out_bc_len) *out_bc_len = bclen;
