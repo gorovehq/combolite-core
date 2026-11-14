@@ -118,6 +118,7 @@ cdb_add_test(test_audit)
 cdb_add_test(test_crdt)
 cdb_add_test(test_cmbql_crud)
 cdb_add_test(test_e2e_lifecycle)
+cdb_add_test(test_fault_sweep)
 cdb_add_test(test_idblocks)
 
 # The suites that use several stores again, with one open store of each
