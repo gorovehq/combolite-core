@@ -1173,8 +1173,7 @@ typedef struct cdb_exec_agg_group {
     uint64_t count[CDB_EXEC_MAX_AGGS];
     cdb_value min_val[CDB_EXEC_MAX_AGGS];
     cdb_value max_val[CDB_EXEC_MAX_AGGS];
-    cdb_value first_val[CDB_EXEC_MAX_AGGS]; /* first non-null in scan order, for FIRST */
-    cdb_value last_val[CDB_EXEC_MAX_AGGS];  /* last non-null in scan order, for LAST */
+    cdb_value fl_val[CDB_EXEC_MAX_AGGS];    /* FIRST or LAST value; each slot is one or the other */
     int has_val[CDB_EXEC_MAX_AGGS];
 } cdb_exec_agg_group;
 
@@ -1348,14 +1347,21 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
                 grp->sumsq[i] += dval * dval;   /* for STDDEV / VARIANCE */
 
                 /* FIRST / LAST keep the non-null value itself (scan order), so
-                 * pin a copy: FIRST on the first non-null row, LAST every row. */
-                {
+                 * pin a copy — but ONLY for those aggregates, so the common
+                 * numeric aggregates do not pin a row each and exhaust the pool.
+                 * FIRST pins on the first non-null row; LAST on every row. */
+                if (a->aggs[i].fn == CDB_AGG_FIRST) {
+                    if (!grp->has_val[i]) {
+                        cdb_value lv = aval;
+                        if ((st = pin_value(cur, &a->pool, &lv)) != CDB_OK)
+                            return st;
+                        grp->fl_val[i] = lv;
+                    }
+                } else if (a->aggs[i].fn == CDB_AGG_LAST) {
                     cdb_value lv = aval;
                     if ((st = pin_value(cur, &a->pool, &lv)) != CDB_OK)
                         return st;
-                    if (!grp->has_val[i])
-                        grp->first_val[i] = lv;
-                    grp->last_val[i] = lv;
+                    grp->fl_val[i] = lv;
                 }
 
                 /* MIN and MAX keep a value across rows, so it is pinned;
@@ -1432,14 +1438,9 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
                 res = grp->max_val[i];
                 break;
             case CDB_AGG_FIRST:
-                if (grp->has_val[i])
-                    res = grp->first_val[i];
-                else
-                    cdb_eval_make_null(&res);
-                break;
             case CDB_AGG_LAST:
                 if (grp->has_val[i])
-                    res = grp->last_val[i];
+                    res = grp->fl_val[i];
                 else
                     cdb_eval_make_null(&res);
                 break;
