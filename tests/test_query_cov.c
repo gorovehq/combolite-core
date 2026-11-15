@@ -58,7 +58,7 @@ static void test_writer_arg_validation(void)
     WERR(cdb_query_write_union(&w_, 0));                      /* zero branches */
     WERR(cdb_query_write_aggregate(&w_, 0, 0));               /* both zero */
     WERR(cdb_query_write_aggregate_output(&w_, "a", 1, 0));           /* fn < COUNT */
-    WERR(cdb_query_write_aggregate_output(&w_, "a", 1, CDB_AGG_VARIANCE)); /* fn > MAX */
+    WERR(cdb_query_write_aggregate_output(&w_, "a", 1, CDB_AGG__HIGHEST + 1u)); /* fn above the range */
     WERR(cdb_query_write_traverse(&w_, "l", 1, 0xFFu, 0, 1)); /* bad dir */
     WERR(cdb_query_write_traverse(&w_, "l", 1, CDB_TRAVERSE_FWD, 5, 2)); /* max < min */
     WERR(cdb_query_write_text_search(&w_, 0xFFu, 1, "q", 1, 0));   /* bad mode */

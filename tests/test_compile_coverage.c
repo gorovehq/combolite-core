@@ -25,16 +25,20 @@ static void test_statement_variants_compile(void)
     ok("CREATE STORE \"a\" MODEL vector;");
     ok("CREATE STORE \"a\" MODEL timeseries;");
     ok("CREATE STORE \"a\" MODEL link;");
-    ok("CREATE STORE \"a\" MODEL graph;");
+    /* "graph" is not a store model (it is a vector-index feature); MODEL now
+     * rejects unknown types (F-C1c, #10), so it is no longer a compiling variant. */
     ok("CREATE LINK TYPE \"l\" CARDINALITY 1:1 ENFORCED;");
     ok("CREATE LINK TYPE \"l\" CARDINALITY 1:N;");
     ok("CREATE LINK TYPE \"l\" CARDINALITY N:M ENFORCED;");
     ok("CREATE LINK TYPE \"l\" CARDINALITY 1:N ENFORCED INVERSE 2;");
-    ok("CREATE TRIGGER t ON 1 BEFORE INSERT EXECUTE \"f\";");
+    /* The grammar supports AFTER triggers and the bare-event form; BEFORE and
+     * INSTEAD OF are not parsed (they previously "compiled" only via lenient
+     * parsing, tightened by F-C1 #6). */
+    ok("CREATE TRIGGER t ON 1 AFTER INSERT EXECUTE \"f\";");
     ok("CREATE TRIGGER t ON 1 AFTER UPDATE EXECUTE \"f\";");
     ok("CREATE TRIGGER t ON 1 AFTER DELETE EXECUTE \"f\";");
     ok("CREATE TRIGGER t ON 1 AFTER INSERT EXECUTE \"f\" MAX DEPTH 4;");
-    ok("CREATE TRIGGER t ON 1 INSTEAD OF INSERT EXECUTE \"f\";");
+    ok("CREATE TRIGGER t ON 1 INSERT EXECUTE \"f\";");
     ok("GRANT ROLE 1 TO 2 SCOPE 3 PERMS 1;");
     ok("GRANT ROLE 2 TO 3 SCOPE 0 PERMS 15;");
     ok("ROTATE MASTER KEY \"env://k\";");
