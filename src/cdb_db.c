@@ -3510,6 +3510,7 @@ cdb_status cdb_db_close(cdb_db *db)
         }
         cdb_storage_close(&db->archive_st);
         db_wipe_crypto(db);
+        release_slots(db); /* F-T1 (#11): free slot chunks on the pending-journal path too */
         db_unlock(db);
         cleanup_concurrency(db);
         return CDB_OK;
