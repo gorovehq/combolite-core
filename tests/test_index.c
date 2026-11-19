@@ -669,10 +669,36 @@ static void test_overflow_crash_sweep(void)
     sweep(prepare_ov, workload_ov, matching_ov);
 }
 
+/*
+ * #17 regression: common_prefix formed &entries[a] and &entries[b - 1]
+ * BEFORE its early-return guard. With b == 0, b - 1 underflows to SIZE_MAX,
+ * producing an out-of-bounds pointer (UB, clang -fsanitize=undefined
+ * pointer-overflow) even though it was never dereferenced. The guard now runs
+ * first, so the b - a < 2 cases form no entry pointers at all. We exercise
+ * every short-circuit branch via the internal test hook; each must return 0
+ * without forming an &entries[...] pointer, so this is clean under clang
+ * pointer-overflow UBSan. The positive (b - a >= 2) path keeps full coverage
+ * through the real prefix-index operations in the tests above, which avoids
+ * reaching into the work buffer's internal layout from the test.
+ */
+static void test_common_prefix_short_node_no_ub(void)
+{
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_index_create(&ix, &pager, 11, CDB_INDEX_FLAG_PREFIX, &work));
+
+    /* b - a < 2: must return 0 and form no &entries[b - 1] (the #17 UB) */
+    TEST_ASSERT_EQUAL_size_t(0u, cdb_index_common_prefix_for_test(&ix, 0, 0, 0)); /* b == 0 */
+    TEST_ASSERT_EQUAL_size_t(0u, cdb_index_common_prefix_for_test(&ix, 0, 2, 3)); /* b - a == 1 */
+    TEST_ASSERT_EQUAL_size_t(0u, cdb_index_common_prefix_for_test(&ix, 0, 5, 5)); /* a == b */
+    /* interior level and missing prefix-handling still short-circuit */
+    TEST_ASSERT_EQUAL_size_t(0u, cdb_index_common_prefix_for_test(&ix, 1, 0, 8)); /* level != 0 */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_put_get_replace);
+    RUN_TEST(test_common_prefix_short_node_no_ub);
     RUN_TEST(test_many_keys_shuffled);
     RUN_TEST(test_survives_commit_and_reopen);
     RUN_TEST(test_largest_entries);

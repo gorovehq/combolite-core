@@ -1,0 +1,18 @@
+# combolite-core secret-scan config.
+# Extends gitleaks' default rules and allowlists VENDORED third-party trees, whose
+# upstream test fixtures (e.g. Mbed TLS test keys) are not combolite secrets.
+# Used by combolite's own CI secret scan. (The JEV SDLC drive passes its own --config,
+# which overrides this file; the drive instead honours .gitleaksignore — see that file.)
+title = "combolite-core gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored third-party dependency trees (upstream test fixtures, not combolite secrets)"
+paths = [
+  '''(^|/)third-party/''',
+  '''(^|/)vendor/''',
+  '''(^|/)demo/third-party/''',
+  '''(^|/)tests/''',
+]

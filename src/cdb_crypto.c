@@ -312,13 +312,18 @@ cdb_status cdb_crypto_unwrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
                                  const uint8_t wrapped_in[CDB_WRAPPED_KEY_SIZE],
                                  uint8_t enclave_key_out[CDB_CRYPTO_KEY_SIZE])
 {
-    /* Layout: nonce[12] || tag[16] || ciphertext[32]. */
+    /*
+     * #15: validate pointers BEFORE forming any pointer offsets. Deriving
+     * wrapped_in + 12 / + 28 on a NULL wrapped_in is undefined behaviour
+     * ("applying non-zero offset to null pointer", UBSan). Fail closed first.
+     */
+    if (master_key == NULL || wrapped_in == NULL || enclave_key_out == NULL)
+        return CDB_E_INVALID_ARG;
+
+    /* Layout: nonce[12] || tag[16] || ciphertext[32]. Offsets safe now. */
     const uint8_t *nonce = wrapped_in;
     const uint8_t *tag = wrapped_in + CDB_AEAD_NONCE_SIZE;
     const uint8_t *ciphertext = wrapped_in + CDB_AEAD_NONCE_SIZE + CDB_AEAD_TAG_SIZE;
-
-    if (master_key == NULL || wrapped_in == NULL || enclave_key_out == NULL)
-        return CDB_E_INVALID_ARG;
 
     return cdb_crypto_aead_decrypt(CDB_AEAD_AES_256_GCM, master_key, nonce,
                                    NULL, 0,

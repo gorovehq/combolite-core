@@ -373,16 +373,30 @@ static size_t lower_bound(cdb_index *ix, const node *n, const uint8_t *key, size
  * by the first and last key is shared by every key between them. */
 static size_t common_prefix(cdb_index *ix, unsigned level, size_t a, size_t b)
 {
-    const cdb_index_entry *first = &ix->w.entries[a], *last = &ix->w.entries[b - 1];
+    /*
+     * #17: apply the early-return guard BEFORE forming the first/last entry
+     * pointers. &entries[b - 1] with b == 0 underflows (b - 1 is SIZE_MAX),
+     * producing an out-of-bounds pointer even though it is never dereferenced
+     * (UB, UBSan pointer-overflow). Past the guard b - a >= 2, so both a and
+     * b - 1 are valid indices.
+     */
     size_t n = 0, max;
     if (level != 0 || !(ix->flags & CDB_INDEX_FLAG_PREFIX) || b - a < 2)
         return 0;
+    const cdb_index_entry *first = &ix->w.entries[a];
+    const cdb_index_entry *last = &ix->w.entries[b - 1];
     max = first->klen < last->klen ? first->klen : last->klen;
     if (max > CDB_INDEX_MAX_PREFIX)
         max = CDB_INDEX_MAX_PREFIX;
     while (n < max && ent_key(ix, first)[n] == ent_key(ix, last)[n])
         n++;
     return n;
+}
+
+/* Internal test hook (#17): see cdb_index.h. */
+size_t cdb_index_common_prefix_for_test(cdb_index *ix, unsigned level, size_t a, size_t b)
+{
+    return common_prefix(ix, level, a, b);
 }
 
 /* A leaf value kept in an overflow chain. */

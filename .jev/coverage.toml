@@ -1,0 +1,6 @@
+# combolite-core coverage floor for the JEV cpp line-coverage gate (jev-runtime #401/#403).
+# Interim §4 waiver: real line coverage is ~54% (branch ~48%); master §4 mandates 90%.
+# Time-boxed, owned, auditable — ratchet to 90% tracked in the waiver issue below.
+line_min = 50
+waiver = "https://github.com/gorovehq/combolite-core/issues/18"
+expiry = "2027-02-12"

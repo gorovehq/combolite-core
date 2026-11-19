@@ -61,6 +61,11 @@ typedef struct cdb_index {
     size_t max_value;   /* longest value kept inline */
 } cdb_index;
 
+/* Internal test hook (#17 regression): forwards to the static common_prefix
+ * so a test can exercise the b - a < 2 guard (including b == 0) directly and
+ * confirm no pointer-overflow UB. Not part of the public index API. */
+size_t cdb_index_common_prefix_for_test(cdb_index *ix, unsigned level, size_t a, size_t b);
+
 /* Sizes of the two work-memory buffers for indexes over pages of
  * page_size bytes. */
 size_t cdb_index_work_size(size_t page_size);

@@ -154,6 +154,29 @@ static void test_wrap_unwrap_and_failure(void)
     TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, cdb_crypto_unwrap_key(master, NULL, out));
 }
 
+/*
+ * #15 regression: cdb_crypto_unwrap_key must validate its pointers BEFORE
+ * forming nonce/tag/ciphertext offsets. A NULL wrapped_in previously had
+ * +12 / +28 applied to it (UB: non-zero offset on a null pointer) before the
+ * guard ran. This covers every branch of the NULL guard, so it is clean under
+ * clang -fsanitize=undefined and keeps the guard at 100% branch coverage.
+ */
+static void test_unwrap_null_args_no_ub(void)
+{
+    uint8_t master[CDB_CRYPTO_KEY_SIZE], out[CDB_CRYPTO_KEY_SIZE];
+    uint8_t wrapped[CDB_WRAPPED_KEY_SIZE];
+
+    memset(master, 0x22, sizeof master);
+    memset(wrapped, 0x33, sizeof wrapped);
+
+    /* wrapped_in NULL: the offending input in #15 — no offset must be formed */
+    TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, cdb_crypto_unwrap_key(master, NULL, out));
+    /* master_key NULL (first guard term) */
+    TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, cdb_crypto_unwrap_key(NULL, wrapped, out));
+    /* enclave_key_out NULL (third guard term) */
+    TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, cdb_crypto_unwrap_key(master, wrapped, NULL));
+}
+
 static cdb_status fake_provider(const char *uri, uint8_t key_out[CDB_CRYPTO_KEY_SIZE], void *user_data)
 {
     (void)uri;
@@ -241,6 +264,7 @@ int main(void)
     RUN_TEST(test_hash_streaming_matches_oneshot);
     RUN_TEST(test_derive_subkey_purposes_and_salt);
     RUN_TEST(test_wrap_unwrap_and_failure);
+    RUN_TEST(test_unwrap_null_args_no_ub);
     RUN_TEST(test_resolve_key_schemes);
     RUN_TEST(test_identity_sign_verify_failure);
     RUN_TEST(test_random_and_wipe);

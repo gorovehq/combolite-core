@@ -241,9 +241,30 @@ static void test_link_reads_decrypt(void)
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db));
 }
 
+/*
+ * #16 regression: the pager guard slot is cdb_status (*)(void *). The
+ * coordinator guard is now installed through the type-correct file-local
+ * trampoline pager_coord_guard (cdb_db.c) instead of casting cdb_coord_guard
+ * (cdb_status (*)(cdb_coord *)) to the slot type -- calling through such a
+ * cast is UB ("call through incorrect function type", UBSan
+ * -fsanitize=function). Opening, committing, and closing a db drives the
+ * archive-write guard path (write_page_at), which invokes the guard, so this
+ * runs clean under clang -fsanitize=function.
+ */
+static void test_pager_guard_thunk_type_correct(void)
+{
+    uint64_t pool;
+    open_db();
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_create_store(&db, "g", 1, CDB_MODEL_DOCUMENT, &pool));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_begin(&db, CDB_DURABILITY_FULL));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_commit(&db));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_pager_guard_thunk_type_correct);
     RUN_TEST(test_doc_reads_decrypt);
     RUN_TEST(test_ts_reads_decrypt);
     RUN_TEST(test_vec_reads_decrypt);
