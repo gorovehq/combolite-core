@@ -44,6 +44,20 @@ static void start_heartbeat(cdb_db *db);
 static void stop_heartbeat_thread(cdb_db *db);
 static void cleanup_concurrency(cdb_db *db);
 
+/*
+ * #16: type-correct trampoline for the pager guard slot, which is typed
+ * cdb_status (*)(void *) (cdb_pager_set_guard). Installing cdb_coord_guard
+ * directly requires casting away its cdb_status (*)(cdb_coord *) type, and
+ * calling through that cast is undefined behaviour ("call through incorrect
+ * function type", UBSan -fsanitize=function). This file-local trampoline
+ * matches the slot type exactly and recovers the concrete argument with no
+ * behaviour change.
+ */
+static cdb_status pager_coord_guard(void *ctx)
+{
+    return cdb_coord_guard((cdb_coord *)ctx);
+}
+
 /* -------------------------------------------------------- environment */
 
 /* Thin wrappers over the caller-supplied environment (files and
@@ -1687,7 +1701,7 @@ static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg
             return s;
         if (!granted)
             return CDB_E_BUSY;
-        cdb_pager_set_guard(&db->pager, (cdb_status (*)(void *))cdb_coord_guard, &db->coord);
+        cdb_pager_set_guard(&db->pager, pager_coord_guard, &db->coord);
         if ((s = recover(db)) != CDB_OK)
             return s;
         cdb_coord_release_all(&db->coord);
@@ -2961,7 +2975,7 @@ static cdb_status reconcile_hold_body(cdb_db *db, int closing)
      * state to commit. */
     if (db->fresh && db->coord.journals_others == 0) {
         int in_use = (journal_slot(db)->state & COMPANION_IN_USE) != 0;
-        cdb_pager_set_guard(&db->pager, (cdb_status (*)(void *))cdb_coord_guard, &db->coord);
+        cdb_pager_set_guard(&db->pager, pager_coord_guard, &db->coord);
         if (db->applied != watermark_of(db) || db->pager.dirty || in_use != keep_in_use
             || db->last_tx > db->my_mark || db->coord.me.nblocks > 0) {
             if ((s = cdb_doc_flush_pools(db)) != CDB_OK || (s = raise_block_counters(db)) != CDB_OK
@@ -2992,7 +3006,7 @@ static cdb_status reconcile_hold_body(cdb_db *db, int closing)
 
     if ((s = pager_reload(db)) != CDB_OK || (s = cdb_pager_set_private(&db->pager, NULL)) != CDB_OK)
         return s;
-    cdb_pager_set_guard(&db->pager, (cdb_status (*)(void *))cdb_coord_guard, &db->coord);
+    cdb_pager_set_guard(&db->pager, pager_coord_guard, &db->coord);
     cdb_pager_set_reuse_below(&db->pager, db->coord.min_pin);
     release_slots(db);
     if ((s = cdb_catalog_open(&db->catalog, &db->pager, &db->cfg.catalog_work, db->cfg.catalog_page)) != CDB_OK)

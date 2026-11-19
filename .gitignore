@@ -1,0 +1,45 @@
+# combolite-core — build output, generated artifacts, and local cruft.
+# Source, CMake lists/presets, and docs are tracked; nothing below is a deliverable.
+
+# CMake / C build trees
+# build-*/ also covers the JEV SDLC drive's build-jev / build-jev-cov batteries.
+build/
+build-*/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+
+# Object files / libraries / binaries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# Coverage (clang source-based + gcov)
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+coverage/
+*.lcov
+
+# Sanitizer / debug artifacts
+*.dSYM/
+core
+core.*
+
+# Editor / OS
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
