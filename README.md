@@ -30,31 +30,69 @@ The core engine is clean-room, strictly crash-safe, and designed with zero exter
 
 ---
 
-## Building
+## Quickstart
 
-`combolite-core` can be built as part of the umbrella project or standalone:
-
-### Standalone Build
+This sequence takes you from a clean machine to a passing test suite using only the
+CPU-only debug preset — no CUDA or Vulkan SDK required. It needs only the
+[Prerequisites](#prerequisites) above (a C99 compiler and CMake >= 3.20).
 
 ```sh
+# 1. Clone with the vendored submodules (Mbed TLS, xz, Unity).
+git clone --recurse-submodules https://github.com/gorovehq/combolite-core.git
 cd combolite-core
-cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCDB_BUILD_TESTS=ON
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+
+# If you already cloned without --recurse-submodules, fetch them now:
+git submodule update --init --recursive
+
+# 2. Configure the CPU-only Debug build (ASan + UBSan + the test suite).
+cmake --preset core-cpu-debug
+
+# 3. Build.
+cmake --build --preset core-cpu-debug -j
+
+# 4. Run the test suite.
+ctest --preset core-cpu-debug --output-on-failure
 ```
 
-### Umbrella Presets (from Repository Root)
+Every preset name above is defined in [`CMakePresets.json`](CMakePresets.json).
+`core-cpu-debug` is the toolchain-light default used throughout the docs; the
+maintainers' long-term profile is `core-both-debug` ("the build to test in until
+1.0"), which additionally requires the CUDA and Vulkan SDKs.
+
+### Coverage build
+
+Line and branch coverage are measured with Clang source-based instrumentation,
+enabled by the `CDB_COVERAGE` option (off by default):
 
 ```sh
-# Debug build with ASan and UBSan sanitizers (standard development profile)
-cmake --preset core-both-debug
-cmake --build --preset core-both-debug -j
-ctest --preset core-both-debug -j4
+CC=clang cmake -S . -B build-cov -DCDB_BUILD_TESTS=ON -DCDB_COVERAGE=ON
+cmake --build build-cov -j
 
-# CPU-only Release build
+cd build-cov
+rm -rf prof && mkdir prof
+LLVM_PROFILE_FILE="prof/%m-%p.profraw" ctest
+llvm-profdata merge -sparse prof/*.profraw -o cov.profdata
+```
+
+See [`docs/dev/testing-and-coverage.md`](docs/dev/testing-and-coverage.md) for the
+full `llvm-cov report` invocation and the coverage goals, and
+[`docs/FAQ.md`](docs/FAQ.md) for the current coverage posture.
+
+### Other presets
+
+```sh
+# CPU-only Release build (optimised, sanitizers off).
 cmake --preset core-cpu-release
 cmake --build --preset core-cpu-release -j
+
+# Debug build with the CUDA + Vulkan accelerators (needs the CUDA and Vulkan SDKs).
+cmake --preset core-both-debug
+cmake --build --preset core-both-debug -j
+ctest --preset core-both-debug --output-on-failure
 ```
+
+See [`CHANGELOG.md`](docs/CHANGELOG.md) for release notes and the milestone history,
+and [`FAQ.md`](docs/FAQ.md) for answers on the build, data models, CMBQL, and crypto.
 
 ---
 
