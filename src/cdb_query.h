@@ -19,6 +19,15 @@
 #define CDB_QUERY_MAGIC_3 0x51u /* 'Q' */
 #define CDB_QUERY_VERSION_1 1u
 #define CDB_QUERY_HEADER_SIZE 6u
+/* Maximum operator/expression nesting the engine accepts from untrusted wire.
+ * Equals the compiler's maximum emitted plan depth, so every validly compiled
+ * query passes, while it bounds the recursive wire skippers
+ * (cdb_query_skip_node / cdb_query_skip_expr) and the exec-tree builder
+ * (build_exec_tree) so hostile, deeply-nested wire is rejected with CDB_E_DEPTH
+ * instead of overflowing the C stack (CWE-674). Peer of CDB_VALUE_MAX_DEPTH (32)
+ * for value nesting. The size_t depth counters that enforce it are only ever
+ * incremented on the `depth < CDB_QUERY_MAX_DEPTH` branch, so they never exceed
+ * this small cap and cannot overflow (rule_0024 / CWE-190). */
 #define CDB_QUERY_MAX_DEPTH 64u
 
 /* Nested field delimiter: ASCII Unit Separator (0x1F, spec 11.10). */

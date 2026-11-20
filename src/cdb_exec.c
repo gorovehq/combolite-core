@@ -2193,13 +2193,20 @@ static const cdb_exec_vtab hybrid_vtab = {
 /* --------------------------------------------------------------------------
  * Recursive Plan Tree Builder
  * -------------------------------------------------------------------------- */
+/* Depth-bounded exec-tree builder (CWE-674). This is the second recursive
+ * descent over the wire, run after cdb_query_validate; `depth` bounds it as
+ * defense in depth. `depth` is a size_t only ever reached via `depth + 1` on the
+ * `depth < CDB_QUERY_MAX_DEPTH` branch, so it never exceeds the cap and cannot
+ * overflow (rule_0024 / CWE-190). */
 static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const uint8_t *end,
-                                  cdb_exec_op **out_op)
+                                  cdb_exec_op **out_op, size_t depth)
 {
     cdb_query_node node;
     cdb_status st;
     const uint8_t *node_start = *p;
 
+    if (depth >= CDB_QUERY_MAX_DEPTH)
+        return CDB_E_DEPTH;
     if (cur == NULL || p == NULL || *p >= end || out_op == NULL)
         return CDB_E_INVALID_ARG;
 
@@ -2234,7 +2241,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->base.tag = CDB_QUERY_NODE_FILTER;
         op->pred_wire = node.as.filter.pred_wire;
         op->pred_len = (size_t)(end - node.as.filter.pred_wire);
-        st = build_exec_tree(cur, &node.as.filter.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.filter.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2249,7 +2256,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->base.tag = CDB_QUERY_NODE_PROJECT;
         op->passthrough = (uint8_t)node.as.project.passthrough;
         op->count = node.as.project.count;
-        st = build_exec_tree(cur, &node.as.project.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.project.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
 
         cur_wire = node.as.project.outputs_wire;
@@ -2282,7 +2289,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->base.tag = CDB_QUERY_NODE_LIMIT;
         op->count = node.as.limit.count;
         op->offset = node.as.limit.offset;
-        st = build_exec_tree(cur, &node.as.limit.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.limit.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
         /* A Sort below (through Projects, which keep every row) need only
          * hold the rows this Limit can reach: top-N */
@@ -2308,7 +2315,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
 
         cur_wire = node.as.union_node.branches_wire;
         for (i = 0; i < op->count && i < CDB_EXEC_MAX_BRANCHES; i++) {
-            st = build_exec_tree(cur, &cur_wire, end, &op->branches[i]);
+            st = build_exec_tree(cur, &cur_wire, end, &op->branches[i], depth + 1);
             if (st != CDB_OK) return st;
         }
         *out_op = &op->base;
@@ -2323,9 +2330,9 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->kind = node.as.join.kind;
         op->cond_wire = node.as.join.cond_wire;
         op->cond_len = (size_t)(end - node.as.join.cond_wire);
-        st = build_exec_tree(cur, &node.as.join.left_wire, end, &op->left);
+        st = build_exec_tree(cur, &node.as.join.left_wire, end, &op->left, depth + 1);
         if (st != CDB_OK) return st;
-        st = build_exec_tree(cur, &node.as.join.right_wire, end, &op->right);
+        st = build_exec_tree(cur, &node.as.join.right_wire, end, &op->right, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2339,7 +2346,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->base.vtab = &sort_vtab;
         op->base.tag = CDB_QUERY_NODE_SORT;
         op->count = node.as.sort.count;
-        st = build_exec_tree(cur, &node.as.sort.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.sort.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
 
         cur_wire = node.as.sort.keys_wire;
@@ -2366,7 +2373,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->base.tag = CDB_QUERY_NODE_AGGREGATE;
         op->groups_count = node.as.aggregate.n_groups;
         op->aggs_count = node.as.aggregate.n_aggs;
-        st = build_exec_tree(cur, &node.as.aggregate.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.aggregate.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
 
         cur_wire = node.as.aggregate.groups_wire;
@@ -2413,7 +2420,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->time_field_len = node.as.window.time_field_len;
         op->size_ns = node.as.window.size_ns;
         op->step_ns = node.as.window.step_ns;
-        st = build_exec_tree(cur, &node.as.window.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.window.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2432,9 +2439,9 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->right_time_len = (size_t)(end - node.as.asof_join.right_time_wire);
         op->match_cond_wire = node.as.asof_join.match_cond_wire;
         op->match_cond_len = (size_t)(end - node.as.asof_join.match_cond_wire);
-        st = build_exec_tree(cur, &node.as.asof_join.left_wire, end, &op->left);
+        st = build_exec_tree(cur, &node.as.asof_join.left_wire, end, &op->left, depth + 1);
         if (st != CDB_OK) return st;
-        st = build_exec_tree(cur, &node.as.asof_join.right_wire, end, &op->right);
+        st = build_exec_tree(cur, &node.as.asof_join.right_wire, end, &op->right, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2451,7 +2458,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->index_alias_len = node.as.unnest.index_alias_len;
         op->array_wire = node.as.unnest.array_expr_wire;
         op->array_len = (size_t)(end - node.as.unnest.array_expr_wire);
-        st = build_exec_tree(cur, &node.as.unnest.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.unnest.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2467,7 +2474,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->dir = node.as.traverse.dir;
         op->min_hops = node.as.traverse.min_hops;
         op->max_hops = node.as.traverse.max_hops;
-        st = build_exec_tree(cur, &node.as.traverse.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.traverse.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2482,7 +2489,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->limit = node.as.text_search.limit;
         op->query = node.as.text_search.query;
         op->query_len = node.as.text_search.query_len;
-        st = build_exec_tree(cur, &node.as.text_search.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.text_search.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2499,7 +2506,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->metric = node.as.vector_search.metric;
         op->near_wire = node.as.vector_search.near_wire;
         op->near_len = (size_t)(end - node.as.vector_search.near_wire);
-        st = build_exec_tree(cur, &node.as.vector_search.input_wire, end, &op->input);
+        st = build_exec_tree(cur, &node.as.vector_search.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK) return st;
         *out_op = &op->base;
         return CDB_OK;
@@ -2519,7 +2526,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         for (i = 0; i < op->count && i < CDB_EXEC_MAX_BRANCHES; i++) {
             uint64_t w_val = 0;
             size_t w_len = 0;
-            st = build_exec_tree(cur, &cur_wire, end, &op->branches[i]);
+            st = build_exec_tree(cur, &cur_wire, end, &op->branches[i], depth + 1);
             if (st != CDB_OK) return st;
             if (cdb_varint_decode(cur_wire, (size_t)(end - cur_wire), &w_val, &w_len) != CDB_OK)
                 return CDB_E_MALFORMED;
@@ -2599,7 +2606,7 @@ static cdb_status exec_open_in(cdb_exec_cursor *cur, cdb_db *db, const uint8_t *
     p = wire + root_offset;
     end = wire + len;
 
-    st = build_exec_tree(cur, &p, end, &cur->root_op);
+    st = build_exec_tree(cur, &p, end, &cur->root_op, 0);
     if (st != CDB_OK)
         return st;
 
