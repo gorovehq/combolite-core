@@ -187,6 +187,18 @@ if(CDB_ACCEL_CUDA OR CDB_ACCEL_VULKAN)
 endif()
 if(CDB_ACCEL_VULKAN)
   cdb_add_test(test_accel_vulkan
+
+# --- #18 coverage ratchet: increment tests ---
+cdb_add_test(test_crypto_cov)
+cdb_add_test(test_eval_branch)
+cdb_add_test(test_overflow_cov)
+cdb_add_test(test_audit_cov)
+cdb_add_test(test_db3_cov)
+cdb_add_test(test_db4_cov)
+cdb_add_test(test_doc2_cov)
+cdb_add_test(test_table_cov2)
+cdb_add_test(test_compile_query_cov)
+cdb_add_test(test_compile_proc_cov)
     SUBMODULE "combolite-accelerator"
     LIBS combolite_accel
     PROPERTIES SKIP_RETURN_CODE 77
@@ -199,3 +211,17 @@ if(CDB_ACCEL_VULKAN)
     set_tests_properties("${spirv_test}" PROPERTIES LABELS "combolite-accelerator")
   endif()
 endif()
+
+# --- #18 coverage ratchet: increment test registrations ---
+cdb_add_test(test_crypto_cov)
+cdb_add_test(test_eval_branch)
+cdb_add_test(test_overflow_cov)
+cdb_add_test(test_audit_cov)
+cdb_add_test(test_db3_cov)
+cdb_add_test(test_db4_cov)
+cdb_add_test(test_doc2_cov)
+cdb_add_test(test_table_cov2)
+cdb_add_test(test_compile_query_cov)
+cdb_add_test(test_compile_proc_cov)
+cdb_add_test(test_crypto_cov2)
+cdb_add_test(test_table_cov3)
