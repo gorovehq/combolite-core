@@ -13,6 +13,14 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Security
 
+- Bounded the LZMA2 decoder dictionary against the decompressed-output budget
+  **before allocating**, closing a crafted-property-byte memory-exhaustion DoS
+  in `cdb_codec_decompress`: a one-byte dictionary property (0..40) could map to
+  a dictionary size up to ~4 GiB and drive an unbounded allocation through the
+  host environment allocator. The decoder now rejects any dictionary larger than
+  a valid stream of the stated output length requires (`CDB_E_CORRUPT`), with no
+  change to valid in-budget decode. Held to a committed red→green regression
+  test. (F4, GHSA-rf29-8939-p85v)
 - Bumped the vendored Mbed TLS submodule from 3.6.2 to **3.6.5**, picking up the
   upstream maintenance and security fixes for the crypto primitives the engine
   relies on (AES-256-GCM, ChaCha20-Poly1305, SHA-256, HMAC, HKDF, ECDSA). (#1)
