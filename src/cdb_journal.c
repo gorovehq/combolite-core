@@ -12,6 +12,7 @@
 #include "cdb_crc32c.h"
 #include "cdb_endian.h"
 #include "cdb_journal.h"
+#include "cdb_journal_internal.h"
 #include "cdb_varint.h"
 
 /* "\x89CDBCMP\n", the companion-file magic (spec 14.4.1). */
@@ -105,10 +106,24 @@ cdb_status cdb_journal_open(cdb_journal *j, const cdb_storage *st, cdb_byte_orde
     return CDB_OK;
 }
 
-/* Total bytes of a record on disk: header, payload, trailer. */
-static size_t record_size(uint32_t payload_len)
+cdb_status cdb_journal_size_add(size_t a, size_t b, size_t *out_sum)
 {
-    return CDB_RECORD_HEADER_SIZE + (size_t)payload_len + CDB_RECORD_TRAILER_SIZE;
+    if (out_sum == NULL)
+        return CDB_E_INVALID_ARG;
+    if (a > SIZE_MAX - b)
+        return CDB_E_OVERFLOW;
+    *out_sum = a + b;
+    return CDB_OK;
+}
+
+/* Total bytes of a record on disk: header, payload, trailer. #23/F6: reject a
+ * payload_len whose size arithmetic would overflow size_t (CWE-190) before any
+ * caller's bound/CRC check. The fixed overhead is a small compile-time
+ * constant, so only the payload add can overflow. */
+cdb_status cdb_journal_record_size(uint32_t payload_len, size_t *out_size)
+{
+    return cdb_journal_size_add((size_t)(CDB_RECORD_HEADER_SIZE + CDB_RECORD_TRAILER_SIZE),
+                                (size_t)payload_len, out_size);
 }
 
 /* Builds the record in buf (header at offset 0, payload at offset 48, then
@@ -130,7 +145,10 @@ cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf
     if (r->payload_len > UINT32_MAX - ids)
         return CDB_E_OVERFLOW;
     body_len = (uint32_t)(r->payload_len + ids);
-    size = record_size(body_len);
+    /* #23/F6: overflow-checked sizing before the buffer bound (CWE-190). */
+    s = cdb_journal_record_size(body_len, &size);
+    if (s != CDB_OK)
+        return s; /* CDB_E_OVERFLOW on a 32-bit size_t wrap */
     if (size > buf_size)
         return CDB_E_BUFFER_TOO_SMALL;
     if (hide && r->domain_id == 0)
@@ -204,7 +222,10 @@ cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf
     /* A garbage length cannot make us read past buf: anything bigger than
      * the buffer is rejected before the second read. */
     payload_len = cdb_load_u32(buf + 4, j->order);
-    size = record_size(payload_len);
+    /* #23/F6: reject a length whose size arithmetic overflows size_t (CWE-190)
+     * before the buffer bound. On-disk provenance -> CDB_E_CORRUPT. */
+    if (cdb_journal_record_size(payload_len, &size) != CDB_OK)
+        return CDB_E_CORRUPT;
     if (size > buf_size)
         return CDB_E_CORRUPT; /* larger than any record we would write */
     if ((s = cdb_storage_read(&j->st, offset + CDB_RECORD_HEADER_SIZE, buf + CDB_RECORD_HEADER_SIZE,
