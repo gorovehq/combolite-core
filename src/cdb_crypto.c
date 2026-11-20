@@ -284,14 +284,25 @@ cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
                                const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
                                uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE])
 {
-    /* Layout: nonce[12] || tag[16] || ciphertext[32]. */
-    uint8_t *nonce = wrapped_out;
-    uint8_t *tag = wrapped_out + CDB_AEAD_NONCE_SIZE;
-    uint8_t *ciphertext = wrapped_out + CDB_AEAD_NONCE_SIZE + CDB_AEAD_TAG_SIZE;
+    /*
+     * #23/F5a (sibling of #15): validate pointers BEFORE forming any pointer
+     * offset from wrapped_out. Deriving wrapped_out + 12 / + 28 on a NULL
+     * wrapped_out is undefined behaviour ("applying non-zero offset to null
+     * pointer", UBSan trap under -fno-sanitize-recover). Fail closed first,
+     * mirroring cdb_crypto_unwrap_key.
+     */
+    uint8_t *nonce;
+    uint8_t *tag;
+    uint8_t *ciphertext;
     cdb_status s;
 
     if (master_key == NULL || enclave_key == NULL || wrapped_out == NULL)
         return CDB_E_INVALID_ARG;
+
+    /* Layout: nonce[12] || tag[16] || ciphertext[32]. Offsets safe now. */
+    nonce = wrapped_out;
+    tag = wrapped_out + CDB_AEAD_NONCE_SIZE;
+    ciphertext = wrapped_out + CDB_AEAD_NONCE_SIZE + CDB_AEAD_TAG_SIZE;
 
     /* A fresh random nonce per wrap. AES-256-GCM must never reuse a (key, nonce)
      * pair, and one master key wraps many enclave keys and re-wraps on rotation;
