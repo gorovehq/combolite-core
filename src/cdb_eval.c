@@ -1057,14 +1057,21 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
 cdb_status cdb_eval_expr_wire(cdb_eval_ctx *ctx, const uint8_t *wire, size_t len,
                              cdb_value *out_val, size_t *consumed)
 {
-    const uint8_t *p = wire;
-    const uint8_t *end = wire + len;
+    const uint8_t *p;
+    const uint8_t *end;
     const uint8_t *prev_wire_end;
     cdb_query_expr expr;
     cdb_status s;
 
     if (ctx == NULL || wire == NULL || out_val == NULL || consumed == NULL)
         return CDB_E_INVALID_ARG;
+
+    /* Pointer arithmetic (end = wire + len) is done only after the NULL guard:
+     * `NULL + len` with len != 0 is undefined behaviour (UBSan pointer-overflow).
+     * Declare-then-assign-before-use keeps both locals free of a read-before-set
+     * window (C++ Core Guidelines ES.20). */
+    p = wire;
+    end = wire + len;
 
     if ((s = cdb_query_read_expr(&p, end, &expr)) != CDB_OK)
         return s;
