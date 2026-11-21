@@ -204,11 +204,20 @@ int main(void)
 
 The following features, interfaces, or operators are provisioned in headers, specification documents, or executor scaffolds, but are not yet fully implemented:
 
-1. **Executor High-Level Query Operators (`src/cdb_exec.c`)**:
-   - `TEXT_SEARCH`: The `text_search_next` executor operator functions as a pass-through scoring filter; integrated streaming query evaluation across BM25 posting lists is stubbed.
-   - `VECTOR_SEARCH`: The `vector_search_next` operator executes linear scans; integration with the neighbour graph within the pipelined executor tree is pending.
-   - `TRAVERSE`: The `traverse_next` operator emits fixed `$depth` fields; recursive multi-hop path traversal and cycle detection are pending.
-   - `HYBRID_RANK`: The `hybrid_next` operator contains stubbed Reciprocal Rank Fusion (RRF); multi-branch pipeline execution is not yet integrated.
+1. **CMBQL-TEXT grammar for the multi-model search/graph operators**:
+   The `TEXT_SEARCH`, `VECTOR_SEARCH`, `TRAVERSE`, and `HYBRID_RANK` executor
+   operators (`src/cdb_exec.c`) are wired to their real engines and perform real
+   search/traversal: `TEXT_SEARCH` runs BM25 over the full-text index
+   (`cdb_doc_search`), `VECTOR_SEARCH` runs ANN over the neighbour graph ranked by
+   the requested metric (`cdb_vec_search_mode`), `TRAVERSE` performs a bounded
+   breadth-first link walk honouring direction and `max_hops` with cycle
+   detection and real per-node `$depth` (`cdb_link_list`), and `HYBRID_RANK` fuses
+   those real branch scores with Reciprocal Rank Fusion (RRF). What remains is the
+   **front-end**: these operators are currently reachable only by constructing the
+   query **wire** directly (the writers in `cdb_query.h`, as the executor tests and
+   the proc-VM `OPEN_CURSOR` path do). The CMBQL-TEXT compiler/grammar productions
+   that parse `TEXT_SEARCH`/`VECTOR_SEARCH`/`TRAVERSE`/`HYBRID_RANK` clauses, the
+   trigger subsystem, and a public `cdb_db_query` entry point are pending.
 2. **Coordinator Primary Election & Dynamic Slots (Step 6)**:
    - Dynamic allocation of coordinator slots beyond the compiled default and primary node designation via `coord/primary` (as outlined in `docs/dev/plan-step6-coord-primary.md`).
 3. **Enclave Storage & Keystore (M27–M31)**:
