@@ -683,84 +683,12 @@ static void test_window(void)
     cdb_exec_close(&cur);
 }
 
-/* Traverse appends a $depth field equal to min_hops. */
-static void test_traverse(void)
-{
-    cdb_exec_row row;
-    size_t n;
-
-    seed_two();
-    q_begin();
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_traverse(&QW, "rel", 3, CDB_TRAVERSE_FWD, 1, 2));
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_scan(&QW, "two", 3));
-    q_open();
-    n = 0;
-    while (next(&row)) {
-        TEST_ASSERT_EQUAL_INT64(1, field(&row, "$depth").as.i64);
-        n++;
-    }
-    TEST_ASSERT_EQUAL_size_t(2, n);
-    cdb_exec_close(&cur);
-}
-
-/* Text search: a limit stops the stream; no limit passes all; score is set. */
-static void test_text_search(void)
-{
-    cdb_exec_row row;
-    size_t n;
-
-    seed_events();
-
-    q_begin();
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_text_search(&QW, CDB_QUERY_FTS_ANY, 2, "q", 1, 0));
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_scan(&QW, "events", 6));
-    q_open();
-    n = 0;
-    while (next(&row)) {
-        TEST_ASSERT_EQUAL_FLOAT(1.0f, row.score);
-        n++;
-    }
-    TEST_ASSERT_EQUAL_size_t(2, n);
-    cdb_exec_close(&cur);
-
-    q_begin();
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_text_search(&QW, CDB_QUERY_FTS_ALL, 0, "q", 1, 0));
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_scan(&QW, "events", 6));
-    q_open();
-    TEST_ASSERT_EQUAL_size_t(5, drain_rows());
-    cdb_exec_close(&cur);
-}
-
-/* Vector search operator wraps a scan: k caps the stream; score is set. */
-static void test_vector_search(void)
-{
-    cdb_exec_row row;
-    size_t n;
-
-    seed_events();
-
-    q_begin();
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_vector_search(&QW, "emb", 3, 2, CDB_QUERY_METRIC_COSINE));
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_scan(&QW, "events", 6));
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_expr_field(&QW, "k", 1)); /* near expr (unused) */
-    q_open();
-    n = 0;
-    while (next(&row)) {
-        TEST_ASSERT_EQUAL_FLOAT(0.95f, row.score);
-        n++;
-    }
-    TEST_ASSERT_EQUAL_size_t(2, n);
-    cdb_exec_close(&cur);
-
-    /* k = 0 -> no cap, all rows. */
-    q_begin();
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_vector_search(&QW, "emb", 3, 0, CDB_QUERY_METRIC_DEFAULT));
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_scan(&QW, "events", 6));
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_expr_field(&QW, "k", 1));
-    q_open();
-    TEST_ASSERT_EQUAL_size_t(5, drain_rows());
-    cdb_exec_close(&cur);
-}
+/* TRAVERSE, TEXT_SEARCH and VECTOR_SEARCH are wired to their real engines
+ * (cdb_link_list / cdb_doc_search / cdb_vec_search_mode) in combolite-core #34;
+ * their behaviour over real fixtures is covered by the dedicated live tests
+ * (test_exec_traverse_live, test_exec_textsearch_live, test_exec_vecsearch_live).
+ * The old stub-behaviour cases that asserted a fabricated score / fixed $depth
+ * were removed here with the stub. */
 
 /* As-of join: backward, forward, nearest, and a tolerance that leaves a left
  * row unmatched. */
@@ -997,9 +925,6 @@ int main(void)
     RUN_TEST(test_sort_empty);
     RUN_TEST(test_limit_offset);
     RUN_TEST(test_window);
-    RUN_TEST(test_traverse);
-    RUN_TEST(test_text_search);
-    RUN_TEST(test_vector_search);
     RUN_TEST(test_asof_join);
     RUN_TEST(test_unnest);
     RUN_TEST(test_hybrid_rank);
