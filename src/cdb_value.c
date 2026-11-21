@@ -983,8 +983,16 @@ cdb_status cdb_value_read(const uint8_t *buf, size_t len, cdb_byte_order order, 
             return CDB_E_MALFORMED;
         if ((s = read_varint(&p, pend, &out->as.vector.dims)) != CDB_OK)
             return s == CDB_E_TRUNCATED ? CDB_E_MALFORMED : s;
-        if (vector_data_len(elem, out->as.vector.dims) != (size_t)(pend - p))
-            return CDB_E_MALFORMED;
+        {
+            /* vector_data_len returns 0 both for a legitimately empty vector
+             * (dims == 0) and when the byte length integer-overflows. Reject
+             * the overflow sentinel explicitly (dims != 0 but length 0) so a
+             * crafted huge dims with no trailing bytes cannot be accepted
+             * (F1 / GHSA-rf29-8939-p85v). */
+            size_t dl = vector_data_len(elem, out->as.vector.dims);
+            if ((out->as.vector.dims != 0 && dl == 0) || dl != (size_t)(pend - p))
+                return CDB_E_MALFORMED;
+        }
         out->type = CDB_TYPE_VECTOR;
         out->as.vector.elem = elem;
         out->as.vector.data = p;
@@ -1146,11 +1154,28 @@ static cdb_status validate_at(const validate_ctx *c, const uint8_t *buf, size_t 
 static cdb_status validate_vector(const validate_ctx *c, const cdb_value *v)
 {
     const uint8_t *d = v->as.vector.data;
-    uint64_t i;
+    size_t data_len = v->as.vector.data_len;
+    size_t need = vector_data_len(v->as.vector.elem, v->as.vector.dims);
+    size_t count = 0;
+    size_t i = 0;
+
+    /* Defence in depth (F1 / GHSA-rf29-8939-p85v): do not trust dims as a
+     * loop bound on its own. The validated byte length must equal exactly
+     * what this element type and dims require; a mismatch, or the 0 sentinel
+     * for a non-empty vector (byte-length overflow), is malformed. After this
+     * gate the iteration is bounded by the validated byte length, never by an
+     * unvalidated dims. */
+    if (need != data_len)
+        return CDB_E_MALFORMED;
+    if (v->as.vector.dims != 0 && need == 0)
+        return CDB_E_MALFORMED; /* overflow sentinel */
+    if (data_len != 0 && d == NULL)
+        return CDB_E_MALFORMED; /* guard before any deref */
 
     switch (v->as.vector.elem) {
     case CDB_VEC_F32:
-        for (i = 0; i < v->as.vector.dims; i++) {
+        count = data_len / 4u;
+        for (i = 0; i < count; i++) {
             uint32_t bits = cdb_load_u32(d + i * 4u, c->order);
             if (bits != f32_canonical(bits))
                 return CDB_E_NOT_CANONICAL;
@@ -1158,7 +1183,8 @@ static cdb_status validate_vector(const validate_ctx *c, const cdb_value *v)
         break;
     case CDB_VEC_F16:
     case CDB_VEC_BF16:
-        for (i = 0; i < v->as.vector.dims; i++) {
+        count = data_len / 2u;
+        for (i = 0; i < count; i++) {
             uint16_t bits = cdb_load_u16(d + i * 2u, c->order);
             if (bits != half_canonical(bits, v->as.vector.elem))
                 return CDB_E_NOT_CANONICAL;
@@ -1167,9 +1193,9 @@ static cdb_status validate_vector(const validate_ctx *c, const cdb_value *v)
     case CDB_VEC_I8:
         break;
     case CDB_VEC_BINARY:
-        if (v->as.vector.dims % 8u) {
+        if (data_len != 0 && v->as.vector.dims % 8u) {
             uint8_t unused = (uint8_t)~((1u << (unsigned)(v->as.vector.dims % 8u)) - 1u);
-            if (d[v->as.vector.data_len - 1] & unused)
+            if (d[data_len - 1] & unused)
                 return CDB_E_NOT_CANONICAL;
         }
         break;
