@@ -49,16 +49,16 @@ typedef struct cdb_fault_record {
 } cdb_fault_record;
 
 typedef struct cdb_faultdev_config {
-    uint8_t *current;          /* capacity bytes */
-    uint8_t *durable;          /* capacity bytes */
+    uint8_t *current; /* capacity bytes */
+    uint8_t *durable; /* capacity bytes */
     size_t capacity;
-    cdb_fault_record *log;     /* room for log_cap records */
+    cdb_fault_record *log; /* room for log_cap records */
     size_t log_cap;
-    uint8_t *log_data;         /* copies of logged write data */
+    uint8_t *log_data; /* copies of logged write data */
     size_t log_data_cap;
     cdb_storage_geometry geometry;
     unsigned flags;
-    cdb_fault_clock *clock;    /* optional: share crashes with other devices */
+    cdb_fault_clock *clock; /* optional: share crashes with other devices */
 } cdb_faultdev_config;
 
 typedef struct cdb_faultdev {
@@ -82,12 +82,12 @@ cdb_status cdb_faultdev_init(cdb_faultdev *dev, const cdb_faultdev_config *cfg, 
 cdb_status cdb_faultdev_rebind(cdb_faultdev *dev, cdb_storage *out);
 
 /* Arms a crash at mutating operation number op (1-based, counted from now). */
-void cdb_faultdev_arm(cdb_faultdev *dev, uint64_t op, cdb_crash_mode mode,
-                      size_t keep_writes, size_t torn_bytes);
+void cdb_faultdev_arm(cdb_faultdev *dev, uint64_t op, cdb_crash_mode mode, size_t keep_writes,
+                      size_t torn_bytes);
 
 /* Cuts power immediately, between operations. */
-void cdb_faultdev_crash_now(cdb_faultdev *dev, cdb_crash_mode mode,
-                            size_t keep_writes, size_t torn_bytes);
+void cdb_faultdev_crash_now(cdb_faultdev *dev, cdb_crash_mode mode, size_t keep_writes,
+                            size_t torn_bytes);
 
 /* Rebuilds the image a reader would find after the crash, then resumes. */
 void cdb_faultdev_reboot(cdb_faultdev *dev);

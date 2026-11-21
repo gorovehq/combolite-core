@@ -42,8 +42,8 @@
 /* Head index value: revision, page, chain length, kind. */
 #define HEAD_SIZE 21u
 
-#define MAX_CHAIN 64u    /* longest delta chain read back; a longer one is treated as corrupt */
-#define MAX_PATH 16u     /* deepest field path a patch operation may use */
+#define MAX_CHAIN 64u /* longest delta chain read back; a longer one is treated as corrupt */
+#define MAX_PATH 16u  /* deepest field path a patch operation may use */
 #define DEFAULT_CHECKPOINT_EVERY 16u
 
 /* Insert/replace payload flag: a summary follows. */
@@ -101,7 +101,8 @@ static uint8_t *buf(cdb_db *db, unsigned i)
  * byte order. (Index values, by contrast, store them as 8 big-endian bytes.) */
 static uint64_t load_lid(const cdb_db *db, const uint8_t *b)
 {
-    return db->pager.addr_width == 8 ? cdb_load_u64(b, db->pager.order) : cdb_load_u32(b, db->pager.order);
+    return db->pager.addr_width == 8 ? cdb_load_u64(b, db->pager.order)
+                                     : cdb_load_u32(b, db->pager.order);
 }
 
 static void store_lid(const cdb_db *db, uint8_t *b, uint64_t lid)
@@ -128,7 +129,8 @@ static cdb_status save_pool(cdb_db *db, void *slot)
     cdb_status s;
     if (!p->dirty)
         return CDB_OK;
-    if ((s = cdb_catalog_stage_pool(&db->catalog, p->slot.store_id, p->head.root, p->revs.root, p->next_entry))
+    if ((s = cdb_catalog_stage_pool(&db->catalog, p->slot.store_id, p->head.root, p->revs.root,
+                                    p->next_entry))
         != CDB_OK)
         return s;
     p->dirty = 0;
@@ -136,7 +138,7 @@ static cdb_status save_pool(cdb_db *db, void *slot)
 }
 
 /* Document pools pin nothing: any idle pool may be evicted once saved. */
-const cdb_slot_ops cdb_doc_slot_ops = { NULL, save_pool };
+const cdb_slot_ops cdb_doc_slot_ops = {NULL, save_pool};
 
 /* Finds the in-memory state of document pool `store`, loading it from the
  * catalog into a slot (cdb_slots.h) when it is not open. Loading opens the
@@ -179,13 +181,18 @@ static cdb_status pool_get(cdb_db *db, uint64_t store, struct cdb_doc_pool **out
      * revisions each row keeps. */
     if (info.model == CDB_MODEL_RELATIONAL) {
         free_slot->is_table = 1;
-        if ((s = cdb_table_keep_setting(info.vector, info.vector_len, db->pager.order, &free_slot->keep)) != CDB_OK)
+        if ((s = cdb_table_keep_setting(info.vector, info.vector_len, db->pager.order,
+                                        &free_slot->keep))
+            != CDB_OK)
             return s;
     }
     if (info.head_root && info.rev_root) {
-        if ((s = cdb_index_open(&free_slot->head, &db->pager, info.head_root, &db->cfg.catalog_work)) != CDB_OK)
+        if ((s = cdb_index_open(&free_slot->head, &db->pager, info.head_root,
+                                &db->cfg.catalog_work))
+            != CDB_OK)
             return s;
-        if ((s = cdb_index_open(&free_slot->revs, &db->pager, info.rev_root, &db->cfg.catalog_work)) != CDB_OK)
+        if ((s = cdb_index_open(&free_slot->revs, &db->pager, info.rev_root, &db->cfg.catalog_work))
+            != CDB_OK)
             return s;
         free_slot->have_indexes = 1;
     }
@@ -194,12 +201,18 @@ static cdb_status pool_get(cdb_db *db, uint64_t store, struct cdb_doc_pool **out
         if (db->cfg.fts_buffers == NULL || db->cfg.fts_tokens == NULL
             || db->cfg.fts_tokens_cap < cdb_fts_tokens_needed(db->pager.page_size, db->cfg.doc_max))
             return CDB_E_UNSUPPORTED; /* the index would fall behind its documents */
-        if ((s = cdb_fts_decode(info.full_text, info.full_text_len, db->pager.order, &free_slot->fts, &terms,
-                                &postings, &lengths)) != CDB_OK)
+        if ((s = cdb_fts_decode(info.full_text, info.full_text_len, db->pager.order,
+                                &free_slot->fts, &terms, &postings, &lengths))
+            != CDB_OK)
             return s;
-        if ((s = cdb_index_open(&free_slot->fts_terms, &db->pager, terms, &db->cfg.catalog_work)) != CDB_OK
-            || (s = cdb_index_open(&free_slot->fts_postings, &db->pager, postings, &db->cfg.catalog_work)) != CDB_OK
-            || (s = cdb_index_open(&free_slot->fts_lengths, &db->pager, lengths, &db->cfg.catalog_work)) != CDB_OK)
+        if ((s = cdb_index_open(&free_slot->fts_terms, &db->pager, terms, &db->cfg.catalog_work))
+                != CDB_OK
+            || (s = cdb_index_open(&free_slot->fts_postings, &db->pager, postings,
+                                   &db->cfg.catalog_work))
+                   != CDB_OK
+            || (s = cdb_index_open(&free_slot->fts_lengths, &db->pager, lengths,
+                                   &db->cfg.catalog_work))
+                   != CDB_OK)
             return s;
         free_slot->fts_on = 1;
     }
@@ -229,10 +242,12 @@ static cdb_status pool_indexes(cdb_db *db, struct cdb_doc_pool *p)
     if (p->have_indexes)
         return CDB_OK;
     if ((s = cdb_index_create(&p->head, &db->pager, p->slot.store_id, CDB_INDEX_FLAG_UNIQUE,
-                              &db->cfg.catalog_work)) != CDB_OK)
+                              &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
-    if ((s = cdb_index_create(&p->revs, &db->pager, p->slot.store_id, CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX,
-                              &db->cfg.catalog_work)) != CDB_OK)
+    if ((s = cdb_index_create(&p->revs, &db->pager, p->slot.store_id,
+                              CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
     p->have_indexes = 1;
     p->dirty = 1;
@@ -370,8 +385,8 @@ typedef struct envelope {
     size_t summary_len;
     const uint8_t *body;
     size_t body_len;
-    uint64_t chain_first;    /* overflow chain of the body, if any (read_revision); 0 = none */
-    size_t chain_len;        /* bytes in that chain */
+    uint64_t chain_first; /* overflow chain of the body, if any (read_revision); 0 = none */
+    size_t chain_len;     /* bytes in that chain */
 } envelope;
 
 /* Reads revision page lid into the page buffer and parses its envelope. The
@@ -389,7 +404,8 @@ static cdb_status read_revision(cdb_db *db, uint64_t lid, envelope *e, uint8_t *
         /* A nibblet: its data is the payload a page would have had. */
         size_t n;
         memset(&h, 0, sizeof h);
-        if ((s = cdb_nib_get(db, lid, buf(db, B_PAGE) + cdb_page_payload_offset(db->pager.fmt), capacity(db), &n))
+        if ((s = cdb_nib_get(db, lid, buf(db, B_PAGE) + cdb_page_payload_offset(db->pager.fmt),
+                             capacity(db), &n))
             != CDB_OK)
             return s;
         h.type = CDB_PAGE_TYPE_DOCUMENT;
@@ -448,8 +464,8 @@ static cdb_status read_revision(cdb_db *db, uint64_t lid, envelope *e, uint8_t *
         }
         memcpy(dest, p, inline_len);
         e->body = dest;
-        return cdb_overflow_read_db(db, &db->pager, first, h.store_id, dest + inline_len, e->body_len - inline_len,
-                                    buf(db, B_PAGE));
+        return cdb_overflow_read_db(db, &db->pager, first, h.store_id, dest + inline_len,
+                                    e->body_len - inline_len, buf(db, B_PAGE));
     }
     /* Ordinary case: the body is the rest of the payload. */
     e->body = p;
@@ -478,7 +494,8 @@ static int revision_fits(const cdb_db *db, int has_summary, size_t summary_len, 
         return 0;
     if (body_len <= cap - need)
         return 1;
-    return db->cfg.doc_max && body_len <= db->cfg.doc_max && need + 8u + db->pager.addr_width <= cap;
+    return db->cfg.doc_max && body_len <= db->cfg.doc_max
+           && need + 8u + db->pager.addr_width <= cap;
 }
 
 /* Builds a revision payload in the page buffer and writes it to a new page.
@@ -487,7 +504,8 @@ static int revision_fits(const cdb_db *db, int has_summary, size_t summary_len, 
  * (That is why the chain is written before the page is assembled.) A new
  * logical page is allocated for every revision: revisions are history and
  * are never rewritten. e->body must not point into B_PAGE. */
-static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const envelope *e, uint64_t *lid)
+static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const envelope *e,
+                                 uint64_t *lid)
 {
     uint8_t *pl = buf(db, B_PAGE);
     size_t cap = capacity(db), len = ENV_SIZE, inline_len = e->body_len;
@@ -507,8 +525,9 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
         cdb_store_u64(okey + 1, e->entry, CDB_ORDER_BIG);
         cdb_store_u64(okey + 9, e->rev, CDB_ORDER_BIG);
         inline_len = cap - head - 8u - db->pager.addr_width;
-        if ((s = cdb_overflow_write_db(db, &db->pager, pool->slot.store_id, e->body + inline_len, e->body_len - inline_len, pl,
-                                       okey, sizeof okey, &first)) != CDB_OK)
+        if ((s = cdb_overflow_write_db(db, &db->pager, pool->slot.store_id, e->body + inline_len,
+                                       e->body_len - inline_len, pl, okey, sizeof okey, &first))
+            != CDB_OK)
             return s;
     }
     memset(pl, 0, ENV_SIZE);
@@ -543,8 +562,8 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
      * key (entry, revision). */
     if (!first && cdb_nib_fits(db, len)) {
         uint8_t k[16];
-        return cdb_nib_put(db, pool->slot.store_id, CDB_NIB_KIND_REVISION, k, k_rev(k, e->entry, e->rev), pl, len,
-                           lid);
+        return cdb_nib_put(db, pool->slot.store_id, CDB_NIB_KIND_REVISION, k,
+                           k_rev(k, e->entry, e->rev), pl, len, lid);
     }
     if ((s = cdb_pager_alloc(&db->pager, lid)) != CDB_OK)
         return s;
@@ -581,10 +600,12 @@ static cdb_status parse_op(const cdb_value *opv, cdb_byte_order o, patch_op *op)
     memset(op, 0, sizeof *op);
     if ((s = cdb_value_array_iter(opv, o, &it)) != CDB_OK)
         return s;
-    if ((s = cdb_value_array_next(&it, &item, &done)) != CDB_OK || done || item.type != CDB_TYPE_INT)
+    if ((s = cdb_value_array_next(&it, &item, &done)) != CDB_OK || done
+        || item.type != CDB_TYPE_INT)
         return CDB_E_INVALID_ARG;
     op->op = item.as.i64;
-    if ((s = cdb_value_array_next(&it, &item, &done)) != CDB_OK || done || item.type != CDB_TYPE_ARRAY)
+    if ((s = cdb_value_array_next(&it, &item, &done)) != CDB_OK || done
+        || item.type != CDB_TYPE_ARRAY)
         return CDB_E_INVALID_ARG;
     if ((s = cdb_value_array_iter(&item, o, &pi)) != CDB_OK)
         return s;
@@ -702,7 +723,8 @@ static cdb_status rewrite(cdb_value_writer *w, const cdb_value *obj, cdb_byte_or
                     continue;
                 }
                 if (v.type == CDB_TYPE_OBJECT) {
-                    if ((s = cdb_value_field(w, fid)) != CDB_OK || (s = rewrite(w, &v, o, op, depth + 1)) != CDB_OK)
+                    if ((s = cdb_value_field(w, fid)) != CDB_OK
+                        || (s = rewrite(w, &v, o, op, depth + 1)) != CDB_OK)
                         return s;
                     continue;
                 }
@@ -713,7 +735,8 @@ static cdb_status rewrite(cdb_value_writer *w, const cdb_value *obj, cdb_byte_or
                 }
             }
             /* Any other field is copied unchanged. */
-            if ((s = cdb_value_field(w, fid)) != CDB_OK || (s = cdb_value_write_encoded(w, v.start, v.encoded_len)) != CDB_OK)
+            if ((s = cdb_value_field(w, fid)) != CDB_OK
+                || (s = cdb_value_write_encoded(w, v.start, v.encoded_len)) != CDB_OK)
                 return s;
         }
     }
@@ -728,7 +751,8 @@ static cdb_status rewrite(cdb_value_writer *w, const cdb_value *obj, cdb_byte_or
  * Each operation rewrites the whole document into the other buffer. A
  * malformed stored patch is CDB_E_CORRUPT; a result too big for a document
  * buffer is CDB_E_OVERFLOW. */
-static cdb_status apply_patch(cdb_db *db, unsigned *cur, size_t *len, const uint8_t *patch, size_t plen)
+static cdb_status apply_patch(cdb_db *db, unsigned *cur, size_t *len, const uint8_t *patch,
+                              size_t plen)
 {
     cdb_byte_order o = db->pager.order;
     cdb_value arr, opv;
@@ -768,7 +792,8 @@ static cdb_status apply_patch(cdb_db *db, unsigned *cur, size_t *len, const uint
  * field lists finds every difference. A changed field is replaced whole;
  * nested objects are not diffed. CDB_E_OVERFLOW if the patch does not fit
  * the work buffer. */
-static cdb_status diff(cdb_db *db, const uint8_t *a, size_t alen, const uint8_t *b, size_t blen, size_t *plen)
+static cdb_status diff(cdb_db *db, const uint8_t *a, size_t alen, const uint8_t *b, size_t blen,
+                       size_t *plen)
 {
     cdb_byte_order o = db->pager.order;
     cdb_value va, vb, fa, fb;
@@ -782,12 +807,14 @@ static cdb_status diff(cdb_db *db, const uint8_t *a, size_t alen, const uint8_t 
         return CDB_E_CORRUPT;
     cdb_value_writer_init(&w, buf(db, B_WORK), dbuf_size(db), o, CDB_DECIMAL_COMPACT);
     cdb_value_begin_array(&w);
-    if ((s = cdb_value_object_iter(&va, o, &ia)) != CDB_OK || (s = cdb_value_object_iter(&vb, o, &ib)) != CDB_OK)
+    if ((s = cdb_value_object_iter(&va, o, &ia)) != CDB_OK
+        || (s = cdb_value_object_iter(&vb, o, &ib)) != CDB_OK)
         return s;
-    if ((s = cdb_value_object_next(&ia, &ida, &fa, &da)) != CDB_OK || (s = cdb_value_object_next(&ib, &idb, &fb, &db_done)) != CDB_OK)
+    if ((s = cdb_value_object_next(&ia, &ida, &fa, &da)) != CDB_OK
+        || (s = cdb_value_object_next(&ib, &idb, &fb, &db_done)) != CDB_OK)
         return s;
     while (!da || !db_done) {
-        if (!db_done && (da || idb < ida)) {          /* only in b: set */
+        if (!db_done && (da || idb < ida)) { /* only in b: set */
             cdb_value_begin_array(&w);
             cdb_value_write_int(&w, CDB_PATCH_SET);
             cdb_value_begin_array(&w);
@@ -796,7 +823,7 @@ static cdb_status diff(cdb_db *db, const uint8_t *a, size_t alen, const uint8_t 
             cdb_value_write_encoded(&w, fb.start, fb.encoded_len);
             cdb_value_end_array(&w);
             s = cdb_value_object_next(&ib, &idb, &fb, &db_done);
-        } else if (!da && (db_done || ida < idb)) {   /* only in a: remove */
+        } else if (!da && (db_done || ida < idb)) { /* only in a: remove */
             cdb_value_begin_array(&w);
             cdb_value_write_int(&w, CDB_PATCH_REMOVE);
             cdb_value_begin_array(&w);
@@ -804,8 +831,9 @@ static cdb_status diff(cdb_db *db, const uint8_t *a, size_t alen, const uint8_t 
             cdb_value_end_array(&w);
             cdb_value_end_array(&w);
             s = cdb_value_object_next(&ia, &ida, &fa, &da);
-        } else {                                      /* in both: set if changed */
-            if (fa.encoded_len != fb.encoded_len || memcmp(fa.start, fb.start, fa.encoded_len) != 0) {
+        } else { /* in both: set if changed */
+            if (fa.encoded_len != fb.encoded_len
+                || memcmp(fa.start, fb.start, fa.encoded_len) != 0) {
                 cdb_value_begin_array(&w);
                 cdb_value_write_int(&w, CDB_PATCH_SET);
                 cdb_value_begin_array(&w);
@@ -833,11 +861,11 @@ static cdb_status diff(cdb_db *db, const uint8_t *a, size_t alen, const uint8_t 
  * (if any) in B_SUMMARY. target.summary and target.body are cleared, since
  * they pointed into buffers that were reused while rebuilding. */
 typedef struct materialized {
-    unsigned buffer;     /* B_DOC0 or B_DOC1 */
+    unsigned buffer; /* B_DOC0 or B_DOC1 */
     size_t len;
-    int has_summary;     /* the summary is in the summary buffer */
+    int has_summary; /* the summary is in the summary buffer */
     size_t summary_len;
-    envelope target;     /* envelope of the requested revision */
+    envelope target; /* envelope of the requested revision */
 } materialized;
 
 /* Rebuilds revision rev (0 = head): from the nearest full revision at or
@@ -923,24 +951,25 @@ static cdb_status materialize(cdb_db *db, struct cdb_doc_pool *pool, uint64_t en
     return CDB_OK;
 }
 
-static cdb_status doc_get_in(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev,
-                             void *body, size_t cap, size_t *body_len,
-                             char *summary, size_t summary_cap, size_t *summary_len, cdb_doc_info *info);
+static cdb_status doc_get_in(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev, void *body,
+                             size_t cap, size_t *body_len, char *summary, size_t summary_cap,
+                             size_t *summary_len, cdb_doc_info *info);
 
-cdb_status cdb_doc_get(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev,
-                       void *body, size_t cap, size_t *body_len,
-                       char *summary, size_t summary_cap, size_t *summary_len, cdb_doc_info *info)
+cdb_status cdb_doc_get(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev, void *body,
+                       size_t cap, size_t *body_len, char *summary, size_t summary_cap,
+                       size_t *summary_len, cdb_doc_info *info)
 {
     cdb_status r;
     cdb_db_lock(db);
-    r = doc_get_in(db, store, entry, rev, body, cap, body_len, summary, summary_cap, summary_len, info);
+    r = doc_get_in(db, store, entry, rev, body, cap, body_len, summary, summary_cap, summary_len,
+                   info);
     cdb_db_unlock(db);
     return r;
 }
 
-static cdb_status doc_get_in(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev,
-                             void *body, size_t cap, size_t *body_len,
-                             char *summary, size_t summary_cap, size_t *summary_len, cdb_doc_info *info)
+static cdb_status doc_get_in(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev, void *body,
+                             size_t cap, size_t *body_len, char *summary, size_t summary_cap,
+                             size_t *summary_len, cdb_doc_info *info)
 {
     struct cdb_doc_pool *pool;
     materialized m;
@@ -988,7 +1017,8 @@ static cdb_status split_payload(const cdb_delta *d, const uint8_t **summary, siz
     if (*p++ & PAYLOAD_SUMMARY) {
         uint64_t len;
         size_t n;
-        if (cdb_varint_decode(p, (size_t)(end - p), &len, &n) != CDB_OK || len > (uint64_t)(end - p) - n)
+        if (cdb_varint_decode(p, (size_t)(end - p), &len, &n) != CDB_OK
+            || len > (uint64_t)(end - p) - n)
             return CDB_E_MALFORMED;
         *summary = p + n;
         *slen = (size_t)len;
@@ -1008,12 +1038,14 @@ cdb_status cdb_doc_split_payload(const cdb_delta *d, const uint8_t **summary, si
 /* Writes revision e for the entry and points the head at it. chain is the
  * number of deltas since the last full revision, including this one (0 for
  * a full revision or tombstone). */
-static cdb_status commit_revision(cdb_db *db, struct cdb_doc_pool *pool, envelope *e, uint32_t chain)
+static cdb_status commit_revision(cdb_db *db, struct cdb_doc_pool *pool, envelope *e,
+                                  uint32_t chain)
 {
     head_rec h;
     uint64_t lid;
     cdb_status s;
-    if ((s = write_revision(db, pool, e, &lid)) != CDB_OK || (s = rev_put(pool, e->entry, e->rev, lid)) != CDB_OK)
+    if ((s = write_revision(db, pool, e, &lid)) != CDB_OK
+        || (s = rev_put(pool, e->entry, e->rev, lid)) != CDB_OK)
         return s;
     h.rev = e->rev;
     h.lid = lid;
@@ -1039,14 +1071,17 @@ static cdb_status release(cdb_db *db, struct cdb_doc_pool *pool, uint64_t lid)
         return cdb_nib_free(db, lid);
     if ((s = read_revision(db, lid, &e, NULL)) != CDB_OK)
         return s;
-    if (e.chain_first && (s = cdb_overflow_free_db(db, &db->pager, e.chain_first, pool->slot.store_id, e.chain_len,
-                                                  buf(db, B_PAGE))) != CDB_OK)
+    if (e.chain_first
+        && (s = cdb_overflow_free_db(db, &db->pager, e.chain_first, pool->slot.store_id,
+                                     e.chain_len, buf(db, B_PAGE)))
+               != CDB_OK)
         return s;
     return cdb_pager_free(&db->pager, lid);
 }
 
 /* Frees one revision: its storage and its key. */
-static cdb_status free_revision(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entry, uint64_t rev, uint64_t lid)
+static cdb_status free_revision(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entry, uint64_t rev,
+                                uint64_t lid)
 {
     uint8_t k[16];
     int found;
@@ -1062,7 +1097,8 @@ static cdb_status make_full(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entr
     envelope e;
     uint64_t old, lid;
     cdb_status s;
-    if ((s = rev_lid(pool, entry, rev, &old)) != CDB_OK || (s = read_revision(db, old, &e, NULL)) != CDB_OK)
+    if ((s = rev_lid(pool, entry, rev, &old)) != CDB_OK
+        || (s = read_revision(db, old, &e, NULL)) != CDB_OK)
         return s;
     if (e.kind != CDB_REV_DELTA)
         return CDB_OK;
@@ -1074,7 +1110,8 @@ static cdb_status make_full(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entr
     e.summary_len = m.summary_len;
     e.body = buf(db, m.buffer);
     e.body_len = m.len;
-    if ((s = release(db, pool, old)) != CDB_OK || (s = write_revision(db, pool, &e, &lid)) != CDB_OK)
+    if ((s = release(db, pool, old)) != CDB_OK
+        || (s = write_revision(db, pool, &e, &lid)) != CDB_OK)
         return s;
     return rev_put(pool, entry, rev, lid);
 }
@@ -1089,12 +1126,14 @@ static cdb_status free_from(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entr
         size_t vlen;
         uint64_t lid;
         int found;
-        cdb_status s = cdb_index_get(&pool->revs, k, k_rev(k, entry, r), v, sizeof v, &vlen, &found);
+        cdb_status s =
+            cdb_index_get(&pool->revs, k, k_rev(k, entry, r), v, sizeof v, &vlen, &found);
         if (s != CDB_OK)
             return s;
         if (!found)
             break;
-        if ((s = cdb_nib_addr_load(v, vlen, &lid)) != CDB_OK || (s = free_revision(db, pool, entry, r, lid)) != CDB_OK)
+        if ((s = cdb_nib_addr_load(v, vlen, &lid)) != CDB_OK
+            || (s = free_revision(db, pool, entry, r, lid)) != CDB_OK)
             return s;
     }
     return CDB_OK;
@@ -1257,8 +1296,7 @@ static cdb_status apply_change(cdb_db *db, const cdb_delta *d)
                 return s;
         }
         return cdb_link_on_delete(db, d->store_id, d->entry_id); /* its links (spec 6.7) */
-    default:
-        return CDB_OK;
+    default: return CDB_OK;
     }
 }
 
@@ -1267,8 +1305,8 @@ static cdb_status apply_change(cdb_db *db, const cdb_delta *d)
  * With copy, body and summary are copied into fts_buffers, because the
  * apply that follows reuses the document buffers. Without copy they point
  * into the document buffers. */
-static cdb_status fts_capture(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entry, cdb_fts_doc *out,
-                              int copy)
+static cdb_status fts_capture(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entry,
+                              cdb_fts_doc *out, int copy)
 {
     materialized m;
     cdb_status s;
@@ -1301,8 +1339,8 @@ static cdb_status fts_capture(cdb_db *db, struct cdb_doc_pool *pool, uint64_t en
  *
  * This is the default cdb_apply_fn, and it dispatches by store: the link
  * store goes to cdb_link_apply, vector collections to cdb_vec_apply,
- * time-series stores to cdb_ts_apply, and document pools are handled here. A store that is none of these (unknown,
- * dropped, another model) is ignored, as the never-fail rule requires. */
+ * time-series stores to cdb_ts_apply, and document pools are handled here. A store that is none of
+ * these (unknown, dropped, another model) is ignored, as the never-fail rule requires. */
 cdb_status cdb_doc_apply(void *ctx, cdb_pager *pager, const cdb_delta *d)
 {
     cdb_db *db = (cdb_db *)ctx;
@@ -1457,10 +1495,12 @@ static cdb_status doc_create_full_text_in(cdb_db *db, uint64_t store, const cdb_
         uint8_t k[16], v[HEAD_SIZE + 2u];
         size_t klen, vlen;
         int done;
-        s = cdb_index_seek(&c, &pool->head, db->cfg.fts_buffers + dbuf_size(db) + db->pager.page_size, NULL, 0);
+        s = cdb_index_seek(&c, &pool->head,
+                           db->cfg.fts_buffers + dbuf_size(db) + db->pager.page_size, NULL, 0);
         while (s == CDB_OK) {
             cdb_fts_doc none, doc;
-            if ((s = cdb_index_next(&c, k, sizeof k, &klen, v, sizeof v, &vlen, &done)) != CDB_OK || done)
+            if ((s = cdb_index_next(&c, k, sizeof k, &klen, v, sizeof v, &vlen, &done)) != CDB_OK
+                || done)
                 break;
             if (klen != 8 || (vlen != HEAD_SIZE && vlen != HEAD_SIZE + 2u)) {
                 s = CDB_E_CORRUPT;
@@ -1474,8 +1514,9 @@ static cdb_status doc_create_full_text_in(cdb_db *db, uint64_t store, const cdb_
         }
     }
     if (s == CDB_OK)
-        s = cdb_fts_encode(cfg, pool->fts_terms.root, pool->fts_postings.root, pool->fts_lengths.root,
-                           db->pager.order, settings, sizeof settings, &len);
+        s = cdb_fts_encode(cfg, pool->fts_terms.root, pool->fts_postings.root,
+                           pool->fts_lengths.root, db->pager.order, settings, sizeof settings,
+                           &len);
     if (s == CDB_OK)
         s = cdb_catalog_set_full_text(&db->catalog, store, settings, len);
     if (s == CDB_OK)
@@ -1526,12 +1567,16 @@ static cdb_status schema_load(cdb_db *db, struct cdb_doc_pool *pool, int *active
         return CDB_OK; /* a table's schema is its columns, checked by the table layer */
     if (db->schema_version != pool->schema_version || db->schema_store != pool->slot.store_id) {
         db->schema_version = 0;
-        if ((s = cdb_catalog_get_schema(&db->catalog, pool->slot.store_id, pool->schema_version, buf(db, B_SCHEMA),
-                                        db->pager.page_size, &db->schema_len)) != CDB_OK)
+        if ((s = cdb_catalog_get_schema(&db->catalog, pool->slot.store_id, pool->schema_version,
+                                        buf(db, B_SCHEMA), db->pager.page_size, &db->schema_len))
+            != CDB_OK)
             return s == CDB_E_NOT_FOUND ? CDB_E_CORRUPT : s;
-        s = cdb_schema_check(buf(db, B_SCHEMA), db->schema_len, db->pager.order, &db->schema_trivial);
+        s = cdb_schema_check(buf(db, B_SCHEMA), db->schema_len, db->pager.order,
+                             &db->schema_trivial);
         if (s != CDB_OK)
-            return s == CDB_E_UNSUPPORTED ? s : CDB_E_CORRUPT; /* unknown rules: a newer build wrote it */
+            return s == CDB_E_UNSUPPORTED
+                       ? s
+                       : CDB_E_CORRUPT; /* unknown rules: a newer build wrote it */
         db->schema_store = pool->slot.store_id;
         db->schema_version = pool->schema_version;
     }
@@ -1546,9 +1591,11 @@ static cdb_status schema_validate(cdb_db *db, const uint8_t *doc, size_t len)
 
 /* Checks the schema is well formed before storing it, so a bad schema can
  * never become current. */
-static cdb_status doc_set_schema_in(cdb_db *db, uint64_t store, const void *schema, size_t len, uint32_t *version);
+static cdb_status doc_set_schema_in(cdb_db *db, uint64_t store, const void *schema, size_t len,
+                                    uint32_t *version);
 
-cdb_status cdb_doc_set_schema(cdb_db *db, uint64_t store, const void *schema, size_t len, uint32_t *version)
+cdb_status cdb_doc_set_schema(cdb_db *db, uint64_t store, const void *schema, size_t len,
+                              uint32_t *version)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1557,7 +1604,8 @@ cdb_status cdb_doc_set_schema(cdb_db *db, uint64_t store, const void *schema, si
     return r;
 }
 
-static cdb_status doc_set_schema_in(cdb_db *db, uint64_t store, const void *schema, size_t len, uint32_t *version)
+static cdb_status doc_set_schema_in(cdb_db *db, uint64_t store, const void *schema, size_t len,
+                                    uint32_t *version)
 {
     struct cdb_doc_pool *pool;
     int trivial;
@@ -1574,11 +1622,11 @@ static cdb_status doc_set_schema_in(cdb_db *db, uint64_t store, const void *sche
     return CDB_OK;
 }
 
-static cdb_status doc_get_schema_in(cdb_db *db, uint64_t store, uint32_t version, void *schema, size_t cap,
-                                    size_t *len, uint32_t *current);
+static cdb_status doc_get_schema_in(cdb_db *db, uint64_t store, uint32_t version, void *schema,
+                                    size_t cap, size_t *len, uint32_t *current);
 
-cdb_status cdb_doc_get_schema(cdb_db *db, uint64_t store, uint32_t version, void *schema, size_t cap,
-                              size_t *len, uint32_t *current)
+cdb_status cdb_doc_get_schema(cdb_db *db, uint64_t store, uint32_t version, void *schema,
+                              size_t cap, size_t *len, uint32_t *current)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1587,8 +1635,8 @@ cdb_status cdb_doc_get_schema(cdb_db *db, uint64_t store, uint32_t version, void
     return r;
 }
 
-static cdb_status doc_get_schema_in(cdb_db *db, uint64_t store, uint32_t version, void *schema, size_t cap,
-                                    size_t *len, uint32_t *current)
+static cdb_status doc_get_schema_in(cdb_db *db, uint64_t store, uint32_t version, void *schema,
+                                    size_t cap, size_t *len, uint32_t *current)
 {
     struct cdb_doc_pool *pool;
     cdb_status s;
@@ -1624,8 +1672,8 @@ static cdb_status doc_get_schema_in(cdb_db *db, uint64_t store, uint32_t version
  * more. */
 typedef struct staged {
     int found;
-    size_t off;      /* of the record in doc_stage */
-    size_t len;      /* state length */
+    size_t off; /* of the record in doc_stage */
+    size_t len; /* state length */
     size_t summary_len;
     uint8_t flags;
 } staged;
@@ -1633,11 +1681,11 @@ typedef struct staged {
 /* A document as the open transaction sees it. */
 typedef struct tx_view {
     int live;
-    unsigned b;          /* with need_state: the document buffer holding it */
+    unsigned b; /* with need_state: the document buffer holding it */
     size_t len;
     int has_summary;
     size_t summary_len;
-    uint32_t schema;     /* with need_state: the schema version the state was written under */
+    uint32_t schema; /* with need_state: the schema version the state was written under */
 } tx_view;
 
 /* Staging records are indexed in a hash table of CDB_STAGE_BUCKETS buckets.
@@ -1697,7 +1745,8 @@ static void stage_find(const cdb_db *db, uint64_t store, uint64_t entry, staged 
     off = db->stage_buckets[b];
     while (off != CDB_STAGE_NIL) {
         const uint8_t *r = p + off;
-        if (cdb_load_u64(r, CDB_ORDER_BIG) == store && cdb_load_u64(r + 8, CDB_ORDER_BIG) == entry) {
+        if (cdb_load_u64(r, CDB_ORDER_BIG) == store
+            && cdb_load_u64(r + 8, CDB_ORDER_BIG) == entry) {
             st->found = 1;
             st->off = off;
             st->len = cdb_load_u32(r + 16, CDB_ORDER_BIG);
@@ -1716,8 +1765,8 @@ static void stage_find(const cdb_db *db, uint64_t store, uint64_t entry, staged 
  * journal). So the old record is always removed first, and if the new one
  * does not fit (or there is no doc_stage at all), the overflow flag is set
  * instead. Cannot fail. */
-static void stage_put(cdb_db *db, uint64_t store, uint64_t entry, const staged *old, const tx_view *v,
-                      const uint8_t *state)
+static void stage_put(cdb_db *db, uint64_t store, uint64_t entry, const staged *old,
+                      const tx_view *v, const uint8_t *state)
 {
     uint8_t *p = db->cfg.doc_stage, *r;
     size_t avail, len = v->live ? v->len : 0u;
@@ -1762,7 +1811,8 @@ static void stage_put(cdb_db *db, uint64_t store, uint64_t entry, const staged *
  * need_state, a live document's body ends up in document buffer v->b.
  * Without need_state only liveness is worked out, which is much cheaper.
  * Used when the document has no staging record. */
-static cdb_status replay_tx(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entry, int need_state, tx_view *v)
+static cdb_status replay_tx(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entry, int need_state,
+                            tx_view *v)
 {
     uint64_t off;
     cdb_status s;
@@ -1777,8 +1827,8 @@ static cdb_status replay_tx(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entr
         size_t rlen = 0;
         int live = 0;
         uint32_t ver = 0;
-        s = cdb_table_col_committed_row(db, pool->slot.store_id, entry, buf(db, B_DOC0), capacity(db),
-                                        &rlen, &live, &ver);
+        s = cdb_table_col_committed_row(db, pool->slot.store_id, entry, buf(db, B_DOC0),
+                                        capacity(db), &rlen, &live, &ver);
         if (s != CDB_OK && s != CDB_E_NOT_FOUND)
             return s;
         v->live = live;
@@ -1854,15 +1904,13 @@ static cdb_status replay_tx(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entr
             break;
         }
         case CDB_OP_PATCH:
-            if (v->live && need_state && (s = apply_patch(db, &v->b, &v->len, d.data, d.len)) != CDB_OK)
+            if (v->live && need_state
+                && (s = apply_patch(db, &v->b, &v->len, d.data, d.len)) != CDB_OK)
                 return s;
             v->schema = pool->schema_version;
             break;
-        case CDB_OP_DELETE:
-            v->live = 0;
-            break;
-        default:
-            break;
+        case CDB_OP_DELETE: v->live = 0; break;
+        default: break;
         }
     }
     return CDB_OK;
@@ -1914,8 +1962,9 @@ static cdb_status tx_pool(cdb_db *db, uint64_t store, struct cdb_doc_pool **pool
  * (flags, optional summary, body: spec 14.9.3) and journaled, and the new
  * state staged. Errors: CDB_E_INVALID_ARG, CDB_E_NOT_FOUND, CDB_E_OVERFLOW,
  * CDB_E_SCHEMA; nothing is journaled on any error. */
-static cdb_status put_body(cdb_db *db, struct cdb_doc_pool *pool, int guarded, uint64_t entry, uint8_t op,
-                           const char *summary, size_t summary_len, const void *body, size_t body_len)
+static cdb_status put_body(cdb_db *db, struct cdb_doc_pool *pool, int guarded, uint64_t entry,
+                           uint8_t op, const char *summary, size_t summary_len, const void *body,
+                           size_t body_len)
 {
     uint8_t *p = buf(db, B_WORK);
     size_t cap = capacity(db), len = 0;
@@ -1924,8 +1973,12 @@ static cdb_status put_body(cdb_db *db, struct cdb_doc_pool *pool, int guarded, u
     tx_view now;
     cdb_status s;
 
-    if (body == NULL || cdb_value_validate((const uint8_t *)body, body_len, db->pager.order, CDB_DECIMAL_COMPACT, 0) != CDB_OK
-        || cdb_value_read((const uint8_t *)body, body_len, db->pager.order, &v) != CDB_OK || v.type != CDB_TYPE_OBJECT)
+    if (body == NULL
+        || cdb_value_validate((const uint8_t *)body, body_len, db->pager.order, CDB_DECIMAL_COMPACT,
+                              0)
+               != CDB_OK
+        || cdb_value_read((const uint8_t *)body, body_len, db->pager.order, &v) != CDB_OK
+        || v.type != CDB_TYPE_OBJECT)
         return CDB_E_INVALID_ARG;
     if (summary == NULL && summary_len)
         return CDB_E_INVALID_ARG;
@@ -2006,7 +2059,8 @@ static cdb_status doc_insert_in(cdb_db *db, uint64_t store, const char *summary,
     if ((s = tx_pool(db, store, &pool, &guarded)) != CDB_OK
         || (s = cdb_db_peek_entry(db, store, &pool->next_entry, &id)) != CDB_OK)
         return s;
-    if ((s = put_body(db, pool, guarded, id, CDB_OP_INSERT, summary, summary_len, body, body_len)) != CDB_OK)
+    if ((s = put_body(db, pool, guarded, id, CDB_OP_INSERT, summary, summary_len, body, body_len))
+        != CDB_OK)
         return s;
     *entry = cdb_db_take_entry(db, store, &pool->next_entry, &pool->dirty);
     return CDB_OK;
@@ -2041,9 +2095,11 @@ static cdb_status doc_replace_in(cdb_db *db, uint64_t store, uint64_t entry, con
 /* A patch is checked twice for size: the patch itself must fit as a delta
  * revision's body, and the patched document must fit as a later checkpoint.
  * The schema check runs on the patched document. */
-static cdb_status doc_patch_in(cdb_db *db, uint64_t store, uint64_t entry, const void *patch, size_t patch_len);
+static cdb_status doc_patch_in(cdb_db *db, uint64_t store, uint64_t entry, const void *patch,
+                               size_t patch_len);
 
-cdb_status cdb_doc_patch(cdb_db *db, uint64_t store, uint64_t entry, const void *patch, size_t patch_len)
+cdb_status cdb_doc_patch(cdb_db *db, uint64_t store, uint64_t entry, const void *patch,
+                         size_t patch_len)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -2052,7 +2108,8 @@ cdb_status cdb_doc_patch(cdb_db *db, uint64_t store, uint64_t entry, const void 
     return r;
 }
 
-static cdb_status doc_patch_in(cdb_db *db, uint64_t store, uint64_t entry, const void *patch, size_t patch_len)
+static cdb_status doc_patch_in(cdb_db *db, uint64_t store, uint64_t entry, const void *patch,
+                               size_t patch_len)
 {
     struct cdb_doc_pool *pool;
     staged st;
@@ -2063,7 +2120,8 @@ static cdb_status doc_patch_in(cdb_db *db, uint64_t store, uint64_t entry, const
         return s;
     if (entry == 0 || entry >= pool->next_entry)
         return CDB_E_NOT_FOUND;
-    if (patch == NULL || validate_patch((const uint8_t *)patch, patch_len, db->pager.order) != CDB_OK)
+    if (patch == NULL
+        || validate_patch((const uint8_t *)patch, patch_len, db->pager.order) != CDB_OK)
         return CDB_E_INVALID_ARG;
     if (!revision_fits(db, 0, 0, patch_len))
         return CDB_E_OVERFLOW; /* the patch is a delta revision's body */
@@ -2152,11 +2210,12 @@ static cdb_status doc_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, 
     return CDB_OK;
 }
 
-static cdb_status doc_get_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off, void *body,
-                                   size_t cap, size_t *len, int *live, uint32_t *schema);
+static cdb_status doc_get_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off,
+                                   void *body, size_t cap, size_t *len, int *live,
+                                   uint32_t *schema);
 
-cdb_status cdb_doc_get_in_tx(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off, void *body,
-                             size_t cap, size_t *len, int *live, uint32_t *schema)
+cdb_status cdb_doc_get_in_tx(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off,
+                             void *body, size_t cap, size_t *len, int *live, uint32_t *schema)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -2165,8 +2224,8 @@ cdb_status cdb_doc_get_in_tx(cdb_db *db, uint64_t store, uint64_t entry, size_t 
     return r;
 }
 
-static cdb_status doc_get_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off, void *body,
-                                   size_t cap, size_t *len, int *live, uint32_t *schema)
+static cdb_status doc_get_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off,
+                                   void *body, size_t cap, size_t *len, int *live, uint32_t *schema)
 {
     struct cdb_doc_pool *pool;
     staged st;
@@ -2216,7 +2275,8 @@ static cdb_status doc_get_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, s
     return CDB_OK;
 }
 
-static cdb_status doc_next_live_in(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry, int *done);
+static cdb_status doc_next_live_in(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry,
+                                   int *done);
 
 cdb_status cdb_doc_next_live(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry, int *done)
 {
@@ -2227,7 +2287,8 @@ cdb_status cdb_doc_next_live(cdb_db *db, uint64_t store, uint64_t after, uint64_
     return r;
 }
 
-static cdb_status doc_next_live_in(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry, int *done)
+static cdb_status doc_next_live_in(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry,
+                                   int *done)
 {
     struct cdb_doc_pool *pool;
     cdb_index_cursor c;
@@ -2242,7 +2303,8 @@ static cdb_status doc_next_live_in(cdb_db *db, uint64_t store, uint64_t after, u
     if ((s = cdb_index_seek(&c, &pool->head, buf(db, B_PAGE), k, k_head(k, after + 1u))) != CDB_OK)
         return s;
     for (;;) {
-        if ((s = cdb_index_next(&c, k, sizeof k, &klen, v, sizeof v, &vlen, done)) != CDB_OK || *done)
+        if ((s = cdb_index_next(&c, k, sizeof k, &klen, v, sizeof v, &vlen, done)) != CDB_OK
+            || *done)
             return s;
         if (klen != 8 || (vlen != HEAD_SIZE && vlen != HEAD_SIZE + 2u))
             return CDB_E_CORRUPT;
@@ -2255,8 +2317,8 @@ static cdb_status doc_next_live_in(cdb_db *db, uint64_t store, uint64_t after, u
 
 /* A revision nibblet moved (cdb_nib_merge): the revisions index, and the
  * head if it is the head revision, point at the new address. */
-cdb_status cdb_doc_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen, uint64_t old_addr,
-                             uint64_t addr)
+cdb_status cdb_doc_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
+                             uint64_t old_addr, uint64_t addr)
 {
     struct cdb_doc_pool *pool;
     uint8_t v[10];
@@ -2282,7 +2344,8 @@ cdb_status cdb_doc_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, si
         return s;
     if (cur != old_addr)
         return CDB_E_NOT_FOUND;
-    if ((s = rev_put(pool, entry, rev, addr)) != CDB_OK || (s = head_get(pool, entry, &h, &found)) != CDB_OK)
+    if ((s = rev_put(pool, entry, rev, addr)) != CDB_OK
+        || (s = head_get(pool, entry, &h, &found)) != CDB_OK)
         return s;
     if (found && h.rev == rev) {
         h.lid = addr;
@@ -2291,8 +2354,8 @@ cdb_status cdb_doc_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, si
     return CDB_OK;
 }
 
-cdb_status cdb_doc_overflow_tail_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
-                                       uint64_t old_addr, uint64_t addr)
+cdb_status cdb_doc_overflow_tail_moved(cdb_db *db, uint64_t store, const uint8_t *okey,
+                                       size_t oklen, uint64_t old_addr, uint64_t addr)
 {
     struct cdb_doc_pool *pool;
     uint8_t val_buf[10];
@@ -2311,7 +2374,8 @@ cdb_status cdb_doc_overflow_tail_moved(cdb_db *db, uint64_t store, const uint8_t
         return CDB_E_NOT_FOUND;
     if (s != CDB_OK)
         return s;
-    if ((s = cdb_index_get(&pool->revs, okey, oklen, val_buf, sizeof val_buf, &vlen, &found)) != CDB_OK)
+    if ((s = cdb_index_get(&pool->revs, okey, oklen, val_buf, sizeof val_buf, &vlen, &found))
+        != CDB_OK)
         return s;
     if (!found)
         return CDB_E_NOT_FOUND;
@@ -2333,7 +2397,8 @@ cdb_status cdb_doc_overflow_tail_moved(cdb_db *db, uint64_t store, const uint8_t
     off = ENV_SIZE;
     if (pl[45] & ENV_FLAG_SUMMARY) {
         cdb_value v;
-        if (cdb_value_read(pl + off, h.payload_len - off, db->pager.order, &v) != CDB_OK || v.type != CDB_TYPE_STRING)
+        if (cdb_value_read(pl + off, h.payload_len - off, db->pager.order, &v) != CDB_OK
+            || v.type != CDB_TYPE_STRING)
             return CDB_E_CORRUPT;
         off += v.encoded_len;
     }
@@ -2391,14 +2456,13 @@ cdb_status cdb_doc_tx_entries(cdb_db *db, uint64_t store, cdb_doc_entry_fn fn, v
     for (joff = db->tx_start; joff < db->journal.end;) {
         cdb_record r;
         uint64_t next, at = joff;
-        if ((s = cdb_db_read_record(db, joff, &r, &next))
-            != CDB_OK)
+        if ((s = cdb_db_read_record(db, joff, &r, &next)) != CDB_OK)
             return s;
         joff = next;
         if (cdb_tx_dropped(db, at))
             continue;
-        if (r.kind == CDB_RECORD_DATA && r.tx_id == db->tx_id && r.store_id == store && r.entry_id != 0
-            && (s = fn(ctx, r.entry_id, CDB_STAGE_OFF_NONE)) != CDB_OK)
+        if (r.kind == CDB_RECORD_DATA && r.tx_id == db->tx_id && r.store_id == store
+            && r.entry_id != 0 && (s = fn(ctx, r.entry_id, CDB_STAGE_OFF_NONE)) != CDB_OK)
             return s;
     }
     return CDB_OK;

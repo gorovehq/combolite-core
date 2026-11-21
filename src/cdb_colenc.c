@@ -50,8 +50,8 @@ static int normalize_tag(uint8_t *tag)
 
 int cdb_colenc_can_bitpack(uint8_t tag)
 {
-    return tag == CDB_TAG_INT || tag == CDB_TAG_TIMESTAMP || tag == CDB_TAG_TRUE ||
-           tag == CDB_TAG_FALSE;
+    return tag == CDB_TAG_INT || tag == CDB_TAG_TIMESTAMP || tag == CDB_TAG_TRUE
+           || tag == CDB_TAG_FALSE;
 }
 
 /* Smallest power of two that is >= v (v > 0). */
@@ -100,14 +100,10 @@ size_t cdb_colenc_max_size(size_t values_len)
 static uint64_t load_w(const uint8_t *p, unsigned w, cdb_byte_order order)
 {
     switch (w) {
-    case 1:
-        return p[0];
-    case 2:
-        return cdb_load_u16(p, order);
-    case 4:
-        return cdb_load_u32(p, order);
-    default:
-        return cdb_load_u64(p, order);
+    case 1: return p[0];
+    case 2: return cdb_load_u16(p, order);
+    case 4: return cdb_load_u32(p, order);
+    default: return cdb_load_u64(p, order);
     }
 }
 
@@ -130,17 +126,12 @@ static unsigned width_for(uint64_t v)
 static size_t vec_elem_bits(cdb_vector_elem elem)
 {
     switch (elem) {
-    case CDB_VEC_F32:
-        return 32;
+    case CDB_VEC_F32: return 32;
     case CDB_VEC_F16:
-    case CDB_VEC_BF16:
-        return 16;
-    case CDB_VEC_I8:
-        return 8;
-    case CDB_VEC_BINARY:
-        return 1;
-    default:
-        return 0;
+    case CDB_VEC_BF16: return 16;
+    case CDB_VEC_I8: return 8;
+    case CDB_VEC_BINARY: return 1;
+    default: return 0;
     }
 }
 
@@ -254,8 +245,7 @@ static cdb_status validate_vector_data(cdb_byte_order order, cdb_vector_elem ele
                 return CDB_E_NOT_CANONICAL;
         }
         break;
-    case CDB_VEC_I8:
-        break;
+    case CDB_VEC_I8: break;
     case CDB_VEC_BINARY:
         if (dims % 8u) {
             uint8_t unused = (uint8_t)~((1u << (unsigned)(dims % 8u)) - 1u);
@@ -307,8 +297,7 @@ static cdb_status parse_item(uint8_t tag, cdb_byte_order order, cdb_decimal_mode
             if (!cdb_value_utf8_valid(p + n, (size_t)v))
                 return CDB_E_MALFORMED;
             break;
-        case CDB_TAG_BINARY:
-            break; /* any bytes are canonical */
+        case CDB_TAG_BINARY: break; /* any bytes are canonical */
         case CDB_TAG_ARRAY:
             if ((st = validate_array_payload(order, dm, p + n, (size_t)v)) != CDB_OK)
                 return st;
@@ -335,7 +324,8 @@ static cdb_status parse_item(uint8_t tag, cdb_byte_order order, cdb_decimal_mode
             unscaled_len = (size_t)v - sn;
             if (!cdb_value_decimal_is_canonical(unscaled, unscaled_len))
                 return CDB_E_NOT_CANONICAL;
-            if (dm == CDB_DECIMAL_COMPACT && !cdb_value_decimal_fits_compact(unscaled, unscaled_len))
+            if (dm == CDB_DECIMAL_COMPACT
+                && !cdb_value_decimal_fits_compact(unscaled, unscaled_len))
                 return CDB_E_OVERFLOW;
             break;
         }
@@ -364,8 +354,7 @@ static cdb_status parse_item(uint8_t tag, cdb_byte_order order, cdb_decimal_mode
                 return st;
             break;
         }
-        default: /* binary already handled above */
-            break;
+        default: /* binary already handled above */ break;
         }
         *ilen = n + (size_t)v;
         return CDB_OK;
@@ -382,17 +371,10 @@ static cdb_status parse_item(uint8_t tag, cdb_byte_order order, cdb_decimal_mode
             return st;
         n += n2;
         break;
-    case CDB_TAG_F64:
-        n = 8;
-        break;
-    case CDB_TAG_F32:
-        n = 4;
-        break;
-    case CDB_TAG_TIMESTAMP:
-        n = 9;
-        break;
-    default:
-        return CDB_E_INVALID_ARG;
+    case CDB_TAG_F64: n = 8; break;
+    case CDB_TAG_F32: n = 4; break;
+    case CDB_TAG_TIMESTAMP: n = 9; break;
+    default: return CDB_E_INVALID_ARG;
     }
     if (avail < n)
         return CDB_E_TRUNCATED;
@@ -454,7 +436,7 @@ typedef struct enc_ctx {
     uint64_t *first; /* first value of each dictionary entry */
     uint64_t *table; /* open-addressing hash table: 0 = empty, else index + 1 */
     size_t table_mask;
-    size_t k;        /* dictionary entries */
+    size_t k; /* dictionary entries */
     size_t dict_items;
 } enc_ctx;
 
@@ -478,8 +460,8 @@ static int same_value(const enc_ctx *c, size_t i, size_t j)
 {
     size_t li = (size_t)(c->vo[i + 1] - c->vo[i]);
 
-    return li == (size_t)(c->vo[j + 1] - c->vo[j]) &&
-           memcmp(c->in + c->vo[i], c->in + c->vo[j], li) == 0;
+    return li == (size_t)(c->vo[j + 1] - c->vo[j])
+           && memcmp(c->in + c->vo[i], c->in + c->vo[j], li) == 0;
 }
 
 /* FNV-1a over an item's raw bytes. Only used to find a candidate match
@@ -515,9 +497,7 @@ static void get_int(const enc_ctx *c, size_t i, int64_t *v, uint8_t *prec)
         *prec = p[1];
         *v = (int64_t)cdb_load_u64(p + 2, c->order);
         break;
-    default: /* bool */
-        *v = p[0] == CDB_TAG_TRUE ? 1 : 0;
-        break;
+    default: /* bool */ *v = p[0] == CDB_TAG_TRUE ? 1 : 0; break;
     }
 }
 
@@ -550,8 +530,8 @@ static cdb_status parse_input(enc_ctx *c, cdb_decimal_mode dm, size_t values_len
         c->vo[i] = (uint64_t)pos;
         if (pos >= values_len)
             return CDB_E_TRUNCATED;
-        if ((st = validate_input_value(c->tag, c->order, dm, c->in + pos, values_len - pos,
-                                       &ilen)) != CDB_OK)
+        if ((st = validate_input_value(c->tag, c->order, dm, c->in + pos, values_len - pos, &ilen))
+            != CDB_OK)
             return st;
         pos += ilen;
     }
@@ -715,23 +695,19 @@ static cdb_status run_bitpack(const enc_ctx *c, sink *s)
 static cdb_status run_enc(const enc_ctx *c, unsigned enc, sink *s)
 {
     switch (enc) {
-    case CDB_COLENC_PLAIN:
-        return run_plain(c, s);
-    case CDB_COLENC_DICT:
-        return run_dict(c, s);
-    case CDB_COLENC_RLE:
-        return run_rle(c, s);
-    default:
-        return run_bitpack(c, s);
+    case CDB_COLENC_PLAIN: return run_plain(c, s);
+    case CDB_COLENC_DICT: return run_dict(c, s);
+    case CDB_COLENC_RLE: return run_rle(c, s);
+    default: return run_bitpack(c, s);
     }
 }
 
 #define AUTO 0xFFu
 
-static cdb_status encode_impl(unsigned want, uint8_t tag, cdb_byte_order order,
-                              cdb_decimal_mode dm, const uint8_t *values, size_t values_len,
-                              size_t n, uint64_t *scratch, size_t scratch_words, uint8_t *out,
-                              size_t out_cap, unsigned *enc, size_t *out_len)
+static cdb_status encode_impl(unsigned want, uint8_t tag, cdb_byte_order order, cdb_decimal_mode dm,
+                              const uint8_t *values, size_t values_len, size_t n, uint64_t *scratch,
+                              size_t scratch_words, uint8_t *out, size_t out_cap, unsigned *enc,
+                              size_t *out_len)
 {
     enc_ctx c;
     sink s;
@@ -739,9 +715,9 @@ static cdb_status encode_impl(unsigned want, uint8_t tag, cdb_byte_order order,
     size_t best_size = (size_t)-1, psize;
     cdb_status st;
 
-    if (out_len == NULL || (n > 0 && (values == NULL || scratch == NULL)) ||
-        (out == NULL && out_cap > 0) || !normalize_tag(&tag) ||
-        (want != AUTO && want > CDB_COLENC_BITPACK))
+    if (out_len == NULL || (n > 0 && (values == NULL || scratch == NULL))
+        || (out == NULL && out_cap > 0) || !normalize_tag(&tag)
+        || (want != AUTO && want > CDB_COLENC_BITPACK))
         return CDB_E_INVALID_ARG;
     if (enc != NULL)
         *enc = CDB_COLENC_PLAIN;
@@ -805,9 +781,9 @@ static cdb_status encode_impl(unsigned want, uint8_t tag, cdb_byte_order order,
 }
 
 cdb_status cdb_colenc_encode(uint8_t tag, cdb_byte_order order, cdb_decimal_mode decimal_mode,
-                             const uint8_t *values, size_t values_len, size_t n,
-                             uint64_t *scratch, size_t scratch_words, uint8_t *out,
-                             size_t out_cap, unsigned *enc, size_t *out_len)
+                             const uint8_t *values, size_t values_len, size_t n, uint64_t *scratch,
+                             size_t scratch_words, uint8_t *out, size_t out_cap, unsigned *enc,
+                             size_t *out_len)
 {
     return encode_impl(AUTO, tag, order, decimal_mode, values, values_len, n, scratch,
                        scratch_words, out, out_cap, enc, out_len);
@@ -816,8 +792,7 @@ cdb_status cdb_colenc_encode(uint8_t tag, cdb_byte_order order, cdb_decimal_mode
 cdb_status cdb_colenc_encode_as(unsigned want, uint8_t tag, cdb_byte_order order,
                                 cdb_decimal_mode decimal_mode, const uint8_t *values,
                                 size_t values_len, size_t n, uint64_t *scratch,
-                                size_t scratch_words, uint8_t *out, size_t out_cap,
-                                size_t *out_len)
+                                size_t scratch_words, uint8_t *out, size_t out_cap, size_t *out_len)
 {
     return encode_impl(want, tag, order, decimal_mode, values, values_len, n, scratch,
                        scratch_words, out, out_cap, NULL, out_len);
@@ -851,14 +826,14 @@ static cdb_status init_dict(cdb_colenc_reader *r, uint64_t *scratch, size_t scra
     r->k = k;
     for (j = 0; j < (size_t)k; j++) {
         r->offs[j] = (uint64_t)pos;
-        if ((st = parse_item(r->tag, r->order, r->decimal_mode, r->data + pos, r->len - pos,
-                             &il)) != CDB_OK)
+        if ((st = parse_item(r->tag, r->order, r->decimal_mode, r->data + pos, r->len - pos, &il))
+            != CDB_OK)
             return st;
         pos += il;
         r->offs[j + 1] = (uint64_t)pos;
         for (m = 0; m < j; m++)
-            if (r->offs[m + 1] - r->offs[m] == il &&
-                memcmp(r->data + r->offs[m], r->data + r->offs[j], il) == 0)
+            if (r->offs[m + 1] - r->offs[m] == il
+                && memcmp(r->data + r->offs[m], r->data + r->offs[j], il) == 0)
                 return CDB_E_NOT_CANONICAL; /* repeated entry */
     }
     r->width = bitlen(k - 1u);
@@ -918,9 +893,8 @@ static cdb_status init_bitpack(cdb_colenc_reader *r)
 }
 
 cdb_status cdb_colenc_reader_init(cdb_colenc_reader *r, uint8_t tag, cdb_byte_order order,
-                                  cdb_decimal_mode decimal_mode, unsigned enc,
-                                  const uint8_t *data, size_t len, size_t n, uint64_t *scratch,
-                                  size_t scratch_words)
+                                  cdb_decimal_mode decimal_mode, unsigned enc, const uint8_t *data,
+                                  size_t len, size_t n, uint64_t *scratch, size_t scratch_words)
 {
     cdb_status st = CDB_OK;
 
@@ -947,8 +921,7 @@ cdb_status cdb_colenc_reader_init(cdb_colenc_reader *r, uint8_t tag, cdb_byte_or
     return st;
 }
 
-cdb_status cdb_colenc_next(cdb_colenc_reader *r, const uint8_t **item, size_t *item_len,
-                           int *done)
+cdb_status cdb_colenc_next(cdb_colenc_reader *r, const uint8_t **item, size_t *item_len, int *done)
 {
     size_t il, nn;
     uint64_t v;
@@ -963,8 +936,9 @@ cdb_status cdb_colenc_next(cdb_colenc_reader *r, const uint8_t **item, size_t *i
     *done = 0;
     switch (r->enc) {
     case CDB_COLENC_PLAIN:
-        if ((st = parse_item(r->tag, r->order, r->decimal_mode, r->data + r->pos,
-                             r->len - r->pos, &il)) != CDB_OK)
+        if ((st = parse_item(r->tag, r->order, r->decimal_mode, r->data + r->pos, r->len - r->pos,
+                             &il))
+            != CDB_OK)
             return fail(r, st);
         *item = r->data + r->pos;
         *item_len = il;
@@ -981,7 +955,8 @@ cdb_status cdb_colenc_next(cdb_colenc_reader *r, const uint8_t **item, size_t *i
                 return fail(r, CDB_E_CORRUPT);
             r->pos += nn;
             if ((st = parse_item(r->tag, r->order, r->decimal_mode, r->data + r->pos,
-                                 r->len - r->pos, &il)) != CDB_OK)
+                                 r->len - r->pos, &il))
+                != CDB_OK)
                 return fail(r, st);
             if (r->have_prev && il == prev_len && memcmp(prev, r->data + r->pos, il) == 0)
                 return fail(r, CDB_E_NOT_CANONICAL); /* adjacent runs of one item */
@@ -1051,8 +1026,7 @@ cdb_status cdb_colenc_reader_finish(const cdb_colenc_reader *r)
         return CDB_OK;
     switch (r->enc) {
     case CDB_COLENC_PLAIN:
-    case CDB_COLENC_RLE:
-        return r->pos == r->len ? CDB_OK : CDB_E_NOT_CANONICAL;
+    case CDB_COLENC_RLE: return r->pos == r->len ? CDB_OK : CDB_E_NOT_CANONICAL;
     case CDB_COLENC_DICT:
         if (r->next_new != r->k)
             return CDB_E_NOT_CANONICAL; /* an entry nothing uses */
@@ -1075,7 +1049,8 @@ cdb_status cdb_colenc_validate(uint8_t tag, cdb_byte_order order, cdb_decimal_mo
     cdb_status st;
 
     if ((st = cdb_colenc_reader_init(&r, tag, order, decimal_mode, enc, data, len, n, scratch,
-                                     scratch_words)) != CDB_OK)
+                                     scratch_words))
+        != CDB_OK)
         return st;
     for (;;) {
         if ((st = cdb_colenc_next(&r, &item, &il, &done)) != CDB_OK)

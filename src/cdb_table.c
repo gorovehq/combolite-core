@@ -51,7 +51,8 @@ typedef struct cdb_table_idx idx;
 
 static cdb_status rowgroups(cdb_db *db, uint64_t store, cdb_rg *g);
 static cdb_status fold_pending(cdb_db *db, table *t);
-static cdb_status col_next_live(cdb_db *db, table *t, uint64_t after, uint64_t *out_entry, int *done);
+static cdb_status col_next_live(cdb_db *db, table *t, uint64_t after, uint64_t *out_entry,
+                                int *done);
 
 size_t cdb_table_buffers_size(size_t page_size, size_t doc_max)
 {
@@ -86,10 +87,8 @@ static int indexable(int type)
     case CDB_TYPE_TIMESTAMP:
     case CDB_TYPE_REF:
     case CDB_TYPE_STRING:
-    case CDB_TYPE_BINARY:
-        return 1;
-    default:
-        return 0;
+    case CDB_TYPE_BINARY: return 1;
+    default: return 0;
     }
 }
 
@@ -103,7 +102,7 @@ static cdb_status save_table(cdb_db *db, void *slot)
     return CDB_OK;
 }
 
-const cdb_slot_ops cdb_table_slot_ops = { NULL, save_table };
+const cdb_slot_ops cdb_table_slot_ops = {NULL, save_table};
 
 /* Forgets a table's open state, and its pool's, after a catalog change, so
  * both reload. Catalog changes reconcile first, so nothing unsaved is lost. */
@@ -118,12 +117,14 @@ static void forget(cdb_db *db, uint64_t store)
 
 /* -------------------------------------------------------- decoding */
 
-static cdb_status get_field(const cdb_value *obj, cdb_byte_order o, uint64_t id, cdb_value *v, int *found)
+static cdb_status get_field(const cdb_value *obj, cdb_byte_order o, uint64_t id, cdb_value *v,
+                            int *found)
 {
     return cdb_value_object_get(obj, o, id, v, found);
 }
 
-static cdb_status get_uint(const cdb_value *obj, cdb_byte_order o, uint64_t id, uint64_t max, uint64_t *out)
+static cdb_status get_uint(const cdb_value *obj, cdb_byte_order o, uint64_t id, uint64_t max,
+                           uint64_t *out)
 {
     cdb_value v;
     int found;
@@ -155,8 +156,8 @@ static cdb_status get_bool(const cdb_value *obj, cdb_byte_order o, uint64_t id, 
 }
 
 /* Reads an array of up to max field IDs. */
-static cdb_status get_ids(const cdb_value *obj, cdb_byte_order o, uint64_t id, uint64_t *ids, unsigned max,
-                          unsigned *n)
+static cdb_status get_ids(const cdb_value *obj, cdb_byte_order o, uint64_t id, uint64_t *ids,
+                          unsigned max, unsigned *n)
 {
     cdb_value a, item;
     cdb_value_iter it;
@@ -178,7 +179,8 @@ static cdb_status get_ids(const cdb_value *obj, cdb_byte_order o, uint64_t id, u
     }
 }
 
-cdb_status cdb_table_keep_setting(const uint8_t *settings, size_t len, cdb_byte_order o, uint32_t *keep)
+cdb_status cdb_table_keep_setting(const uint8_t *settings, size_t len, cdb_byte_order o,
+                                  uint32_t *keep)
 {
     cdb_value obj;
     uint64_t k;
@@ -236,8 +238,10 @@ static cdb_status parse_settings(cdb_db *db, table *t, const uint8_t *settings, 
         /* Roots of 0: creation stopped before the indexes were made; the
          * table has no columns either (cdb_table_create). */
         if (groups != 0
-            && ((s = cdb_index_open(&t->groups, &db->pager, groups, &db->cfg.catalog_work)) != CDB_OK
-                || (s = cdb_index_open(&t->pending, &db->pager, pending, &db->cfg.catalog_work)) != CDB_OK))
+            && ((s = cdb_index_open(&t->groups, &db->pager, groups, &db->cfg.catalog_work))
+                    != CDB_OK
+                || (s = cdb_index_open(&t->pending, &db->pager, pending, &db->cfg.catalog_work))
+                       != CDB_OK))
             return s;
     }
     if ((s = get_field(&obj, o, SET_INDEXES, &a, &found)) != CDB_OK || !found)
@@ -255,7 +259,8 @@ static cdb_status parse_settings(cdb_db *db, table *t, const uint8_t *settings, 
             return CDB_E_CORRUPT;
         x = &t->idx[t->nidx];
         if ((s = get_uint(&item, o, IX_NUMBER, UINT32_MAX, &v)) != CDB_OK
-            || (s = get_ids(&item, o, IX_FIELDS, x->fields, CDB_TABLE_MAX_KEY_COLUMNS, &x->n)) != CDB_OK
+            || (s = get_ids(&item, o, IX_FIELDS, x->fields, CDB_TABLE_MAX_KEY_COLUMNS, &x->n))
+                   != CDB_OK
             || (s = get_uint(&item, o, IX_ROOT, UINT64_MAX, &root)) != CDB_OK)
             return s;
         {
@@ -358,7 +363,8 @@ static cdb_status table_get(cdb_db *db, uint64_t store, table **out)
     t->version = info.schema_version;
     if (t->version != 0) {
         size_t len;
-        if ((s = cdb_catalog_get_schema(&db->catalog, store, t->version, tbuf(db, T_OTHER), tbuf_size(db), &len))
+        if ((s = cdb_catalog_get_schema(&db->catalog, store, t->version, tbuf(db, T_OTHER),
+                                        tbuf_size(db), &len))
                 != CDB_OK
             || (s = parse_schema(db, t, tbuf(db, T_OTHER), len)) != CDB_OK)
             return s == CDB_E_NOT_FOUND ? CDB_E_CORRUPT : s;
@@ -383,8 +389,8 @@ static const col *col_of(const table *t, uint64_t id)
 /* A column's value in a stored row read through the current columns
  * (cdb_table.h): *found 0 means null. The value keeps its stored type
  * (convert() widens it). */
-static cdb_status row_value(cdb_db *db, const table *t, const cdb_value *row, uint32_t version, const col *c,
-                            cdb_value *v, int *found)
+static cdb_status row_value(cdb_db *db, const table *t, const cdb_value *row, uint32_t version,
+                            const col *c, cdb_value *v, int *found)
 {
     cdb_byte_order o = db->pager.order;
     cdb_status s = cdb_value_object_get(row, o, c->id, v, found);
@@ -412,8 +418,8 @@ static cdb_status write_as(cdb_value_writer *w, const col *c, const cdb_value *v
 
 /* Projects a stored row (written under schema `version`) through the
  * current columns into out. */
-static cdb_status project(cdb_db *db, const table *t, const uint8_t *raw, size_t rlen, uint32_t version,
-                          uint8_t *out, size_t cap, size_t *len)
+static cdb_status project(cdb_db *db, const table *t, const uint8_t *raw, size_t rlen,
+                          uint32_t version, uint8_t *out, size_t cap, size_t *len)
 {
     cdb_byte_order o = db->pager.order;
     cdb_value row;
@@ -446,8 +452,8 @@ static cdb_status project(cdb_db *db, const table *t, const uint8_t *raw, size_t
  * null); a column the input leaves out takes base's value (update), else
  * its default (insert), else null; a not-null column left null is
  * CDB_E_SCHEMA. base is a projected row or NULL. */
-static cdb_status normalize(cdb_db *db, const table *t, const uint8_t *in, size_t in_len, const uint8_t *base,
-                            size_t base_len, int defaults, size_t *len)
+static cdb_status normalize(cdb_db *db, const table *t, const uint8_t *in, size_t in_len,
+                            const uint8_t *base, size_t base_len, int defaults, size_t *len)
 {
     cdb_byte_order o = db->pager.order;
     cdb_value obj, bobj, fv;
@@ -482,7 +488,8 @@ static cdb_status normalize(cdb_db *db, const table *t, const uint8_t *in, size_
         int found;
         if ((s = cdb_value_object_get(&obj, o, c->id, &v, &found)) != CDB_OK)
             return s;
-        if (!found && base != NULL && (s = cdb_value_object_get(&bobj, o, c->id, &v, &found)) != CDB_OK)
+        if (!found && base != NULL
+            && (s = cdb_value_object_get(&bobj, o, c->id, &v, &found)) != CDB_OK)
             return s;
         if (!found && defaults && c->def_len) {
             if ((s = cdb_value_read(t->defaults + c->def_off, c->def_len, o, &v)) != CDB_OK)
@@ -560,7 +567,8 @@ static cdb_status row_key(cdb_db *db, const table *t, const idx *x, const uint8_
 
 /* A key from an encoded array of values for an index's leading columns
  * (find, scan bounds). */
-static cdb_status array_key(cdb_db *db, const idx *x, const uint8_t *arr, size_t len, uint8_t *key, size_t *klen)
+static cdb_status array_key(cdb_db *db, const idx *x, const uint8_t *arr, size_t len, uint8_t *key,
+                            size_t *klen)
 {
     cdb_byte_order o = db->pager.order;
     cdb_value a, item;
@@ -621,10 +629,13 @@ static cdb_status has_key(uctx *c, uint64_t e, size_t staged_off)
     cdb_status s;
     if (e == c->self)
         return CDB_OK;
-    if ((s = cdb_doc_get_in_tx(c->db, c->t->slot.store_id, e, staged_off, tbuf(c->db, T_OTHER), tbuf_size(c->db),
-                               &len, &live, &version)) != CDB_OK || !live)
+    if ((s = cdb_doc_get_in_tx(c->db, c->t->slot.store_id, e, staged_off, tbuf(c->db, T_OTHER),
+                               tbuf_size(c->db), &len, &live, &version))
+            != CDB_OK
+        || !live)
         return s;
-    if ((s = row_key(c->db, c->t, c->x, tbuf(c->db, T_OTHER), len, version, e, k, &klen, &null)) != CDB_OK)
+    if ((s = row_key(c->db, c->t, c->x, tbuf(c->db, T_OTHER), len, version, e, k, &klen, &null))
+        != CDB_OK)
         return s == CDB_E_OVERFLOW ? CDB_OK : s;
     if (!null && klen == c->klen && memcmp(k, c->key, klen) == 0)
         c->clash = 1;
@@ -662,15 +673,17 @@ static cdb_status check_keys(cdb_db *db, const table *t, uint64_t self, size_t l
         c.key = key;
         c.klen = klen;
         /* A committed row with the key, unless this transaction changed it. */
-        if ((s = cdb_index_get((cdb_index *)&x->ix, key, klen, v, sizeof v, &vlen, &found)) != CDB_OK)
+        if ((s = cdb_index_get((cdb_index *)&x->ix, key, klen, v, sizeof v, &vlen, &found))
+            != CDB_OK)
             return s;
         if (found && vlen == 8) {
             uint64_t committed_entry = cdb_load_u64(v, CDB_ORDER_BIG);
             if (committed_entry != self) {
                 uint64_t st_entry = 0;
                 int st_live = 0, st_found = 0;
-                if ((s = cdb_stage_idx_get(db, t->slot.store_id, (uint8_t)i, key, klen,
-                                           &st_entry, &st_live, &st_found)) != CDB_OK)
+                if ((s = cdb_stage_idx_get(db, t->slot.store_id, (uint8_t)i, key, klen, &st_entry,
+                                           &st_live, &st_found))
+                    != CDB_OK)
                     return s;
                 if (st_found) {
                     if (st_live)
@@ -690,8 +703,9 @@ static cdb_status check_keys(cdb_db *db, const table *t, uint64_t self, size_t l
         if (!c.clash) {
             uint64_t st_entry = 0;
             int st_live = 0, st_found = 0;
-            if ((s = cdb_stage_idx_get(db, t->slot.store_id, (uint8_t)i, key, klen,
-                                       &st_entry, &st_live, &st_found)) != CDB_OK)
+            if ((s = cdb_stage_idx_get(db, t->slot.store_id, (uint8_t)i, key, klen, &st_entry,
+                                       &st_live, &st_found))
+                != CDB_OK)
                 return s;
             if (st_found) {
                 if (st_live && st_entry != self)
@@ -720,7 +734,8 @@ static cdb_status write_keys(cdb_db *db, const table *t, uint64_t self, size_t l
         cdb_status s;
         if (!x->unique)
             continue;
-        if ((s = row_key(db, t, x, tbuf(db, T_ROW), len, t->version, self, key, &klen, &null)) != CDB_OK)
+        if ((s = row_key(db, t, x, tbuf(db, T_ROW), len, t->version, self, key, &klen, &null))
+            != CDB_OK)
             return s;
         if (null)
             continue;
@@ -744,7 +759,8 @@ static cdb_status tx_table(cdb_db *db, uint64_t store, table **t)
     return (*t)->version == 0 ? CDB_E_STATE : CDB_OK;
 }
 
-static cdb_status insert_row(cdb_db *db, uint64_t store, const void *row, size_t len, uint64_t *entry)
+static cdb_status insert_row(cdb_db *db, uint64_t store, const void *row, size_t len,
+                             uint64_t *entry)
 {
     table *t;
     size_t n;
@@ -770,7 +786,9 @@ static cdb_status insert_row(cdb_db *db, uint64_t store, const void *row, size_t
                 uint8_t k[CDB_TABLE_KEY_MAX + 8u];
                 size_t klen;
                 int null;
-                if (row_key(db, t, x, tbuf(db, T_ROW), n, t->version, *entry, k, &klen, &null) == CDB_OK && !null)
+                if (row_key(db, t, x, tbuf(db, T_ROW), n, t->version, *entry, k, &klen, &null)
+                        == CDB_OK
+                    && !null)
                     cdb_stage_idx_put(db, store, (uint8_t)i, k, klen, *entry, 1);
             }
         }
@@ -778,7 +796,8 @@ static cdb_status insert_row(cdb_db *db, uint64_t store, const void *row, size_t
     return write_keys(db, t, *entry, n);
 }
 
-static cdb_status replace_row(cdb_db *db, uint64_t store, uint64_t entry, const void *row, size_t len, int update)
+static cdb_status replace_row(cdb_db *db, uint64_t store, uint64_t entry, const void *row,
+                              size_t len, int update)
 {
     table *t;
     size_t n, cur = 0, old_raw = 0;
@@ -791,18 +810,23 @@ static cdb_status replace_row(cdb_db *db, uint64_t store, uint64_t entry, const 
         return CDB_E_OVERFLOW;
     if (update) {
         /* The row as this transaction sees it, through the current columns. */
-        if ((s = cdb_doc_get_in_tx(db, store, entry, CDB_STAGE_OFF_NONE, tbuf(db, T_OTHER), tbuf_size(db),
-                                   &old_raw, &live, &version)) != CDB_OK)
+        if ((s = cdb_doc_get_in_tx(db, store, entry, CDB_STAGE_OFF_NONE, tbuf(db, T_OTHER),
+                                   tbuf_size(db), &old_raw, &live, &version))
+            != CDB_OK)
             return s;
         if (!live)
             return CDB_E_NOT_FOUND;
-        if ((s = project(db, t, tbuf(db, T_OTHER), old_raw, version, tbuf(db, T_CUR), tbuf_size(db), &cur)) != CDB_OK)
+        if ((s = project(db, t, tbuf(db, T_OTHER), old_raw, version, tbuf(db, T_CUR), tbuf_size(db),
+                         &cur))
+            != CDB_OK)
             return s;
     } else {
-        (void)cdb_doc_get_in_tx(db, store, entry, CDB_STAGE_OFF_NONE, tbuf(db, T_OTHER), tbuf_size(db),
-                                &old_raw, &live, &version);
+        (void)cdb_doc_get_in_tx(db, store, entry, CDB_STAGE_OFF_NONE, tbuf(db, T_OTHER),
+                                tbuf_size(db), &old_raw, &live, &version);
     }
-    if ((s = normalize(db, t, (const uint8_t *)row, len, update ? tbuf(db, T_CUR) : NULL, cur, 0, &n)) != CDB_OK
+    if ((s = normalize(db, t, (const uint8_t *)row, len, update ? tbuf(db, T_CUR) : NULL, cur, 0,
+                       &n))
+            != CDB_OK
         || (s = check_keys(db, t, entry, n)) != CDB_OK)
         return s;
     if (t->layout == CDB_TABLE_LAYOUT_COLUMN && n > t->chunk_cap)
@@ -816,7 +840,10 @@ static cdb_status replace_row(cdb_db *db, uint64_t store, uint64_t entry, const 
                 uint8_t ok[CDB_TABLE_KEY_MAX + 8u];
                 size_t oklen;
                 int onull;
-                if (row_key(db, t, &t->idx[i], tbuf(db, T_OTHER), old_raw, version, entry, ok, &oklen, &onull) == CDB_OK && !onull)
+                if (row_key(db, t, &t->idx[i], tbuf(db, T_OTHER), old_raw, version, entry, ok,
+                            &oklen, &onull)
+                        == CDB_OK
+                    && !onull)
                     cdb_stage_idx_put(db, store, (uint8_t)i, ok, oklen, entry, 0);
             }
         }
@@ -829,7 +856,9 @@ static cdb_status replace_row(cdb_db *db, uint64_t store, uint64_t entry, const 
                 uint8_t nk[CDB_TABLE_KEY_MAX + 8u];
                 size_t nklen;
                 int nnull;
-                if (row_key(db, t, x, tbuf(db, T_ROW), n, t->version, entry, nk, &nklen, &nnull) == CDB_OK && !nnull)
+                if (row_key(db, t, x, tbuf(db, T_ROW), n, t->version, entry, nk, &nklen, &nnull)
+                        == CDB_OK
+                    && !nnull)
                     cdb_stage_idx_put(db, store, (uint8_t)i, nk, nklen, entry, 1);
             }
         }
@@ -837,9 +866,11 @@ static cdb_status replace_row(cdb_db *db, uint64_t store, uint64_t entry, const 
     return write_keys(db, t, entry, n);
 }
 
-static cdb_status table_insert_in(cdb_db *db, uint64_t store, const void *row, size_t len, uint64_t *entry);
+static cdb_status table_insert_in(cdb_db *db, uint64_t store, const void *row, size_t len,
+                                  uint64_t *entry);
 
-cdb_status cdb_table_insert(cdb_db *db, uint64_t store, const void *row, size_t len, uint64_t *entry)
+cdb_status cdb_table_insert(cdb_db *db, uint64_t store, const void *row, size_t len,
+                            uint64_t *entry)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -848,7 +879,8 @@ cdb_status cdb_table_insert(cdb_db *db, uint64_t store, const void *row, size_t 
     return r;
 }
 
-static cdb_status table_insert_in(cdb_db *db, uint64_t store, const void *row, size_t len, uint64_t *entry)
+static cdb_status table_insert_in(cdb_db *db, uint64_t store, const void *row, size_t len,
+                                  uint64_t *entry)
 {
     cdb_status s;
     db->via_table = 1;
@@ -857,9 +889,11 @@ static cdb_status table_insert_in(cdb_db *db, uint64_t store, const void *row, s
     return s;
 }
 
-static cdb_status table_replace_in(cdb_db *db, uint64_t store, uint64_t entry, const void *row, size_t len);
+static cdb_status table_replace_in(cdb_db *db, uint64_t store, uint64_t entry, const void *row,
+                                   size_t len);
 
-cdb_status cdb_table_replace(cdb_db *db, uint64_t store, uint64_t entry, const void *row, size_t len)
+cdb_status cdb_table_replace(cdb_db *db, uint64_t store, uint64_t entry, const void *row,
+                             size_t len)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -868,7 +902,8 @@ cdb_status cdb_table_replace(cdb_db *db, uint64_t store, uint64_t entry, const v
     return r;
 }
 
-static cdb_status table_replace_in(cdb_db *db, uint64_t store, uint64_t entry, const void *row, size_t len)
+static cdb_status table_replace_in(cdb_db *db, uint64_t store, uint64_t entry, const void *row,
+                                   size_t len)
 {
     cdb_status s;
     db->via_table = 1;
@@ -877,9 +912,11 @@ static cdb_status table_replace_in(cdb_db *db, uint64_t store, uint64_t entry, c
     return s;
 }
 
-static cdb_status table_update_in(cdb_db *db, uint64_t store, uint64_t entry, const void *changes, size_t len);
+static cdb_status table_update_in(cdb_db *db, uint64_t store, uint64_t entry, const void *changes,
+                                  size_t len);
 
-cdb_status cdb_table_update(cdb_db *db, uint64_t store, uint64_t entry, const void *changes, size_t len)
+cdb_status cdb_table_update(cdb_db *db, uint64_t store, uint64_t entry, const void *changes,
+                            size_t len)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -888,7 +925,8 @@ cdb_status cdb_table_update(cdb_db *db, uint64_t store, uint64_t entry, const vo
     return r;
 }
 
-static cdb_status table_update_in(cdb_db *db, uint64_t store, uint64_t entry, const void *changes, size_t len)
+static cdb_status table_update_in(cdb_db *db, uint64_t store, uint64_t entry, const void *changes,
+                                  size_t len)
 {
     cdb_status s;
     db->via_table = 1;
@@ -918,15 +956,20 @@ static cdb_status table_delete_in(cdb_db *db, uint64_t store, uint64_t entry)
         size_t raw;
         int live = 0;
         uint32_t version = 0;
-        if (cdb_doc_get_in_tx(db, store, entry, CDB_STAGE_OFF_NONE, tbuf(db, T_OTHER), tbuf_size(db),
-                              &raw, &live, &version) == CDB_OK && live) {
+        if (cdb_doc_get_in_tx(db, store, entry, CDB_STAGE_OFF_NONE, tbuf(db, T_OTHER),
+                              tbuf_size(db), &raw, &live, &version)
+                == CDB_OK
+            && live) {
             unsigned i;
             for (i = 0; i < t->nidx; i++) {
                 if (t->idx[i].unique) {
                     uint8_t k[CDB_TABLE_KEY_MAX + 8u];
                     size_t klen;
                     int null;
-                    if (row_key(db, t, &t->idx[i], tbuf(db, T_OTHER), raw, version, entry, k, &klen, &null) == CDB_OK && !null)
+                    if (row_key(db, t, &t->idx[i], tbuf(db, T_OTHER), raw, version, entry, k, &klen,
+                                &null)
+                            == CDB_OK
+                        && !null)
                         cdb_stage_idx_put(db, store, (uint8_t)i, k, klen, entry, 0);
                 }
             }
@@ -948,12 +991,13 @@ static cdb_status table_delete_in(cdb_db *db, uint64_t store, uint64_t entry)
  * once more into T_CUR (free outside an update) to learn its length, and
  * CDB_E_BUFFER_TOO_SMALL comes back with *len set to a buffer size that
  * will do (the row plus the writer's staging), so the call can be retried. */
-static cdb_status project_out(cdb_db *db, const table *t, const uint8_t *raw, size_t rlen, uint32_t version,
-                              uint8_t *out, size_t cap, size_t *len)
+static cdb_status project_out(cdb_db *db, const table *t, const uint8_t *raw, size_t rlen,
+                              uint32_t version, uint8_t *out, size_t cap, size_t *len)
 {
     cdb_status s = project(db, t, raw, rlen, version, out, cap, len);
-    if (s == CDB_E_BUFFER_TOO_SMALL && (s = project(db, t, raw, rlen, version, tbuf(db, T_CUR), tbuf_size(db), len))
-                                           == CDB_OK) {
+    if (s == CDB_E_BUFFER_TOO_SMALL
+        && (s = project(db, t, raw, rlen, version, tbuf(db, T_CUR), tbuf_size(db), len))
+               == CDB_OK) {
         *len += (size_t)t->ncols * WRITER_FIELD_SCRATCH;
         s = CDB_E_BUFFER_TOO_SMALL;
     }
@@ -964,11 +1008,12 @@ static cdb_status read_row(cdb_db *db, table *t, uint64_t entry, void *out, size
 {
     cdb_doc_info info;
     size_t raw;
-    cdb_status s = cdb_doc_get(db, t->slot.store_id, entry, 0, tbuf(db, T_OTHER), tbuf_size(db), &raw, NULL, 0,
-                               NULL, &info);
+    cdb_status s = cdb_doc_get(db, t->slot.store_id, entry, 0, tbuf(db, T_OTHER), tbuf_size(db),
+                               &raw, NULL, 0, NULL, &info);
     if (s != CDB_OK)
         return s;
-    return project_out(db, t, tbuf(db, T_OTHER), raw, info.schema_version, (uint8_t *)out, cap, len);
+    return project_out(db, t, tbuf(db, T_OTHER), raw, info.schema_version, (uint8_t *)out, cap,
+                       len);
 }
 
 static cdb_status table_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, int *live);
@@ -1072,7 +1117,8 @@ static cdb_status col_committed_row(cdb_db *db, table *t, uint64_t entry, void *
     if (t->groups.root != 0 && db->cfg.col_work != NULL) {
         cdb_rg g;
         if ((s = cdb_rg_init(&g, db, t->slot.store_id, &t->groups, t->group_rows, t->chunk_cap,
-                             db->cfg.col_work, db->cfg.col_work_size)) == CDB_OK) {
+                             db->cfg.col_work, db->cfg.col_work_size))
+            == CDB_OK) {
             if ((s = cdb_rg_get_row(&g, entry, body, cap, len, &found)) != CDB_OK)
                 return s;
             if (found) {
@@ -1087,8 +1133,8 @@ static cdb_status col_committed_row(cdb_db *db, table *t, uint64_t entry, void *
     return CDB_OK;
 }
 
-cdb_status cdb_table_col_committed_row(cdb_db *db, uint64_t store, uint64_t entry, void *body, size_t cap,
-                                       size_t *len, int *live, uint32_t *schema)
+cdb_status cdb_table_col_committed_row(cdb_db *db, uint64_t store, uint64_t entry, void *body,
+                                       size_t cap, size_t *len, int *live, uint32_t *schema)
 {
     table *t;
     cdb_status s;
@@ -1171,13 +1217,17 @@ cdb_status cdb_table_col_apply(cdb_db *db, uint64_t store, const cdb_delta *d)
             uint8_t ok[CDB_TABLE_KEY_MAX + 8u], nk[CDB_TABLE_KEY_MAX + 8u], v[8];
             size_t oklen = 0, nklen = 0;
             int null, found;
-            if (before_live && (s = row_key(db, t, x, tbuf(db, T_BEFORE), before_len, before_schema,
-                                            d->entry_id, ok, &oklen, &null)) != CDB_OK) {
+            if (before_live
+                && (s = row_key(db, t, x, tbuf(db, T_BEFORE), before_len, before_schema,
+                                d->entry_id, ok, &oklen, &null))
+                       != CDB_OK) {
                 db->via_table = 0;
                 return s;
             }
-            if (after_live && (s = row_key(db, t, x, after_body, after_len, after_schema,
-                                           d->entry_id, nk, &nklen, &null)) != CDB_OK) {
+            if (after_live
+                && (s = row_key(db, t, x, after_body, after_len, after_schema, d->entry_id, nk,
+                                &nklen, &null))
+                       != CDB_OK) {
                 db->via_table = 0;
                 return s;
             }
@@ -1199,9 +1249,11 @@ cdb_status cdb_table_col_apply(cdb_db *db, uint64_t store, const cdb_delta *d)
     return CDB_OK;
 }
 
-static cdb_status table_get_in(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap, size_t *len);
+static cdb_status table_get_in(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap,
+                               size_t *len);
 
-cdb_status cdb_table_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap, size_t *len)
+cdb_status cdb_table_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap,
+                         size_t *len)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1210,7 +1262,8 @@ cdb_status cdb_table_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, 
     return r;
 }
 
-static cdb_status table_get_in(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap, size_t *len)
+static cdb_status table_get_in(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap,
+                               size_t *len)
 {
     table *t;
     cdb_status s;
@@ -1237,7 +1290,8 @@ static cdb_status table_get_in(cdb_db *db, uint64_t store, uint64_t entry, void 
     return s;
 }
 
-static cdb_status find_row(cdb_db *db, uint64_t store, const void *key, size_t key_len, uint64_t *entry, int *found)
+static cdb_status find_row(cdb_db *db, uint64_t store, const void *key, size_t key_len,
+                           uint64_t *entry, int *found)
 {
     uint8_t k[CDB_TABLE_KEY_MAX], v[8];
     size_t klen, vlen;
@@ -1251,7 +1305,8 @@ static cdb_status find_row(cdb_db *db, uint64_t store, const void *key, size_t k
         return CDB_E_STATE; /* no primary key */
     if ((s = array_key(db, x, (const uint8_t *)key, key_len, k, &klen)) != CDB_OK)
         return s;
-    if ((s = cdb_index_get((cdb_index *)&x->ix, k, klen, v, sizeof v, &vlen, found)) != CDB_OK || !*found)
+    if ((s = cdb_index_get((cdb_index *)&x->ix, k, klen, v, sizeof v, &vlen, found)) != CDB_OK
+        || !*found)
         return s;
     if (vlen != 8)
         return CDB_E_CORRUPT;
@@ -1259,9 +1314,11 @@ static cdb_status find_row(cdb_db *db, uint64_t store, const void *key, size_t k
     return CDB_OK;
 }
 
-static cdb_status table_find_in(cdb_db *db, uint64_t store, const void *key, size_t key_len, uint64_t *entry, int *found);
+static cdb_status table_find_in(cdb_db *db, uint64_t store, const void *key, size_t key_len,
+                                uint64_t *entry, int *found);
 
-cdb_status cdb_table_find(cdb_db *db, uint64_t store, const void *key, size_t key_len, uint64_t *entry, int *found)
+cdb_status cdb_table_find(cdb_db *db, uint64_t store, const void *key, size_t key_len,
+                          uint64_t *entry, int *found)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1270,7 +1327,8 @@ cdb_status cdb_table_find(cdb_db *db, uint64_t store, const void *key, size_t ke
     return r;
 }
 
-static cdb_status table_find_in(cdb_db *db, uint64_t store, const void *key, size_t key_len, uint64_t *entry, int *found)
+static cdb_status table_find_in(cdb_db *db, uint64_t store, const void *key, size_t key_len,
+                                uint64_t *entry, int *found)
 {
     cdb_status s;
     db->via_table = 1;
@@ -1279,9 +1337,9 @@ static cdb_status table_find_in(cdb_db *db, uint64_t store, const void *key, siz
     return s;
 }
 
-static cdb_status scan(cdb_db *db, uint64_t store, uint32_t index, const void *from, size_t from_len,
-                       const void *to, size_t to_len, cdb_table_cursor *cur, uint64_t *entries, size_t max,
-                       size_t *n)
+static cdb_status scan(cdb_db *db, uint64_t store, uint32_t index, const void *from,
+                       size_t from_len, const void *to, size_t to_len, cdb_table_cursor *cur,
+                       uint64_t *entries, size_t max, size_t *n)
 {
     uint8_t lo[CDB_TABLE_KEY_MAX], hi[CDB_TABLE_KEY_MAX], k[CDB_TABLE_KEY_MAX + 8u], v[8];
     size_t lolen = 0, hilen = 0, klen, vlen;
@@ -1297,7 +1355,8 @@ static cdb_status scan(cdb_db *db, uint64_t store, uint32_t index, const void *f
         if (t->layout == CDB_TABLE_LAYOUT_COLUMN) {
             while (*n < max) {
                 uint64_t e;
-                if ((s = col_next_live(db, t, cur->started ? cur->entry : 0, &e, &done)) != CDB_OK || done)
+                if ((s = col_next_live(db, t, cur->started ? cur->entry : 0, &e, &done)) != CDB_OK
+                    || done)
                     return s;
                 cur->started = 1;
                 cur->entry = e;
@@ -1308,7 +1367,9 @@ static cdb_status scan(cdb_db *db, uint64_t store, uint32_t index, const void *f
         /* Entry order: the committed live rows. */
         while (*n < max) {
             uint64_t e;
-            if ((s = cdb_doc_next_live(db, store, cur->started ? cur->entry : 0, &e, &done)) != CDB_OK || done)
+            if ((s = cdb_doc_next_live(db, store, cur->started ? cur->entry : 0, &e, &done))
+                    != CDB_OK
+                || done)
                 return s;
             cur->started = 1;
             cur->entry = e;
@@ -1318,7 +1379,8 @@ static cdb_status scan(cdb_db *db, uint64_t store, uint32_t index, const void *f
     }
     if ((x = index_of(t, index)) == NULL)
         return CDB_E_NOT_FOUND;
-    if (from != NULL && (s = array_key(db, x, (const uint8_t *)from, from_len, lo, &lolen)) != CDB_OK)
+    if (from != NULL
+        && (s = array_key(db, x, (const uint8_t *)from, from_len, lo, &lolen)) != CDB_OK)
         return s;
     if (to != NULL && (s = array_key(db, x, (const uint8_t *)to, to_len, hi, &hilen)) != CDB_OK)
         return s;
@@ -1330,7 +1392,8 @@ static cdb_status scan(cdb_db *db, uint64_t store, uint32_t index, const void *f
     if (s != CDB_OK)
         return s;
     while (*n < max) {
-        if ((s = cdb_index_next(&c, k, sizeof k, &klen, v, sizeof v, &vlen, &done)) != CDB_OK || done)
+        if ((s = cdb_index_next(&c, k, sizeof k, &klen, v, sizeof v, &vlen, &done)) != CDB_OK
+            || done)
             return s;
         if (cur->started && klen == cur->len && memcmp(k, cur->key, klen) == 0)
             continue; /* returned by the last call */
@@ -1347,13 +1410,13 @@ static cdb_status scan(cdb_db *db, uint64_t store, uint32_t index, const void *f
     return CDB_OK;
 }
 
-static cdb_status table_scan_in(cdb_db *db, uint64_t store, uint32_t index, const void *from, size_t from_len,
-                                const void *to, size_t to_len, cdb_table_cursor *cur, uint64_t *entries, size_t max,
-                                size_t *n);
+static cdb_status table_scan_in(cdb_db *db, uint64_t store, uint32_t index, const void *from,
+                                size_t from_len, const void *to, size_t to_len,
+                                cdb_table_cursor *cur, uint64_t *entries, size_t max, size_t *n);
 
-cdb_status cdb_table_scan(cdb_db *db, uint64_t store, uint32_t index, const void *from, size_t from_len,
-                          const void *to, size_t to_len, cdb_table_cursor *cur, uint64_t *entries, size_t max,
-                          size_t *n)
+cdb_status cdb_table_scan(cdb_db *db, uint64_t store, uint32_t index, const void *from,
+                          size_t from_len, const void *to, size_t to_len, cdb_table_cursor *cur,
+                          uint64_t *entries, size_t max, size_t *n)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1362,9 +1425,9 @@ cdb_status cdb_table_scan(cdb_db *db, uint64_t store, uint32_t index, const void
     return r;
 }
 
-static cdb_status table_scan_in(cdb_db *db, uint64_t store, uint32_t index, const void *from, size_t from_len,
-                                const void *to, size_t to_len, cdb_table_cursor *cur, uint64_t *entries, size_t max,
-                                size_t *n)
+static cdb_status table_scan_in(cdb_db *db, uint64_t store, uint32_t index, const void *from,
+                                size_t from_len, const void *to, size_t to_len,
+                                cdb_table_cursor *cur, uint64_t *entries, size_t max, size_t *n)
 {
     cdb_status s;
     db->via_table = 1;
@@ -1385,8 +1448,8 @@ cdb_status cdb_table_apply_before(cdb_db *db, uint64_t store, uint64_t entry)
     if (s == CDB_OK) {
         t->before_live = 0;
         if (t->nidx > 0) {
-            s = cdb_doc_get(db, store, entry, 0, tbuf(db, T_BEFORE), tbuf_size(db), &t->before_len, NULL, 0, NULL,
-                            &info);
+            s = cdb_doc_get(db, store, entry, 0, tbuf(db, T_BEFORE), tbuf_size(db), &t->before_len,
+                            NULL, 0, NULL, &info);
             if (s == CDB_OK) {
                 t->before_live = 1;
                 t->before_schema = info.schema_version;
@@ -1407,8 +1470,8 @@ static cdb_status update_indexes(cdb_db *db, table *t, uint64_t entry)
     size_t len = 0;
     int live;
     unsigned i;
-    cdb_status s = cdb_doc_get(db, t->slot.store_id, entry, 0, tbuf(db, T_OTHER), tbuf_size(db), &len, NULL, 0, NULL,
-                               &info);
+    cdb_status s = cdb_doc_get(db, t->slot.store_id, entry, 0, tbuf(db, T_OTHER), tbuf_size(db),
+                               &len, NULL, 0, NULL, &info);
     if (s != CDB_OK && s != CDB_E_NOT_FOUND)
         return s;
     live = s == CDB_OK;
@@ -1417,11 +1480,15 @@ static cdb_status update_indexes(cdb_db *db, table *t, uint64_t entry)
         uint8_t ok[CDB_TABLE_KEY_MAX + 8u], nk[CDB_TABLE_KEY_MAX + 8u], v[8];
         size_t oklen = 0, nklen = 0;
         int null, found;
-        if (t->before_live && (s = row_key(db, t, x, tbuf(db, T_BEFORE), t->before_len, t->before_schema, entry, ok,
-                                           &oklen, &null)) != CDB_OK)
+        if (t->before_live
+            && (s = row_key(db, t, x, tbuf(db, T_BEFORE), t->before_len, t->before_schema, entry,
+                            ok, &oklen, &null))
+                   != CDB_OK)
             return s;
-        if (live && (s = row_key(db, t, x, tbuf(db, T_OTHER), len, info.schema_version, entry, nk, &nklen, &null))
-                        != CDB_OK)
+        if (live
+            && (s = row_key(db, t, x, tbuf(db, T_OTHER), len, info.schema_version, entry, nk,
+                            &nklen, &null))
+                   != CDB_OK)
             return s;
         if (t->before_live && live && oklen == nklen && memcmp(ok, nk, oklen) == 0)
             continue;
@@ -1449,8 +1516,8 @@ cdb_status cdb_table_apply_after(cdb_db *db, uint64_t store, uint64_t entry)
 /* -------------------------------------------------------- catalog changes */
 
 /* Encodes t's indexes and keep as the settings object. */
-static cdb_status encode_settings(cdb_db *db, const table *t, uint64_t next_index, uint8_t *out, size_t cap,
-                                  size_t *len)
+static cdb_status encode_settings(cdb_db *db, const table *t, uint64_t next_index, uint8_t *out,
+                                  size_t cap, size_t *len)
 {
     cdb_value_writer w;
     unsigned i, j;
@@ -1540,7 +1607,8 @@ static cdb_status encode_schema(cdb_db *db, const table *t, uint8_t *out, size_t
 }
 
 /* Checks one column as given and adds its default to t (at used). */
-static cdb_status check_column(cdb_db *db, table *t, const cdb_table_column *in, col *c, size_t *used)
+static cdb_status check_column(cdb_db *db, table *t, const cdb_table_column *in, col *c,
+                               size_t *used)
 {
     cdb_byte_order o = db->pager.order;
     memset(c, 0, sizeof *c);
@@ -1550,9 +1618,10 @@ static cdb_status check_column(cdb_db *db, table *t, const cdb_table_column *in,
     c->not_null = (uint8_t)(in->not_null != 0);
     if (in->default_value != NULL) {
         cdb_value d;
-        if (cdb_value_validate(in->default_value, in->default_len, o, CDB_DECIMAL_COMPACT, 0) != CDB_OK
-            || cdb_value_read(in->default_value, in->default_len, o, &d) != CDB_OK || d.type != in->type
-            || *used + in->default_len > CDB_TABLE_DEFAULTS_MAX)
+        if (cdb_value_validate(in->default_value, in->default_len, o, CDB_DECIMAL_COMPACT, 0)
+                != CDB_OK
+            || cdb_value_read(in->default_value, in->default_len, o, &d) != CDB_OK
+            || d.type != in->type || *used + in->default_len > CDB_TABLE_DEFAULTS_MAX)
             return CDB_E_INVALID_ARG;
         memcpy(t->defaults + *used, in->default_value, in->default_len);
         c->def_off = (uint16_t)*used;
@@ -1581,8 +1650,8 @@ static cdb_status save(cdb_db *db, uint64_t store, table *t, uint64_t next_index
 
 /* Adds an index over fields to t: creates it and, if the table has rows,
  * fills it from them. CDB_E_EXISTS if a unique index meets a duplicate. */
-static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t *fields, unsigned n, int unique,
-                            uint32_t number)
+static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t *fields,
+                            unsigned n, int unique, uint32_t number)
 {
     idx *x;
     unsigned i;
@@ -1602,7 +1671,9 @@ static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t
     x->unique = (uint8_t)(unique != 0);
     x->n = n;
     memcpy(x->fields, fields, (size_t)n * sizeof fields[0]);
-    if ((s = cdb_index_create(&x->ix, &db->pager, store, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work)) != CDB_OK)
+    if ((s = cdb_index_create(&x->ix, &db->pager, store, CDB_INDEX_FLAG_UNIQUE,
+                              &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
     /* Existing rows (none for a new table). */
     for (;;) {
@@ -1614,8 +1685,9 @@ static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t
             int live = 0;
             if ((s = col_next_live(db, t, e, &e, &done)) != CDB_OK || done)
                 break;
-            if ((s = col_committed_row(db, t, e, tbuf(db, T_OTHER), tbuf_size(db),
-                                        &len, &live, &schema_ver)) != CDB_OK)
+            if ((s = col_committed_row(db, t, e, tbuf(db, T_OTHER), tbuf_size(db), &len, &live,
+                                       &schema_ver))
+                != CDB_OK)
                 return s;
             if (!live)
                 continue;
@@ -1623,12 +1695,14 @@ static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t
             cdb_doc_info info;
             if ((s = cdb_doc_next_live(db, store, e, &e, &done)) != CDB_OK || done)
                 break;
-            if ((s = cdb_doc_get(db, store, e, 0, tbuf(db, T_OTHER), tbuf_size(db), &len, NULL, 0, NULL, &info))
-                    != CDB_OK)
+            if ((s = cdb_doc_get(db, store, e, 0, tbuf(db, T_OTHER), tbuf_size(db), &len, NULL, 0,
+                                 NULL, &info))
+                != CDB_OK)
                 return s;
             schema_ver = info.schema_version;
         }
-        if ((s = row_key(db, t, x, tbuf(db, T_OTHER), len, schema_ver, e, key, &klen, &null)) != CDB_OK)
+        if ((s = row_key(db, t, x, tbuf(db, T_OTHER), len, schema_ver, e, key, &klen, &null))
+            != CDB_OK)
             return s;
         if (x->unique && !null) {
             if ((s = cdb_index_get(&x->ix, key, klen, v, sizeof v, &len, &found)) != CDB_OK)
@@ -1648,7 +1722,8 @@ static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t
 
 /* Runs a catalog change on the table: loads it fresh, calls fn, and makes
  * every open state reload afterwards. */
-typedef cdb_status (*change_fn)(cdb_db *db, uint64_t store, table *t, uint64_t next_index, const void *arg);
+typedef cdb_status (*change_fn)(cdb_db *db, uint64_t store, table *t, uint64_t next_index,
+                                const void *arg);
 
 static cdb_status change(cdb_db *db, uint64_t store, change_fn fn, const void *arg)
 {
@@ -1667,9 +1742,11 @@ static cdb_status change(cdb_db *db, uint64_t store, change_fn fn, const void *a
     return cdb_db_catalog_end(db, s);
 }
 
-static cdb_status table_create_in(cdb_db *db, const char *name, size_t len, const cdb_table_def *def, uint64_t *store);
+static cdb_status table_create_in(cdb_db *db, const char *name, size_t len,
+                                  const cdb_table_def *def, uint64_t *store);
 
-cdb_status cdb_table_create(cdb_db *db, const char *name, size_t len, const cdb_table_def *def, uint64_t *store)
+cdb_status cdb_table_create(cdb_db *db, const char *name, size_t len, const cdb_table_def *def,
+                            uint64_t *store)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1678,7 +1755,8 @@ cdb_status cdb_table_create(cdb_db *db, const char *name, size_t len, const cdb_
     return r;
 }
 
-static cdb_status table_create_in(cdb_db *db, const char *name, size_t len, const cdb_table_def *def, uint64_t *store)
+static cdb_status table_create_in(cdb_db *db, const char *name, size_t len,
+                                  const cdb_table_def *def, uint64_t *store)
 {
     uint8_t settings[CDB_CATALOG_SETTINGS_MAX];
     size_t slen, used = 0;
@@ -1693,17 +1771,20 @@ static cdb_status table_create_in(cdb_db *db, const char *name, size_t len, cons
         return CDB_E_STATE;
     if (!db->has_catalog || db->cfg.table_buffers == NULL || db->cfg.doc_buffers == NULL)
         return CDB_E_UNSUPPORTED;
-    if (def == NULL || def->columns == NULL || def->ncolumns == 0 || def->ncolumns > CDB_TABLE_MAX_COLUMNS
-        || def->npk > CDB_TABLE_MAX_KEY_COLUMNS || (def->npk > 0 && def->primary_key == NULL))
+    if (def == NULL || def->columns == NULL || def->ncolumns == 0
+        || def->ncolumns > CDB_TABLE_MAX_COLUMNS || def->npk > CDB_TABLE_MAX_KEY_COLUMNS
+        || (def->npk > 0 && def->primary_key == NULL))
         return CDB_E_INVALID_ARG;
     for (i = 0; i < def->ncolumns; i++)
         for (j = 0; j < i; j++)
             if (def->columns[i].name_len == def->columns[j].name_len && def->columns[i].name != NULL
                 && def->columns[j].name != NULL
-                && memcmp(def->columns[i].name, def->columns[j].name, def->columns[i].name_len) == 0)
+                && memcmp(def->columns[i].name, def->columns[j].name, def->columns[i].name_len)
+                       == 0)
                 return CDB_E_INVALID_ARG;
     for (i = 0; i < def->npk; i++) {
-        if (def->primary_key[i] >= def->ncolumns || !indexable((int)def->columns[def->primary_key[i]].type))
+        if (def->primary_key[i] >= def->ncolumns
+            || !indexable((int)def->columns[def->primary_key[i]].type))
             return CDB_E_INVALID_ARG;
         for (j = 0; j < i; j++)
             if (def->primary_key[i] == def->primary_key[j])
@@ -1728,7 +1809,8 @@ static cdb_status table_create_in(cdb_db *db, const char *name, size_t len, cons
             return CDB_E_INVALID_ARG;
         if (db->cfg.col_work == NULL)
             return CDB_E_UNSUPPORTED;
-        if (db->cfg.col_work_size < cdb_rg_work_size(db->pager.page_size, t->group_rows, t->chunk_cap, !alloc))
+        if (db->cfg.col_work_size
+            < cdb_rg_work_size(db->pager.page_size, t->group_rows, t->chunk_cap, !alloc))
             return CDB_E_BUFFER_TOO_SMALL;
     }
     for (i = 0; i < def->ncolumns; i++)
@@ -1743,12 +1825,14 @@ static cdb_status table_create_in(cdb_db *db, const char *name, size_t len, cons
     /* The store, then its column IDs, then the primary key index and the
      * settings, then the first schema version. */
     if ((s = encode_settings(db, t, 1, settings, sizeof settings, &slen)) != CDB_OK
-        || (s = cdb_catalog_create_store_ex(&db->catalog, name, len, CDB_MODEL_RELATIONAL, settings, slen, store))
+        || (s = cdb_catalog_create_store_ex(&db->catalog, name, len, CDB_MODEL_RELATIONAL, settings,
+                                            slen, store))
                != CDB_OK)
         return cdb_db_catalog_end(db, s);
     for (i = 0; i < def->ncolumns; i++) {
-        if ((s = cdb_catalog_field_id(&db->catalog, *store, def->columns[i].name, def->columns[i].name_len,
-                                      &t->cols[i].id)) != CDB_OK)
+        if ((s = cdb_catalog_field_id(&db->catalog, *store, def->columns[i].name,
+                                      def->columns[i].name_len, &t->cols[i].id))
+            != CDB_OK)
             return cdb_db_catalog_end(db, s);
         t->cols[i].added = 1;
         if (def->columns[i].not_null)
@@ -1773,10 +1857,12 @@ static cdb_status table_create_in(cdb_db *db, const char *name, size_t len, cons
     db->via_table = 1;
     s = CDB_OK;
     if (t->layout == CDB_TABLE_LAYOUT_COLUMN
-        && ((s = cdb_index_create(&t->groups, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work))
+        && ((s = cdb_index_create(&t->groups, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE,
+                                  &db->cfg.catalog_work))
                 != CDB_OK
             || (s = cdb_index_create(&t->pending, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE,
-                                     &db->cfg.catalog_work)) != CDB_OK)) {
+                                     &db->cfg.catalog_work))
+                   != CDB_OK)) {
         db->via_table = 0;
         return cdb_db_catalog_end(db, s);
     }
@@ -1789,11 +1875,11 @@ static cdb_status table_create_in(cdb_db *db, const char *name, size_t len, cons
     return cdb_db_catalog_end(db, s);
 }
 
-static cdb_status table_describe_in(cdb_db *db, uint64_t store, cdb_table_column_info *cols, unsigned cap, unsigned *n,
-                                    uint32_t *version, uint32_t *keep);
+static cdb_status table_describe_in(cdb_db *db, uint64_t store, cdb_table_column_info *cols,
+                                    unsigned cap, unsigned *n, uint32_t *version, uint32_t *keep);
 
-cdb_status cdb_table_describe(cdb_db *db, uint64_t store, cdb_table_column_info *cols, unsigned cap, unsigned *n,
-                              uint32_t *version, uint32_t *keep)
+cdb_status cdb_table_describe(cdb_db *db, uint64_t store, cdb_table_column_info *cols, unsigned cap,
+                              unsigned *n, uint32_t *version, uint32_t *keep)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1802,8 +1888,8 @@ cdb_status cdb_table_describe(cdb_db *db, uint64_t store, cdb_table_column_info 
     return r;
 }
 
-static cdb_status table_describe_in(cdb_db *db, uint64_t store, cdb_table_column_info *cols, unsigned cap, unsigned *n,
-                                    uint32_t *version, uint32_t *keep)
+static cdb_status table_describe_in(cdb_db *db, uint64_t store, cdb_table_column_info *cols,
+                                    unsigned cap, unsigned *n, uint32_t *version, uint32_t *keep)
 {
     table *t;
     unsigned i, j;
@@ -1829,9 +1915,11 @@ static cdb_status table_describe_in(cdb_db *db, uint64_t store, cdb_table_column
     return CDB_OK;
 }
 
-static cdb_status table_column_id_in(cdb_db *db, uint64_t store, const char *name, size_t len, uint64_t *field_id);
+static cdb_status table_column_id_in(cdb_db *db, uint64_t store, const char *name, size_t len,
+                                     uint64_t *field_id);
 
-cdb_status cdb_table_column_id(cdb_db *db, uint64_t store, const char *name, size_t len, uint64_t *field_id)
+cdb_status cdb_table_column_id(cdb_db *db, uint64_t store, const char *name, size_t len,
+                               uint64_t *field_id)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1840,7 +1928,8 @@ cdb_status cdb_table_column_id(cdb_db *db, uint64_t store, const char *name, siz
     return r;
 }
 
-static cdb_status table_column_id_in(cdb_db *db, uint64_t store, const char *name, size_t len, uint64_t *field_id)
+static cdb_status table_column_id_in(cdb_db *db, uint64_t store, const char *name, size_t len,
+                                     uint64_t *field_id)
 {
     char got[CDB_CATALOG_NAME_MAX];
     size_t glen;
@@ -1850,7 +1939,8 @@ static cdb_status table_column_id_in(cdb_db *db, uint64_t store, const char *nam
     if (s != CDB_OK)
         return s;
     for (i = 0; i < t->ncols; i++) {
-        if ((s = cdb_catalog_field_name(&db->catalog, store, t->cols[i].id, got, sizeof got, &glen)) != CDB_OK)
+        if ((s = cdb_catalog_field_name(&db->catalog, store, t->cols[i].id, got, sizeof got, &glen))
+            != CDB_OK)
             return s;
         if (glen == len && memcmp(got, name, len) == 0) {
             *field_id = t->cols[i].id;
@@ -1860,7 +1950,8 @@ static cdb_status table_column_id_in(cdb_db *db, uint64_t store, const char *nam
     return CDB_E_NOT_FOUND;
 }
 
-static cdb_status do_add_column(cdb_db *db, uint64_t store, table *t, uint64_t next, const void *arg)
+static cdb_status do_add_column(cdb_db *db, uint64_t store, table *t, uint64_t next,
+                                const void *arg)
 {
     const cdb_table_column *in = (const cdb_table_column *)arg;
     size_t used = 0;
@@ -1890,9 +1981,11 @@ static cdb_status do_add_column(cdb_db *db, uint64_t store, table *t, uint64_t n
     return save(db, store, t, next, 1);
 }
 
-static cdb_status table_add_column_in(cdb_db *db, uint64_t store, const cdb_table_column *col_in, uint64_t *field_id);
+static cdb_status table_add_column_in(cdb_db *db, uint64_t store, const cdb_table_column *col_in,
+                                      uint64_t *field_id);
 
-cdb_status cdb_table_add_column(cdb_db *db, uint64_t store, const cdb_table_column *col_in, uint64_t *field_id)
+cdb_status cdb_table_add_column(cdb_db *db, uint64_t store, const cdb_table_column *col_in,
+                                uint64_t *field_id)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1901,7 +1994,8 @@ cdb_status cdb_table_add_column(cdb_db *db, uint64_t store, const cdb_table_colu
     return r;
 }
 
-static cdb_status table_add_column_in(cdb_db *db, uint64_t store, const cdb_table_column *col_in, uint64_t *field_id)
+static cdb_status table_add_column_in(cdb_db *db, uint64_t store, const cdb_table_column *col_in,
+                                      uint64_t *field_id)
 {
     cdb_status s;
     if (col_in == NULL)
@@ -1915,7 +2009,8 @@ static cdb_status table_add_column_in(cdb_db *db, uint64_t store, const cdb_tabl
     return s;
 }
 
-static cdb_status do_drop_column(cdb_db *db, uint64_t store, table *t, uint64_t next, const void *arg)
+static cdb_status do_drop_column(cdb_db *db, uint64_t store, table *t, uint64_t next,
+                                 const void *arg)
 {
     uint64_t id = *(const uint64_t *)arg;
     unsigned i, j;
@@ -1968,9 +2063,11 @@ static cdb_status do_rename(cdb_db *db, uint64_t store, table *t, uint64_t next,
     return cdb_catalog_field_rename(&db->catalog, store, r->id, r->name, r->len);
 }
 
-static cdb_status table_rename_column_in(cdb_db *db, uint64_t store, uint64_t field_id, const char *name, size_t len);
+static cdb_status table_rename_column_in(cdb_db *db, uint64_t store, uint64_t field_id,
+                                         const char *name, size_t len);
 
-cdb_status cdb_table_rename_column(cdb_db *db, uint64_t store, uint64_t field_id, const char *name, size_t len)
+cdb_status cdb_table_rename_column(cdb_db *db, uint64_t store, uint64_t field_id, const char *name,
+                                   size_t len)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1979,7 +2076,8 @@ cdb_status cdb_table_rename_column(cdb_db *db, uint64_t store, uint64_t field_id
     return r;
 }
 
-static cdb_status table_rename_column_in(cdb_db *db, uint64_t store, uint64_t field_id, const char *name, size_t len)
+static cdb_status table_rename_column_in(cdb_db *db, uint64_t store, uint64_t field_id,
+                                         const char *name, size_t len)
 {
     rename_arg r;
     if (name == NULL || len == 0)
@@ -2015,9 +2113,11 @@ static cdb_status do_widen(cdb_db *db, uint64_t store, table *t, uint64_t next, 
     return save(db, store, t, next, 1);
 }
 
-static cdb_status table_widen_column_in(cdb_db *db, uint64_t store, uint64_t field_id, cdb_value_type type);
+static cdb_status table_widen_column_in(cdb_db *db, uint64_t store, uint64_t field_id,
+                                        cdb_value_type type);
 
-cdb_status cdb_table_widen_column(cdb_db *db, uint64_t store, uint64_t field_id, cdb_value_type type)
+cdb_status cdb_table_widen_column(cdb_db *db, uint64_t store, uint64_t field_id,
+                                  cdb_value_type type)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -2026,7 +2126,8 @@ cdb_status cdb_table_widen_column(cdb_db *db, uint64_t store, uint64_t field_id,
     return r;
 }
 
-static cdb_status table_widen_column_in(cdb_db *db, uint64_t store, uint64_t field_id, cdb_value_type type)
+static cdb_status table_widen_column_in(cdb_db *db, uint64_t store, uint64_t field_id,
+                                        cdb_value_type type)
 {
     widen_arg a;
     a.id = field_id;
@@ -2063,7 +2164,8 @@ typedef struct index_arg {
     uint32_t *number;
 } index_arg;
 
-static cdb_status do_create_index(cdb_db *db, uint64_t store, table *t, uint64_t next, const void *arg)
+static cdb_status do_create_index(cdb_db *db, uint64_t store, table *t, uint64_t next,
+                                  const void *arg)
 {
     const index_arg *a = (const index_arg *)arg;
     cdb_status s;
@@ -2075,11 +2177,11 @@ static cdb_status do_create_index(cdb_db *db, uint64_t store, table *t, uint64_t
     return save(db, store, t, next + 1u, 0);
 }
 
-static cdb_status table_create_index_in(cdb_db *db, uint64_t store, const uint64_t *fields, unsigned n, int unique,
-                                        uint32_t *index);
+static cdb_status table_create_index_in(cdb_db *db, uint64_t store, const uint64_t *fields,
+                                        unsigned n, int unique, uint32_t *index);
 
-cdb_status cdb_table_create_index(cdb_db *db, uint64_t store, const uint64_t *fields, unsigned n, int unique,
-                                  uint32_t *index)
+cdb_status cdb_table_create_index(cdb_db *db, uint64_t store, const uint64_t *fields, unsigned n,
+                                  int unique, uint32_t *index)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -2088,8 +2190,8 @@ cdb_status cdb_table_create_index(cdb_db *db, uint64_t store, const uint64_t *fi
     return r;
 }
 
-static cdb_status table_create_index_in(cdb_db *db, uint64_t store, const uint64_t *fields, unsigned n, int unique,
-                                        uint32_t *index)
+static cdb_status table_create_index_in(cdb_db *db, uint64_t store, const uint64_t *fields,
+                                        unsigned n, int unique, uint32_t *index)
 {
     index_arg a;
     if (fields == NULL || index == NULL)
@@ -2101,7 +2203,8 @@ static cdb_status table_create_index_in(cdb_db *db, uint64_t store, const uint64
     return change(db, store, do_create_index, &a);
 }
 
-static cdb_status do_drop_index(cdb_db *db, uint64_t store, table *t, uint64_t next, const void *arg)
+static cdb_status do_drop_index(cdb_db *db, uint64_t store, table *t, uint64_t next,
+                                const void *arg)
 {
     uint32_t number = *(const uint32_t *)arg;
     unsigned i;
@@ -2173,8 +2276,8 @@ static cdb_status table_rowgroups_in(cdb_db *db, uint64_t store, struct cdb_rg *
     return s;
 }
 
-cdb_status cdb_table_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen, uint64_t old_addr,
-                               uint64_t addr)
+cdb_status cdb_table_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
+                               uint64_t old_addr, uint64_t addr)
 {
     cdb_rg g;
     cdb_status s = cdb_table_rowgroups(db, store, &g);
@@ -2192,34 +2295,21 @@ cdb_status cdb_table_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, 
 static uint8_t type_tag(uint8_t type)
 {
     switch ((cdb_value_type)type) {
-    case CDB_TYPE_BOOL:
-        return (uint8_t)CDB_TAG_FALSE;
-    case CDB_TYPE_INT:
-        return (uint8_t)CDB_TAG_INT;
-    case CDB_TYPE_F64:
-        return (uint8_t)CDB_TAG_F64;
-    case CDB_TYPE_F32:
-        return (uint8_t)CDB_TAG_F32;
-    case CDB_TYPE_TIMESTAMP:
-        return (uint8_t)CDB_TAG_TIMESTAMP;
-    case CDB_TYPE_REF:
-        return (uint8_t)CDB_TAG_REF;
-    case CDB_TYPE_STRING:
-        return (uint8_t)CDB_TAG_STRING;
-    case CDB_TYPE_BINARY:
-        return (uint8_t)CDB_TAG_BINARY;
-    case CDB_TYPE_DECIMAL:
-        return (uint8_t)CDB_TAG_DECIMAL;
-    case CDB_TYPE_ARRAY:
-        return (uint8_t)CDB_TAG_ARRAY;
-    case CDB_TYPE_OBJECT:
-        return (uint8_t)CDB_TAG_OBJECT;
-    case CDB_TYPE_VECTOR:
-        return (uint8_t)CDB_TAG_VECTOR;
+    case CDB_TYPE_BOOL: return (uint8_t)CDB_TAG_FALSE;
+    case CDB_TYPE_INT: return (uint8_t)CDB_TAG_INT;
+    case CDB_TYPE_F64: return (uint8_t)CDB_TAG_F64;
+    case CDB_TYPE_F32: return (uint8_t)CDB_TAG_F32;
+    case CDB_TYPE_TIMESTAMP: return (uint8_t)CDB_TAG_TIMESTAMP;
+    case CDB_TYPE_REF: return (uint8_t)CDB_TAG_REF;
+    case CDB_TYPE_STRING: return (uint8_t)CDB_TAG_STRING;
+    case CDB_TYPE_BINARY: return (uint8_t)CDB_TAG_BINARY;
+    case CDB_TYPE_DECIMAL: return (uint8_t)CDB_TAG_DECIMAL;
+    case CDB_TYPE_ARRAY: return (uint8_t)CDB_TAG_ARRAY;
+    case CDB_TYPE_OBJECT: return (uint8_t)CDB_TAG_OBJECT;
+    case CDB_TYPE_VECTOR: return (uint8_t)CDB_TAG_VECTOR;
     case CDB_TYPE_NULL:
     case CDB_TYPE_UNKNOWN:
-    default:
-        return (uint8_t)CDB_TAG_NULL;
+    default: return (uint8_t)CDB_TAG_NULL;
     }
 }
 
@@ -2249,7 +2339,8 @@ static cdb_status fold_rewind(void *ctx)
     return cdb_index_seek(&f->cur, &f->t->pending, tbuf(f->db, T_OTHER), k, klen);
 }
 
-static cdb_status fold_next(void *ctx, uint64_t field_id, uint64_t *entry, const uint8_t **val, size_t *vlen)
+static cdb_status fold_next(void *ctx, uint64_t field_id, uint64_t *entry, const uint8_t **val,
+                            size_t *vlen)
 {
     fold_source_ctx *f = (fold_source_ctx *)ctx;
     uint8_t k[16];
@@ -2260,7 +2351,8 @@ static cdb_status fold_next(void *ctx, uint64_t field_id, uint64_t *entry, const
     if (f->current_idx >= f->count)
         return CDB_E_CORRUPT;
 
-    s = cdb_index_next(&f->cur, k, sizeof k, &klen, tbuf(f->db, T_ROW), tbuf_size(f->db), &rlen, &done);
+    s = cdb_index_next(&f->cur, k, sizeof k, &klen, tbuf(f->db, T_ROW), tbuf_size(f->db), &rlen,
+                       &done);
     if (s != CDB_OK)
         return s;
     if (done || klen != 8)
@@ -2309,7 +2401,8 @@ static cdb_status fold_pending(cdb_db *db, table *t)
         return CDB_E_STATE;
 
     if ((s = cdb_rg_init(&g, db, t->slot.store_id, &t->groups, t->group_rows, t->chunk_cap,
-                         db->cfg.col_work, db->cfg.col_work_size)) != CDB_OK)
+                         db->cfg.col_work, db->cfg.col_work_size))
+        != CDB_OK)
         return s;
 
     /* Check if t->pending is empty */
@@ -2320,7 +2413,9 @@ static cdb_status fold_pending(cdb_db *db, table *t)
         int done;
         if ((s = cdb_index_seek(&cur, &t->pending, tbuf(db, T_OTHER), NULL, 0)) != CDB_OK)
             return s;
-        if ((s = cdb_index_next(&cur, k, sizeof k, &klen, tbuf(db, T_ROW), tbuf_size(db), &vlen, &done)) != CDB_OK)
+        if ((s = cdb_index_next(&cur, k, sizeof k, &klen, tbuf(db, T_ROW), tbuf_size(db), &vlen,
+                                &done))
+            != CDB_OK)
             return s;
         if (done)
             return CDB_OK;
@@ -2343,7 +2438,9 @@ static cdb_status fold_pending(cdb_db *db, table *t)
 
         if ((s = cdb_index_seek(&cur, &t->pending, tbuf(db, T_OTHER), sk, sklen)) != CDB_OK)
             return s;
-        if ((s = cdb_index_next(&cur, k, sizeof k, &klen, tbuf(db, T_ROW), tbuf_size(db), &vlen, &done)) != CDB_OK)
+        if ((s = cdb_index_next(&cur, k, sizeof k, &klen, tbuf(db, T_ROW), tbuf_size(db), &vlen,
+                                &done))
+            != CDB_OK)
             return s;
         if (done)
             break;
@@ -2368,10 +2465,13 @@ static cdb_status fold_pending(cdb_db *db, table *t)
                 int pfound = 0;
                 size_t rlen = 0;
 
-                if ((s = cdb_index_get(&t->pending, ek, eklen, tbuf(db, T_ROW), tbuf_size(db), &rlen, &pfound)) != CDB_OK)
+                if ((s = cdb_index_get(&t->pending, ek, eklen, tbuf(db, T_ROW), tbuf_size(db),
+                                       &rlen, &pfound))
+                    != CDB_OK)
                     return s;
                 if (!pfound) {
-                    if ((s = cdb_rg_get_row(&g, eid, g.enc, g.enc_cap, &rlen, &pfound)) != CDB_OK || !pfound)
+                    if ((s = cdb_rg_get_row(&g, eid, g.enc, g.enc_cap, &rlen, &pfound)) != CDB_OK
+                        || !pfound)
                         return s == CDB_OK ? CDB_E_CORRUPT : s;
                     if ((s = cdb_index_put(&t->pending, ek, eklen, g.enc, rlen)) != CDB_OK)
                         return s;
@@ -2404,11 +2504,14 @@ static cdb_status fold_pending(cdb_db *db, table *t)
             if (need_seek) {
                 uint8_t seek_k[8];
                 size_t seek_klen = gkey(seek_k, resume_e);
-                if ((s = cdb_index_seek(&tc, &t->pending, tbuf(db, T_OTHER), seek_k, seek_klen)) != CDB_OK)
+                if ((s = cdb_index_seek(&tc, &t->pending, tbuf(db, T_OTHER), seek_k, seek_klen))
+                    != CDB_OK)
                     return s;
                 need_seek = 0;
             }
-            if ((s = cdb_index_next(&tc, tk, sizeof tk, &tklen, tbuf(db, T_ROW), tbuf_size(db), &tvlen, &tdone)) != CDB_OK)
+            if ((s = cdb_index_next(&tc, tk, sizeof tk, &tklen, tbuf(db, T_ROW), tbuf_size(db),
+                                    &tvlen, &tdone))
+                != CDB_OK)
                 return s;
             if (tdone)
                 break;
@@ -2444,7 +2547,9 @@ static cdb_status fold_pending(cdb_db *db, table *t)
 
         if ((s = cdb_index_seek(&cc, &t->pending, tbuf(db, T_OTHER), NULL, 0)) != CDB_OK)
             return s;
-        if ((s = cdb_index_next(&cc, fk, sizeof fk, &fklen, tbuf(db, T_ROW), tbuf_size(db), &fvlen, &fdone)) != CDB_OK)
+        if ((s = cdb_index_next(&cc, fk, sizeof fk, &fklen, tbuf(db, T_ROW), tbuf_size(db), &fvlen,
+                                &fdone))
+            != CDB_OK)
             return s;
         if (fdone)
             break; /* All pending rows folded! */
@@ -2463,7 +2568,9 @@ static cdb_status fold_pending(cdb_db *db, table *t)
             return s;
 
         while (count < t->group_rows) {
-            if ((s = cdb_index_next(&cc, ck, sizeof ck, &cklen, tbuf(db, T_ROW), tbuf_size(db), &cvlen, &cdone)) != CDB_OK)
+            if ((s = cdb_index_next(&cc, ck, sizeof ck, &cklen, tbuf(db, T_ROW), tbuf_size(db),
+                                    &cvlen, &cdone))
+                != CDB_OK)
                 return s;
             if (cdone)
                 break;
@@ -2513,7 +2620,8 @@ static cdb_status fold_pending(cdb_db *db, table *t)
     return CDB_OK;
 }
 
-static cdb_status col_next_live(cdb_db *db, table *t, uint64_t after, uint64_t *out_entry, int *done)
+static cdb_status col_next_live(cdb_db *db, table *t, uint64_t after, uint64_t *out_entry,
+                                int *done)
 {
     cdb_rg g;
     cdb_status s;
@@ -2528,7 +2636,8 @@ static cdb_status col_next_live(cdb_db *db, table *t, uint64_t after, uint64_t *
         return CDB_OK;
     }
     if ((s = cdb_rg_init(&g, db, t->slot.store_id, &t->groups, t->group_rows, t->chunk_cap,
-                         db->cfg.col_work, db->cfg.col_work_size)) != CDB_OK)
+                         db->cfg.col_work, db->cfg.col_work_size))
+        != CDB_OK)
         return s;
 
     for (;;) {
@@ -2569,10 +2678,13 @@ static cdb_status col_next_live(cdb_db *db, table *t, uint64_t after, uint64_t *
             int pdone;
             uint64_t pe;
             size_t pseek_len = gkey(pseek, after + 1u);
-            if ((s = cdb_index_seek(&pc, &t->pending, tbuf(db, T_OTHER), pseek, pseek_len)) != CDB_OK)
+            if ((s = cdb_index_seek(&pc, &t->pending, tbuf(db, T_OTHER), pseek, pseek_len))
+                != CDB_OK)
                 return s;
             while (!have_pend) {
-                if ((s = cdb_index_next(&pc, pk, sizeof pk, &pklen, tbuf(db, T_ROW), tbuf_size(db), &pvlen, &pdone)) != CDB_OK)
+                if ((s = cdb_index_next(&pc, pk, sizeof pk, &pklen, tbuf(db, T_ROW), tbuf_size(db),
+                                        &pvlen, &pdone))
+                    != CDB_OK)
                     return s;
                 if (pdone)
                     break;
@@ -2598,7 +2710,8 @@ static cdb_status col_next_live(cdb_db *db, table *t, uint64_t after, uint64_t *
             size_t chk_len = gkey(chk, cand_grp);
             int pfound = 0;
             size_t chk_vlen = 0;
-            if ((s = cdb_index_get(&t->pending, chk, chk_len, NULL, 0, &chk_vlen, &pfound)) != CDB_OK)
+            if ((s = cdb_index_get(&t->pending, chk, chk_len, NULL, 0, &chk_vlen, &pfound))
+                != CDB_OK)
                 return s;
             if (pfound && chk_vlen == 0) {
                 /* Tombstoned in pending; skip it */
@@ -2637,7 +2750,8 @@ cdb_status cdb_table_flush(cdb_db *db)
     table *t;
     cdb_status s = CDB_OK;
     db->via_table = 1;
-    for (t = (table *)cdb_slots_first(&db->table_slots, &it); t != NULL; t = (table *)cdb_slots_next(&it)) {
+    for (t = (table *)cdb_slots_first(&db->table_slots, &it); t != NULL;
+         t = (table *)cdb_slots_next(&it)) {
         if (t->layout == CDB_TABLE_LAYOUT_COLUMN) {
             if ((s = fold_pending(db, t)) != CDB_OK)
                 break;

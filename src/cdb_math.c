@@ -96,7 +96,7 @@ double cdb_math_haversine(double lat1, double lon1, double lat2, double lon2)
     double dlon = cdb_math_radians(lon2 - lon1);
 
     double a = sin(dlat * 0.5) * sin(dlat * 0.5)
-             + cos(rlat1) * cos(rlat2) * sin(dlon * 0.5) * sin(dlon * 0.5);
+               + cos(rlat1) * cos(rlat2) * sin(dlon * 0.5) * sin(dlon * 0.5);
     if (a < 0.0)
         a = 0.0;
     if (a > 1.0)
@@ -105,7 +105,8 @@ double cdb_math_haversine(double lat1, double lon1, double lat2, double lon2)
     return CDB_WGS84_RADIUS_METERS * c;
 }
 
-int cdb_math_bbox_contains(double min_x, double min_y, double max_x, double max_y, double x, double y)
+int cdb_math_bbox_contains(double min_x, double min_y, double max_x, double max_y, double x,
+                           double y)
 {
     return (x >= min_x && x <= max_x && y >= min_y && y <= max_y);
 }
@@ -148,9 +149,8 @@ void cdb_math_destination(double lat1, double lon1, double bearing_deg, double d
     }
 }
 
-double cdb_math_cross_track_distance(double lat_start, double lon_start,
-                                    double lat_end, double lon_end,
-                                    double lat_p, double lon_p)
+double cdb_math_cross_track_distance(double lat_start, double lon_start, double lat_end,
+                                     double lon_end, double lat_p, double lon_p)
 {
     double d13 = cdb_math_haversine(lat_start, lon_start, lat_p, lon_p) / CDB_WGS84_RADIUS_METERS;
     double theta13 = cdb_math_radians(cdb_math_bearing(lat_start, lon_start, lat_p, lon_p));
@@ -160,12 +160,12 @@ double cdb_math_cross_track_distance(double lat_start, double lon_start,
     return xtd * CDB_WGS84_RADIUS_METERS;
 }
 
-double cdb_math_along_track_distance(double lat_start, double lon_start,
-                                    double lat_end, double lon_end,
-                                    double lat_p, double lon_p)
+double cdb_math_along_track_distance(double lat_start, double lon_start, double lat_end,
+                                     double lon_end, double lat_p, double lon_p)
 {
     double d13 = cdb_math_haversine(lat_start, lon_start, lat_p, lon_p) / CDB_WGS84_RADIUS_METERS;
-    double xtd = cdb_math_cross_track_distance(lat_start, lon_start, lat_end, lon_end, lat_p, lon_p) / CDB_WGS84_RADIUS_METERS;
+    double xtd = cdb_math_cross_track_distance(lat_start, lon_start, lat_end, lon_end, lat_p, lon_p)
+                 / CDB_WGS84_RADIUS_METERS;
 
     double cos_xtd = cos(xtd);
     double atd;
@@ -175,12 +175,14 @@ double cdb_math_along_track_distance(double lat_start, double lon_start,
     return atd * CDB_WGS84_RADIUS_METERS;
 }
 
-int cdb_math_point_in_circle(double lat, double lon, double center_lat, double center_lon, double radius_meters)
+int cdb_math_point_in_circle(double lat, double lon, double center_lat, double center_lon,
+                             double radius_meters)
 {
     return cdb_math_haversine(lat, lon, center_lat, center_lon) <= radius_meters;
 }
 
-int cdb_math_point_in_polygon(double lat, double lon, const double *polygon_lats, const double *polygon_lons, size_t n_vertices)
+int cdb_math_point_in_polygon(double lat, double lon, const double *polygon_lats,
+                              const double *polygon_lons, size_t n_vertices)
 {
     int inside = 0;
     size_t i, j;
@@ -283,7 +285,8 @@ uint64_t cdb_math_morton2d(double lat, double lon)
 
 static const char BASE32_CHARS[] = "0123456789bcdefghjkmnpqrstuvwxyz";
 
-cdb_status cdb_math_geohash_encode(double lat, double lon, unsigned precision, char *out_buf, size_t cap)
+cdb_status cdb_math_geohash_encode(double lat, double lon, unsigned precision, char *out_buf,
+                                   size_t cap)
 {
     double min_lat = -90.0, max_lat = 90.0;
     double min_lon = -180.0, max_lon = 180.0;
@@ -328,7 +331,8 @@ cdb_status cdb_math_geohash_encode(double lat, double lon, unsigned precision, c
     return CDB_OK;
 }
 
-cdb_status cdb_math_geohash_decode(const char *geohash, size_t len, double *out_lat, double *out_lon)
+cdb_status cdb_math_geohash_decode(const char *geohash, size_t len, double *out_lat,
+                                   double *out_lon)
 {
     double min_lat = -90.0, max_lat = 90.0;
     double min_lon = -180.0, max_lon = 180.0;
@@ -600,7 +604,8 @@ void cdb_math_window_blackman(float *out, size_t n)
     }
 }
 
-cdb_status cdb_math_fir_filter(const float *signal, size_t n, const float *taps, size_t n_taps, float *out)
+cdb_status cdb_math_fir_filter(const float *signal, size_t n, const float *taps, size_t n_taps,
+                               float *out)
 {
     size_t i, j;
     if (signal == NULL || taps == NULL || out == NULL || n_taps == 0)
@@ -712,7 +717,8 @@ cdb_status cdb_math_fft(float *real, float *imag, size_t n, int inverse)
     return CDB_OK;
 }
 
-cdb_status cdb_math_fft_magnitude(const float *signal, size_t n, float *work_real, float *work_imag, float *out_mag)
+cdb_status cdb_math_fft_magnitude(const float *signal, size_t n, float *work_real, float *work_imag,
+                                  float *out_mag)
 {
     cdb_status s;
     size_t k, half;
@@ -736,7 +742,8 @@ cdb_status cdb_math_fft_magnitude(const float *signal, size_t n, float *work_rea
     return CDB_OK;
 }
 
-cdb_status cdb_math_fft_power(const float *signal, size_t n, float *work_real, float *work_imag, float *out_power)
+cdb_status cdb_math_fft_power(const float *signal, size_t n, float *work_real, float *work_imag,
+                              float *out_power)
 {
     cdb_status s;
     size_t k, half;
@@ -852,7 +859,8 @@ cdb_status cdb_math_vec_sub(const float *u, const float *v, size_t n, float *out
     return CDB_OK;
 }
 
-cdb_status cdb_math_mat_vec_mul(const float *m, size_t rows, size_t cols, const float *v, float *out)
+cdb_status cdb_math_mat_vec_mul(const float *m, size_t rows, size_t cols, const float *v,
+                                float *out)
 {
     size_t r, c;
     if (m == NULL || v == NULL || out == NULL)
@@ -867,7 +875,8 @@ cdb_status cdb_math_mat_vec_mul(const float *m, size_t rows, size_t cols, const 
     return CDB_OK;
 }
 
-cdb_status cdb_math_mat_mul(const float *a, size_t a_rows, size_t a_cols, const float *b, size_t b_cols, float *out)
+cdb_status cdb_math_mat_mul(const float *a, size_t a_rows, size_t a_cols, const float *b,
+                            size_t b_cols, float *out)
 {
     size_t r, c, k;
     if (a == NULL || b == NULL || out == NULL)
@@ -944,10 +953,10 @@ cdb_status cdb_math_mat_trace(const float *m, size_t dim, float *out)
 
 /* ---------------------------------------------------------------- Astronomy & Telescope Mount */
 
-static void geodetic_to_ecef(double lat_deg, double lon_deg, double alt_m,
-                             double *x, double *y, double *z)
+static void geodetic_to_ecef(double lat_deg, double lon_deg, double alt_m, double *x, double *y,
+                             double *z)
 {
-    const double a = 6378137.0; /* WGS84 semi-major axis */
+    const double a = 6378137.0;         /* WGS84 semi-major axis */
     const double e2 = 0.00669437999014; /* eccentricity squared */
 
     double phi = cdb_math_radians(lat_deg);
@@ -961,9 +970,9 @@ static void geodetic_to_ecef(double lat_deg, double lon_deg, double alt_m,
     *z = (n * (1.0 - e2) + alt_m) * sin_phi;
 }
 
-void cdb_math_astro_topocentric(double obs_lat, double obs_lon, double obs_alt,
-                                double tgt_lat, double tgt_lon, double tgt_alt,
-                                double *out_az, double *out_alt, double *out_range)
+void cdb_math_astro_topocentric(double obs_lat, double obs_lon, double obs_alt, double tgt_lat,
+                                double tgt_lon, double tgt_alt, double *out_az, double *out_alt,
+                                double *out_range)
 {
     double ox, oy, oz;
     double tx, ty, tz;
@@ -1214,10 +1223,9 @@ double cdb_math_atmo_heat_index(double temp_c, double rh_percent)
     if (t < 80.0)
         return 0.5 * (t + 61.0 + (t - 68.0) * 1.2 + r * 0.094);
 
-    hi = -42.379 + 2.04901523 * t + 10.14333127 * r
-         - 0.22475541 * t * r - 0.00683783 * t * t
-         - 0.05481717 * r * r + 0.00122874 * t * t * r
-         + 0.00085282 * t * r * r - 0.00000199 * t * t * r * r;
+    hi = -42.379 + 2.04901523 * t + 10.14333127 * r - 0.22475541 * t * r - 0.00683783 * t * t
+         - 0.05481717 * r * r + 0.00122874 * t * t * r + 0.00085282 * t * r * r
+         - 0.00000199 * t * t * r * r;
 
     return (hi - 32.0) / 1.8;
 }
@@ -1279,7 +1287,8 @@ double cdb_math_fluid_hydrostatic_pressure(double density, double depth_m)
     return density * g * depth_m;
 }
 
-double cdb_math_fluid_venturi_flow(double delta_p_pa, double density, double cd, double area1, double area2)
+double cdb_math_fluid_venturi_flow(double delta_p_pa, double density, double cd, double area1,
+                                   double area2)
 {
     double beta;
     if (area1 <= 0.0 || area2 <= 0.0 || density <= 0.0 || delta_p_pa <= 0.0)

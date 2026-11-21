@@ -43,11 +43,11 @@
 #include "cdb_db.h"
 
 /* Measures (spec 7.7). Distances: smaller is closer. */
-#define CDB_VEC_BASE 0u       /* in a query: the collection's base measure */
-#define CDB_VEC_COSINE 1u     /* 1 - cosine similarity */
-#define CDB_VEC_DOT 2u        /* -dot product */
-#define CDB_VEC_EUCLIDEAN 3u  /* L2 distance */
-#define CDB_VEC_HAMMING 4u    /* differing bits; binary vectors only */
+#define CDB_VEC_BASE 0u      /* in a query: the collection's base measure */
+#define CDB_VEC_COSINE 1u    /* 1 - cosine similarity */
+#define CDB_VEC_DOT 2u       /* -dot product */
+#define CDB_VEC_EUCLIDEAN 3u /* L2 distance */
+#define CDB_VEC_HAMMING 4u   /* differing bits; binary vectors only */
 
 #define CDB_VEC_MODEL_MAX 64u
 #define CDB_VEC_MAX_DIMS 65535u
@@ -66,8 +66,8 @@
 typedef struct cdb_vec_config {
     cdb_vector_elem elem;
     uint32_t dims;
-    unsigned measure;          /* base measure */
-    const char *model;         /* embedding model and version (spec 7.3) */
+    unsigned measure;  /* base measure */
+    const char *model; /* embedding model and version (spec 7.3) */
     size_t model_len;
     const char *model_version;
     size_t model_version_len;
@@ -83,20 +83,21 @@ typedef struct cdb_vec_config {
 /* One search result (or one stored neighbour). */
 typedef struct cdb_vec_hit {
     uint64_t entry;
-    double distance;           /* under the measure searched with; smaller is closer */
+    double distance; /* under the measure searched with; smaller is closer */
     uint64_t source_store;
     uint64_t source_entry;
-    unsigned source_state;     /* CDB_VEC_SOURCE_* */
+    unsigned source_state; /* CDB_VEC_SOURCE_* */
 } cdb_vec_hit;
 
 /* Creates a collection; commits immediately, like other catalog changes.
  * CDB_E_OVERFLOW if one vector does not fit in a page. */
-cdb_status cdb_vec_create(cdb_db *db, const char *name, size_t len, const cdb_vec_config *cfg, uint64_t *id);
+cdb_status cdb_vec_create(cdb_db *db, const char *name, size_t len, const cdb_vec_config *cfg,
+                          uint64_t *id);
 
 /* Copies the collection's settings; model and version go to the caller's
  * buffers (CDB_VEC_MODEL_MAX bytes each) and are not NUL-terminated. */
-cdb_status cdb_vec_describe(cdb_db *db, uint64_t store, cdb_vec_config *cfg,
-                            char *model, char *model_version);
+cdb_status cdb_vec_describe(cdb_db *db, uint64_t store, cdb_vec_config *cfg, char *model,
+                            char *model_version);
 
 /* Inside a transaction. vec is an encoded vector value (spec 14.6) with the
  * collection's element type and dimensions. source_store 0: no source.
@@ -116,27 +117,28 @@ cdb_status cdb_vec_delete(cdb_db *db, uint64_t store, uint64_t entry);
 cdb_status cdb_vec_live_in_tx(cdb_db *db, uint64_t store, uint64_t entry, int *live);
 
 /* Copies the committed vector as an encoded value, and its source. */
-cdb_status cdb_vec_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap, size_t *len,
-                       uint64_t *source_store, uint64_t *source_entry);
+cdb_status cdb_vec_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap,
+                       size_t *len, uint64_t *source_store, uint64_t *source_entry);
 
 /* The entries whose source is (source_store, source_entry), ascending; at
  * most max of them, *n reports how many were copied. */
-cdb_status cdb_vec_by_source(cdb_db *db, uint64_t store, uint64_t source_store, uint64_t source_entry,
-                             uint64_t *entries, size_t max, size_t *n);
+cdb_status cdb_vec_by_source(cdb_db *db, uint64_t store, uint64_t source_store,
+                             uint64_t source_entry, uint64_t *entries, size_t max, size_t *n);
 
 /* The k nearest committed vectors to query, nearest first (equal
  * distances: lower entry ID first). measure CDB_VEC_BASE uses the
  * collection's base measure. */
-cdb_status cdb_vec_search(cdb_db *db, uint64_t store, const void *query, size_t len, unsigned measure,
-                          cdb_vec_hit *hits, size_t k, size_t *n);
+cdb_status cdb_vec_search(cdb_db *db, uint64_t store, const void *query, size_t len,
+                          unsigned measure, cdb_vec_hit *hits, size_t k, size_t *n);
 
 /* As cdb_vec_search, choosing the path: CDB_VEC_AUTO defers to the
  * operator's vec_mode, then to the automatic rule. APPROX without a graph
  * searches exactly. The approximate path walks the graph from its entry
  * points under the base measure, adds pending vectors exactly, and ranks
  * what it found with the requested measure. */
-cdb_status cdb_vec_search_mode(cdb_db *db, uint64_t store, const void *query, size_t len, unsigned measure,
-                               unsigned mode, cdb_vec_hit *hits, size_t k, size_t *n);
+cdb_status cdb_vec_search_mode(cdb_db *db, uint64_t store, const void *query, size_t len,
+                               unsigned measure, unsigned mode, cdb_vec_hit *hits, size_t k,
+                               size_t *n);
 
 /* Bulk search (spec 18.4): nq searches in one call, such as building
  * similar_to links or retrieving memories for several prompts. Query i is
@@ -151,8 +153,9 @@ cdb_status cdb_vec_search_mode(cdb_db *db, uint64_t store, const void *query, si
  * batch may see commits made in between, as separate searches would.
  * Requests that read fewer than cdb_db_config.accel_min_bytes stay on
  * the CPU. */
-cdb_status cdb_vec_search_bulk(cdb_db *db, uint64_t store, const void *const *queries, const size_t *lens, size_t nq,
-                               unsigned measure, unsigned mode, cdb_vec_hit *hits, size_t k, size_t *counts);
+cdb_status cdb_vec_search_bulk(cdb_db *db, uint64_t store, const void *const *queries,
+                               const size_t *lens, size_t nq, unsigned measure, unsigned mode,
+                               cdb_vec_hit *hits, size_t k, size_t *counts);
 
 /* Adds a neighbour graph with k neighbours per entry (0: 16) and queues
  * every vector; commits immediately. CDB_E_EXISTS if there is one,
@@ -181,8 +184,8 @@ cdb_status cdb_vec_refresh_async(cdb_db *db, cdb_vec_refresh_task *task, uint64_
 /* The stored ranking of an entry (spec 6.4): its neighbours, nearest
  * first. *fresh is 0 while the entry is pending (its list may be empty or
  * incomplete). CDB_E_NOT_FOUND for an entry that does not exist. */
-cdb_status cdb_vec_neighbours(cdb_db *db, uint64_t store, uint64_t entry, cdb_vec_hit *hits, size_t max,
-                              size_t *n, int *fresh);
+cdb_status cdb_vec_neighbours(cdb_db *db, uint64_t store, uint64_t entry, cdb_vec_hit *hits,
+                              size_t max, size_t *n, int *fresh);
 
 /* ---- Change log and named change cursors (spec 14.12.5, 18.12) ----
  *
@@ -219,19 +222,21 @@ cdb_status cdb_vec_change_stamp(cdb_db *db, uint64_t store, uint64_t *stamp, uin
  * again until *n is 0. CDB_E_STATE without a log, or when the log no
  * longer reaches back to *seq (it was trimmed: read the collection whole
  * instead). Not inside a transaction. */
-cdb_status cdb_vec_changes(cdb_db *db, uint64_t store, uint64_t *seq, uint64_t *entry, cdb_vec_change *out,
-                           size_t max, size_t *n);
+cdb_status cdb_vec_changes(cdb_db *db, uint64_t store, uint64_t *seq, uint64_t *entry,
+                           cdb_vec_change *out, size_t max, size_t *n);
 
 /* Opens the named cursor, creating it at the change stamp if it does not
  * exist; *seq is the sequence it has read up to. Commits immediately when
  * it creates. Names are 1 to CDB_VEC_CURSOR_NAME_MAX bytes. CDB_E_STATE
  * without a log. */
-cdb_status cdb_vec_cursor_open(cdb_db *db, uint64_t store, const char *name, size_t len, uint64_t *seq);
+cdb_status cdb_vec_cursor_open(cdb_db *db, uint64_t store, const char *name, size_t len,
+                               uint64_t *seq);
 
 /* Advances the named cursor to seq, in the open transaction: one ordinary
  * commit, no reconciliation (spec 14.12.5). A lower seq changes nothing.
  * CDB_E_NOT_FOUND if there is no such cursor. */
-cdb_status cdb_vec_cursor_advance(cdb_db *db, uint64_t store, const char *name, size_t len, uint64_t seq);
+cdb_status cdb_vec_cursor_advance(cdb_db *db, uint64_t store, const char *name, size_t len,
+                                  uint64_t seq);
 
 /* Drops the named cursor, so it no longer holds the log. Commits
  * immediately. CDB_E_NOT_FOUND if there is no such cursor. */
@@ -256,8 +261,8 @@ void cdb_vec_accel_close(cdb_db *db);
 /* The distance the CPU path computes between a query and a stored vector,
  * both in their stored form: for an accelerator, or a test, to compare
  * its own against. */
-double cdb_vec_cpu_distance(unsigned elem, uint32_t dims, unsigned measure, const uint8_t *q, const uint8_t *v,
-                            cdb_byte_order o);
+double cdb_vec_cpu_distance(unsigned elem, uint32_t dims, unsigned measure, const uint8_t *q,
+                            const uint8_t *v, cdb_byte_order o);
 
 /* Bytes of vec_work a collection with this shape and k needs. */
 size_t cdb_vec_work_size(cdb_vector_elem elem, uint32_t dims, uint32_t k);

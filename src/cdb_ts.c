@@ -25,10 +25,10 @@
 /* Settings fields (spec 14.11.1), in store record field 16. */
 enum { S_LATE_MODE = 1, S_LATENESS, S_KEYS, S_SERIES, S_BLOCKS, S_HELD };
 
-#define REC_HDR 48u            /* series record before its fields */
+#define REC_HDR 48u /* series record before its fields */
 #define REC_MAX (REC_HDR + CDB_TS_MAX_FIELDS * 18u)
-#define BLOCK_VAL 20u          /* page (8), count (4), last timestamp (8) */
-#define KEY_MAX 512u           /* series key buffer; the keys index's own limit applies first */
+#define BLOCK_VAL 20u /* page (8), count (4), last timestamp (8) */
+#define KEY_MAX 512u  /* series key buffer; the keys index's own limit applies first */
 #define DEFAULT_WINDOW_NS INT64_C(3600000000000) /* one hour */
 
 typedef struct cdb_ts_store ts_store;
@@ -65,28 +65,36 @@ static cdb_ts_point *work(cdb_db *db)
 
 /* The store's settings object (spec 14.11.1), kept in store record field
  * 16 (the field the catalog calls `vector`). */
-static cdb_status encode_settings(cdb_db *db, const ts_store *t, uint8_t *out, size_t cap, size_t *len)
+static cdb_status encode_settings(cdb_db *db, const ts_store *t, uint8_t *out, size_t cap,
+                                  size_t *len)
 {
     cdb_value_writer w;
     cdb_value_writer_init(&w, out, cap, db->pager.order, CDB_DECIMAL_COMPACT);
     cdb_value_begin_object(&w);
-    cdb_value_field(&w, S_LATE_MODE); cdb_value_write_int(&w, t->late_mode);
-    cdb_value_field(&w, S_LATENESS);  cdb_value_write_int(&w, t->lateness);
-    cdb_value_field(&w, S_KEYS);      cdb_value_write_int(&w, (int64_t)t->keys.root);
-    cdb_value_field(&w, S_SERIES);    cdb_value_write_int(&w, (int64_t)t->series.root);
-    cdb_value_field(&w, S_BLOCKS);    cdb_value_write_int(&w, (int64_t)t->blocks.root);
-    cdb_value_field(&w, S_HELD);      cdb_value_write_int(&w, (int64_t)t->held.root);
+    cdb_value_field(&w, S_LATE_MODE);
+    cdb_value_write_int(&w, t->late_mode);
+    cdb_value_field(&w, S_LATENESS);
+    cdb_value_write_int(&w, t->lateness);
+    cdb_value_field(&w, S_KEYS);
+    cdb_value_write_int(&w, (int64_t)t->keys.root);
+    cdb_value_field(&w, S_SERIES);
+    cdb_value_write_int(&w, (int64_t)t->series.root);
+    cdb_value_field(&w, S_BLOCKS);
+    cdb_value_write_int(&w, (int64_t)t->blocks.root);
+    cdb_value_field(&w, S_HELD);
+    cdb_value_write_int(&w, (int64_t)t->held.root);
     cdb_value_end_object(&w);
     *len = cdb_value_writer_len(&w);
     return w.error;
 }
 
-static cdb_status get_int(const cdb_value *obj, cdb_byte_order o, uint64_t f, int64_t lo, int64_t hi, int64_t *out)
+static cdb_status get_int(const cdb_value *obj, cdb_byte_order o, uint64_t f, int64_t lo,
+                          int64_t hi, int64_t *out)
 {
     cdb_value v;
     int found;
-    if (cdb_value_object_get(obj, o, f, &v, &found) != CDB_OK || !found || v.type != CDB_TYPE_INT || v.as.i64 < lo
-        || v.as.i64 > hi)
+    if (cdb_value_object_get(obj, o, f, &v, &found) != CDB_OK || !found || v.type != CDB_TYPE_INT
+        || v.as.i64 < lo || v.as.i64 > hi)
         return CDB_E_CORRUPT;
     *out = v.as.i64;
     return CDB_OK;
@@ -112,7 +120,7 @@ static int store_pinned(const void *slot)
     return ((const ts_store *)slot)->held_any;
 }
 
-const cdb_slot_ops cdb_ts_slot_ops = { store_pinned, save_store };
+const cdb_slot_ops cdb_ts_slot_ops = {store_pinned, save_store};
 
 /* Finds an open store or opens it from its catalog record into a slot:
  * decodes the settings (late mode 0..3, lateness >= 0, index roots >= 1),
@@ -144,10 +152,15 @@ static cdb_status ts_get(cdb_db *db, uint64_t store, ts_store **out)
         return CDB_E_INVALID_ARG;
     if (info.flags & CDB_STORE_DROPPED)
         return CDB_E_NOT_FOUND;
-    if (cdb_value_read(info.vector, info.vector_len, o, &obj) != CDB_OK || obj.type != CDB_TYPE_OBJECT)
+    if (cdb_value_read(info.vector, info.vector_len, o, &obj) != CDB_OK
+        || obj.type != CDB_TYPE_OBJECT)
         return CDB_E_CORRUPT;
     for (i = 0; i < 6; i++)
-        if ((s = get_int(&obj, o, i + 1u, i == 0 ? 0 : i == 1 ? 0 : 1, i == 0 ? CDB_TS_LATE_HOLD : INT64_MAX, &v[i]))
+        if ((s = get_int(&obj, o, i + 1u,
+                         i == 0   ? 0
+                         : i == 1 ? 0
+                                  : 1,
+                         i == 0 ? CDB_TS_LATE_HOLD : INT64_MAX, &v[i]))
             != CDB_OK)
             return s;
     if ((s = cdb_slots_claim(db, &db->ts_slots, &slot)) != CDB_OK)
@@ -157,10 +170,16 @@ static cdb_status ts_get(cdb_db *db, uint64_t store, ts_store **out)
     free_slot->next_entry = info.next_entry_id ? info.next_entry_id : 1;
     free_slot->late_mode = (uint8_t)v[0];
     free_slot->lateness = v[1];
-    if ((s = cdb_index_open(&free_slot->keys, &db->pager, (uint64_t)v[2], &db->cfg.catalog_work)) != CDB_OK
-        || (s = cdb_index_open(&free_slot->series, &db->pager, (uint64_t)v[3], &db->cfg.catalog_work)) != CDB_OK
-        || (s = cdb_index_open(&free_slot->blocks, &db->pager, (uint64_t)v[4], &db->cfg.catalog_work)) != CDB_OK
-        || (s = cdb_index_open(&free_slot->held, &db->pager, (uint64_t)v[5], &db->cfg.catalog_work)) != CDB_OK)
+    if ((s = cdb_index_open(&free_slot->keys, &db->pager, (uint64_t)v[2], &db->cfg.catalog_work))
+            != CDB_OK
+        || (s = cdb_index_open(&free_slot->series, &db->pager, (uint64_t)v[3],
+                               &db->cfg.catalog_work))
+               != CDB_OK
+        || (s = cdb_index_open(&free_slot->blocks, &db->pager, (uint64_t)v[4],
+                               &db->cfg.catalog_work))
+               != CDB_OK
+        || (s = cdb_index_open(&free_slot->held, &db->pager, (uint64_t)v[5], &db->cfg.catalog_work))
+               != CDB_OK)
         return s;
     {
         /* Whether late points wait to be folded in; a value too large for
@@ -191,11 +210,11 @@ int cdb_ts_is_open(cdb_db *db, uint64_t store)
 
 /* A catalog change: the four indexes are created for the ID the store will
  * get, then the store record naming them, all in one commit. */
-static cdb_status ts_create_in(cdb_db *db, const char *name, size_t len, unsigned late_mode, int64_t lateness,
-                               uint64_t *store);
+static cdb_status ts_create_in(cdb_db *db, const char *name, size_t len, unsigned late_mode,
+                               int64_t lateness, uint64_t *store);
 
-cdb_status cdb_ts_create(cdb_db *db, const char *name, size_t len, unsigned late_mode, int64_t lateness,
-                         uint64_t *store)
+cdb_status cdb_ts_create(cdb_db *db, const char *name, size_t len, unsigned late_mode,
+                         int64_t lateness, uint64_t *store)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -204,8 +223,8 @@ cdb_status cdb_ts_create(cdb_db *db, const char *name, size_t len, unsigned late
     return r;
 }
 
-static cdb_status ts_create_in(cdb_db *db, const char *name, size_t len, unsigned late_mode, int64_t lateness,
-                               uint64_t *store)
+static cdb_status ts_create_in(cdb_db *db, const char *name, size_t len, unsigned late_mode,
+                               int64_t lateness, uint64_t *store)
 {
     uint8_t settings[CDB_CATALOG_SETTINGS_MAX];
     size_t slen;
@@ -230,19 +249,22 @@ static cdb_status ts_create_in(cdb_db *db, const char *name, size_t len, unsigne
     t.late_mode = (uint8_t)late_mode;
     t.lateness = lateness;
     *store = cdb_catalog_next_store_id(&db->catalog);
-    s = cdb_index_create(&t.keys, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work);
+    s = cdb_index_create(&t.keys, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX,
+                         &db->cfg.catalog_work);
     if (s == CDB_OK)
-        s = cdb_index_create(&t.series, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work);
-    if (s == CDB_OK)
-        s = cdb_index_create(&t.blocks, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX,
+        s = cdb_index_create(&t.series, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE,
                              &db->cfg.catalog_work);
     if (s == CDB_OK)
-        s = cdb_index_create(&t.held, &db->pager, *store, CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX,
-                             &db->cfg.catalog_work);
+        s = cdb_index_create(&t.blocks, &db->pager, *store,
+                             CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work);
+    if (s == CDB_OK)
+        s = cdb_index_create(&t.held, &db->pager, *store,
+                             CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work);
     if (s == CDB_OK)
         s = encode_settings(db, &t, settings, sizeof settings, &slen);
     if (s == CDB_OK)
-        s = cdb_catalog_create_store_ex(&db->catalog, name, len, CDB_MODEL_TIME_SERIES, settings, slen, &got);
+        s = cdb_catalog_create_store_ex(&db->catalog, name, len, CDB_MODEL_TIME_SERIES, settings,
+                                        slen, &got);
     if (s == CDB_OK && got != *store)
         s = CDB_E_CORRUPT;
     return cdb_db_catalog_end(db, s);
@@ -277,8 +299,8 @@ static int64_t key_ts(const uint8_t *k)
  * key (a key may appear once). Sorting makes the key independent of the
  * order the caller lists the tags in. Each part is an order-preserving key
  * string. CDB_E_OVERFLOW when the key does not fit max bytes. */
-static cdb_status series_key(const char *name, size_t len, const cdb_ts_tag *tags, size_t ntags, size_t max,
-                             uint8_t *out, size_t *klen)
+static cdb_status series_key(const char *name, size_t len, const cdb_ts_tag *tags, size_t ntags,
+                             size_t max, uint8_t *out, size_t *klen)
 {
     size_t order[CDB_TS_MAX_TAGS], i, j;
     cdb_key_builder kb;
@@ -306,7 +328,8 @@ static cdb_status series_key(const char *name, size_t len, const cdb_ts_tag *tag
         return CDB_E_OVERFLOW;
     for (j = 0; j < ntags; j++) {
         const cdb_ts_tag *t = &tags[order[j]];
-        if (cdb_key_string(&kb, t->key, t->key_len) != CDB_OK || cdb_key_string(&kb, t->value, t->value_len) != CDB_OK)
+        if (cdb_key_string(&kb, t->key, t->key_len) != CDB_OK
+            || cdb_key_string(&kb, t->value, t->value_len) != CDB_OK)
             return CDB_E_OVERFLOW;
     }
     *klen = kb.len;
@@ -318,9 +341,9 @@ static cdb_status series_key(const char *name, size_t len, const cdb_ts_tag *tag
 typedef struct srec {
     cdb_ts_def def;
     int has_points;
-    int64_t last_ts;       /* the newest timestamp ever stored */
-    int64_t last_block;    /* the key timestamp of the newest block */
-    cdb_tsblock_state st;  /* after that block's last point */
+    int64_t last_ts;      /* the newest timestamp ever stored */
+    int64_t last_block;   /* the key timestamp of the newest block */
+    cdb_tsblock_state st; /* after that block's last point */
 } srec;
 
 /* Bytes of encoder state a field of this type keeps in the series record
@@ -450,8 +473,8 @@ static void layout_of(const srec *r, uint64_t series, int64_t ts, cdb_ts_layout 
 /* A point's values: an object of field ID -> value, each of its field's type.
  * The point refers to bytes in obj. Both lists are in ascending field-ID
  * order, so one merge-style pass matches each value to its field. */
-static cdb_status point_of(const cdb_ts_def *def, int64_t ts, const uint8_t *obj, size_t len, cdb_byte_order o,
-                           cdb_ts_point *p)
+static cdb_status point_of(const cdb_ts_def *def, int64_t ts, const uint8_t *obj, size_t len,
+                           cdb_byte_order o, cdb_ts_point *p)
 {
     cdb_value v, fv;
     cdb_value_iter it;
@@ -460,8 +483,9 @@ static cdb_status point_of(const cdb_ts_def *def, int64_t ts, const uint8_t *obj
     unsigned i = 0;
     memset(p, 0, sizeof *p);
     p->ts = ts;
-    if (cdb_value_validate(obj, len, o, CDB_DECIMAL_UNBOUNDED, 0) != CDB_OK || cdb_value_read(obj, len, o, &v) != CDB_OK
-        || v.type != CDB_TYPE_OBJECT || cdb_value_object_iter(&v, o, &it) != CDB_OK)
+    if (cdb_value_validate(obj, len, o, CDB_DECIMAL_UNBOUNDED, 0) != CDB_OK
+        || cdb_value_read(obj, len, o, &v) != CDB_OK || v.type != CDB_TYPE_OBJECT
+        || cdb_value_object_iter(&v, o, &it) != CDB_OK)
         return CDB_E_INVALID_ARG;
     for (;;) {
         cdb_ts_val *x;
@@ -471,7 +495,8 @@ static cdb_status point_of(const cdb_ts_def *def, int64_t ts, const uint8_t *obj
             return CDB_OK;
         while (i < def->nfields && def->fields[i].id < fid)
             i++;
-        if (i == def->nfields || def->fields[i].id != fid || def->fields[i].type != (uint8_t)fv.type)
+        if (i == def->nfields || def->fields[i].id != fid
+            || def->fields[i].type != (uint8_t)fv.type)
             return CDB_E_INVALID_ARG; /* an unknown field, or a value of the wrong type */
         x = &p->v[i];
         x->present = 1;
@@ -509,7 +534,8 @@ static int same_values(const cdb_ts_def *def, const cdb_ts_point *a, const cdb_t
             return 0;
         if (!x->present)
             continue;
-        if (x->bits != y->bits || x->len != y->len || (x->len && memcmp(x->bytes, y->bytes, x->len) != 0))
+        if (x->bits != y->bits || x->len != y->len
+            || (x->len && memcmp(x->bytes, y->bytes, x->len) != 0))
             return 0;
     }
     return 1;
@@ -544,7 +570,8 @@ static size_t encode_create(const cdb_ts_def *def, const uint8_t *key, size_t kl
     return n + 2 + klen;
 }
 
-static int decode_create(const uint8_t *p, size_t len, cdb_ts_def *def, const uint8_t **key, size_t *klen)
+static int decode_create(const uint8_t *p, size_t len, cdb_ts_def *def, const uint8_t **key,
+                         size_t *klen)
 {
     size_t n = 11, i;
     memset(def, 0, sizeof *def);
@@ -567,7 +594,8 @@ static int decode_create(const uint8_t *p, size_t len, cdb_ts_def *def, const ui
 }
 
 /* The next point of an append payload at *at; 0 when malformed. */
-static int next_point(const uint8_t *p, size_t len, size_t *at, int64_t *ts, const uint8_t **obj, size_t *olen)
+static int next_point(const uint8_t *p, size_t len, size_t *at, int64_t *ts, const uint8_t **obj,
+                      size_t *olen)
 {
     uint64_t l;
     size_t k;
@@ -614,8 +642,7 @@ static cdb_status tx_next(cdb_db *db, ts_store *t, uint64_t *off, txrec *r, int 
             return s;
         *off = next;
         if (rec.kind == CDB_RECORD_DATA && rec.tx_id == db->tx_id && !cdb_tx_dropped(db, at)
-            && rec.store_id == t->slot.store_id
-            && rec.payload_len >= 1) {
+            && rec.store_id == t->slot.store_id && rec.payload_len >= 1) {
             r->op = rec.payload[0];
             r->series = rec.entry_id;
             r->data = rec.payload + 1;
@@ -680,7 +707,8 @@ static cdb_status tx_store(cdb_db *db, uint64_t store, ts_store **t)
 }
 
 /* A series ID by key: committed, or created by this transaction. */
-static cdb_status find_series(cdb_db *db, ts_store *t, const uint8_t *key, size_t klen, uint64_t *series, int *found)
+static cdb_status find_series(cdb_db *db, ts_store *t, const uint8_t *key, size_t klen,
+                              uint64_t *series, int *found)
 {
     uint8_t v[8];
     size_t vlen;
@@ -724,7 +752,8 @@ static cdb_status check_def(const cdb_ts_def *def)
     if (def->precision > CDB_TS_NANOS || def->window < 0 || def->nfields > CDB_TS_MAX_FIELDS)
         return CDB_E_INVALID_ARG;
     for (i = 0; i < def->nfields; i++)
-        if (def->fields[i].type >= CDB_TYPE_UNKNOWN || (i > 0 && def->fields[i].id <= def->fields[i - 1].id))
+        if (def->fields[i].type >= CDB_TYPE_UNKNOWN
+            || (i > 0 && def->fields[i].id <= def->fields[i - 1].id))
             return CDB_E_INVALID_ARG;
     return CDB_OK;
 }
@@ -739,11 +768,13 @@ static int64_t default_window(unsigned precision)
     return w;
 }
 
-static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, size_t len, const cdb_ts_tag *tags,
-                               size_t ntags, const cdb_ts_def *def, uint64_t *series, int *created);
+static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, size_t len,
+                               const cdb_ts_tag *tags, size_t ntags, const cdb_ts_def *def,
+                               uint64_t *series, int *created);
 
-cdb_status cdb_ts_series(cdb_db *db, uint64_t store, const char *name, size_t len, const cdb_ts_tag *tags,
-                         size_t ntags, const cdb_ts_def *def, uint64_t *series, int *created)
+cdb_status cdb_ts_series(cdb_db *db, uint64_t store, const char *name, size_t len,
+                         const cdb_ts_tag *tags, size_t ntags, const cdb_ts_def *def,
+                         uint64_t *series, int *created)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -752,8 +783,9 @@ cdb_status cdb_ts_series(cdb_db *db, uint64_t store, const char *name, size_t le
     return r;
 }
 
-static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, size_t len, const cdb_ts_tag *tags,
-                               size_t ntags, const cdb_ts_def *def, uint64_t *series, int *created)
+static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, size_t len,
+                               const cdb_ts_tag *tags, size_t ntags, const cdb_ts_def *def,
+                               uint64_t *series, int *created)
 {
     uint8_t key[KEY_MAX], payload[16 + CDB_TS_MAX_FIELDS * 9u + KEY_MAX];
     size_t klen;
@@ -765,7 +797,8 @@ static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, siz
     *created = 0;
     if ((s = def ? tx_store(db, store, &t) : ts_get(db, store, &t)) != CDB_OK)
         return s;
-    if ((s = series_key(name, len, tags, ntags, t->keys.max_key < KEY_MAX ? t->keys.max_key : KEY_MAX, key, &klen))
+    if ((s = series_key(name, len, tags, ntags,
+                        t->keys.max_key < KEY_MAX ? t->keys.max_key : KEY_MAX, key, &klen))
         != CDB_OK)
         return s;
     if ((s = find_series(db, t, key, klen, series, &found)) != CDB_OK)
@@ -781,7 +814,9 @@ static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, siz
     if (d.window == 0)
         d.window = default_window(d.precision);
     if ((s = cdb_db_peek_entry(db, store, &t->next_entry, series)) != CDB_OK
-        || (s = cdb_tx_put(db, store, *series, CDB_OP_INSERT, payload, encode_create(&d, key, klen, payload))) != CDB_OK)
+        || (s = cdb_tx_put(db, store, *series, CDB_OP_INSERT, payload,
+                           encode_create(&d, key, klen, payload)))
+               != CDB_OK)
         return s;
     *series = cdb_db_take_entry(db, store, &t->next_entry, &t->dirty);
     t->touched_tx = db->tx_id;
@@ -808,7 +843,8 @@ static cdb_status ts_describe_in(cdb_db *db, uint64_t store, uint64_t series, cd
     cdb_status s;
     if ((s = ts_get(db, store, &t)) != CDB_OK)
         return s;
-    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found)) != CDB_OK)
+    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found))
+        != CDB_OK)
         return s;
     if (!found)
         return CDB_E_NOT_FOUND;
@@ -838,9 +874,11 @@ static int64_t ticks_to_ns(int64_t ticks, unsigned precision)
     return ticks;
 }
 
-static cdb_status ts_append_in(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points, size_t n);
+static cdb_status ts_append_in(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points,
+                               size_t n);
 
-cdb_status cdb_ts_append(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points, size_t n)
+cdb_status cdb_ts_append(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points,
+                         size_t n)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -849,7 +887,8 @@ cdb_status cdb_ts_append(cdb_db *db, uint64_t store, uint64_t series, const cdb_
     return r;
 }
 
-static cdb_status ts_append_in(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points, size_t n)
+static cdb_status ts_append_in(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points,
+                               size_t n)
 {
     uint8_t *p;
     size_t at = 0, i, room;
@@ -887,14 +926,18 @@ static cdb_status ts_append_in(cdb_db *db, uint64_t store, uint64_t series, cons
                 return CDB_E_UNSUPPORTED; /* no timestamp and no clock (spec 10.2) */
             ts = ticks_of(now, r.def.precision);
         }
-        if ((s = point_of(&r.def, ts, (const uint8_t *)points[i].values, points[i].len, db->pager.order, &pt)) != CDB_OK)
+        if ((s = point_of(&r.def, ts, (const uint8_t *)points[i].values, points[i].len,
+                          db->pager.order, &pt))
+            != CDB_OK)
             return s;
         /* Late: older than the newest point so far, counting the points
          * earlier in this call and in this transaction. Hold and accept
          * modes take it; the apply decides what to do with it. */
         if (r.has_points && ts < r.last_ts) {
-            int64_t late_ns = ticks_to_ns(r.last_ts, r.def.precision) - ticks_to_ns(ts, r.def.precision);
-            if (t->late_mode == CDB_TS_LATE_REJECT || (t->late_mode == CDB_TS_LATE_WITHIN && late_ns > t->lateness))
+            int64_t late_ns =
+                ticks_to_ns(r.last_ts, r.def.precision) - ticks_to_ns(ts, r.def.precision);
+            if (t->late_mode == CDB_TS_LATE_REJECT
+                || (t->late_mode == CDB_TS_LATE_WITHIN && late_ns > t->lateness))
                 return CDB_E_STATE; /* a late point the store refuses (spec 10.5) */
         }
         if (room - at < 8u + CDB_VARINT_MAX_LEN + points[i].len)
@@ -955,7 +998,8 @@ static cdb_status ts_drop_before_in(cdb_db *db, uint64_t store, uint64_t series,
     return CDB_OK;
 }
 
-static cdb_status ts_set_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t max_age_ticks);
+static cdb_status ts_set_retention_in(cdb_db *db, uint64_t store, uint64_t series,
+                                      int64_t max_age_ticks);
 
 cdb_status cdb_ts_set_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t max_age_ticks)
 {
@@ -966,7 +1010,8 @@ cdb_status cdb_ts_set_retention(cdb_db *db, uint64_t store, uint64_t series, int
     return r;
 }
 
-static cdb_status ts_set_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t max_age_ticks)
+static cdb_status ts_set_retention_in(cdb_db *db, uint64_t store, uint64_t series,
+                                      int64_t max_age_ticks)
 {
     ts_store *t;
     srec r;
@@ -981,7 +1026,8 @@ static cdb_status ts_set_retention_in(cdb_db *db, uint64_t store, uint64_t serie
 
     if ((s = ts_get(db, store, &t)) != CDB_OK)
         return s;
-    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found)) != CDB_OK)
+    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found))
+        != CDB_OK)
         return s;
     if (!found)
         return CDB_E_NOT_FOUND;
@@ -1001,7 +1047,8 @@ static cdb_status ts_set_retention_in(cdb_db *db, uint64_t store, uint64_t serie
     return CDB_OK;
 }
 
-static cdb_status ts_get_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t *max_age_ticks);
+static cdb_status ts_get_retention_in(cdb_db *db, uint64_t store, uint64_t series,
+                                      int64_t *max_age_ticks);
 
 cdb_status cdb_ts_get_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t *max_age_ticks)
 {
@@ -1012,7 +1059,8 @@ cdb_status cdb_ts_get_retention(cdb_db *db, uint64_t store, uint64_t series, int
     return r;
 }
 
-static cdb_status ts_get_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t *max_age_ticks)
+static cdb_status ts_get_retention_in(cdb_db *db, uint64_t store, uint64_t series,
+                                      int64_t *max_age_ticks)
 {
     ts_store *t;
     srec r;
@@ -1027,7 +1075,8 @@ static cdb_status ts_get_retention_in(cdb_db *db, uint64_t store, uint64_t serie
 
     if ((s = ts_get(db, store, &t)) != CDB_OK)
         return s;
-    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found)) != CDB_OK)
+    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found))
+        != CDB_OK)
         return s;
     if (!found)
         return CDB_E_NOT_FOUND;
@@ -1043,9 +1092,11 @@ static cdb_status ts_get_retention_in(cdb_db *db, uint64_t store, uint64_t serie
     return CDB_OK;
 }
 
-static cdb_status ts_apply_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts, int64_t *dropped_before);
+static cdb_status ts_apply_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts,
+                                        int64_t *dropped_before);
 
-cdb_status cdb_ts_apply_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts, int64_t *dropped_before)
+cdb_status cdb_ts_apply_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts,
+                                  int64_t *dropped_before)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1054,7 +1105,8 @@ cdb_status cdb_ts_apply_retention(cdb_db *db, uint64_t store, uint64_t series, i
     return r;
 }
 
-static cdb_status ts_apply_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts, int64_t *dropped_before)
+static cdb_status ts_apply_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts,
+                                        int64_t *dropped_before)
 {
     int64_t retention = 0;
     int64_t cutoff;
@@ -1115,13 +1167,13 @@ static cdb_status blk_decode(const uint8_t *v, size_t vlen, blk *b)
 
 /* A block nibblet moved (cdb_nib_merge): its row in the blocks index
  * points at the new address. CDB_E_NOT_FOUND: the store or block is gone. */
-cdb_status cdb_ts_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen, uint64_t old_addr,
-                            uint64_t addr)
+cdb_status cdb_ts_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
+                            uint64_t old_addr, uint64_t addr)
 {
     uint8_t v[BLOCK_VAL + 2u];
     size_t vlen;
     ts_store *t;
-    blk b = { 0, 0, 0, 0 };
+    blk b = {0, 0, 0, 0};
     int found;
     cdb_status s;
     if (oklen != 16)
@@ -1166,7 +1218,8 @@ static cdb_status blk_at(cdb_db *db, ts_store *t, uint64_t series, int64_t from,
     int done;
     cdb_status s;
     *found = 0;
-    if ((s = cdb_index_seek(&c, &t->blocks, tbuf(db, B_CURSOR), k, k_series_ts(k, series, from))) != CDB_OK
+    if ((s = cdb_index_seek(&c, &t->blocks, tbuf(db, B_CURSOR), k, k_series_ts(k, series, from)))
+            != CDB_OK
         || (s = cdb_index_next(&c, got, sizeof got, &klen, v, sizeof v, &vlen, &done)) != CDB_OK)
         return s == CDB_E_BUFFER_TOO_SMALL ? CDB_E_CORRUPT : s;
     if (done || klen != 16 || cdb_load_u64(got, CDB_ORDER_BIG) != series)
@@ -1179,14 +1232,16 @@ static cdb_status blk_at(cdb_db *db, ts_store *t, uint64_t series, int64_t from,
 }
 
 /* Reads block b into the read buffer; *pl is its payload. */
-static cdb_status blk_read(cdb_db *db, const ts_store *t, const blk *b, const uint8_t **pl, size_t *len)
+static cdb_status blk_read(cdb_db *db, const ts_store *t, const blk *b, const uint8_t **pl,
+                           size_t *len)
 {
     cdb_page_header h;
     cdb_status s;
     if (cdb_nib_is(b->lid)) {
         /* A small block lives in a nibblet (spec 16.5). */
         *pl = tbuf(db, B_READ) + cdb_page_payload_offset(db->pager.fmt);
-        return cdb_nib_get(db, b->lid, tbuf(db, B_READ) + cdb_page_payload_offset(db->pager.fmt), capacity(db), len);
+        return cdb_nib_get(db, b->lid, tbuf(db, B_READ) + cdb_page_payload_offset(db->pager.fmt),
+                           capacity(db), len);
     }
     s = cdb_pager_read(&db->pager, b->lid, tbuf(db, B_READ), &h);
     if (s != CDB_OK)
@@ -1199,7 +1254,8 @@ static cdb_status blk_read(cdb_db *db, const ts_store *t, const blk *b, const ui
 }
 
 /* Writes a block payload to logical page lid, tagged with the store. */
-static cdb_status blk_write(cdb_db *db, const ts_store *t, uint64_t lid, const uint8_t *pl, size_t len)
+static cdb_status blk_write(cdb_db *db, const ts_store *t, uint64_t lid, const uint8_t *pl,
+                            size_t len)
 {
     cdb_page_header h;
     memset(&h, 0, sizeof h);
@@ -1212,16 +1268,16 @@ static cdb_status blk_write(cdb_db *db, const ts_store *t, uint64_t lid, const u
  * nibblet when it is small (spec 16.5), otherwise on a page, reusing old's
  * page when old is one. old is the block's previous address (0: none) and
  * is released when not reused; *addr gets the new one. */
-static cdb_status blk_store(cdb_db *db, const ts_store *t, uint64_t series, int64_t first, uint64_t old,
-                           const uint8_t *pl, size_t len, uint64_t *addr)
+static cdb_status blk_store(cdb_db *db, const ts_store *t, uint64_t series, int64_t first,
+                            uint64_t old, const uint8_t *pl, size_t len, uint64_t *addr)
 {
     uint8_t k[16];
     cdb_status s;
     if (cdb_nib_fits(db, len)) {
         if (old && cdb_nib_is(old)) {
             int fits = 0;
-            s = cdb_nib_rewrite(db, old, t->slot.store_id, CDB_NIB_KIND_TS_BLOCK, k, k_series_ts(k, series, first),
-                                pl, len, &fits);
+            s = cdb_nib_rewrite(db, old, t->slot.store_id, CDB_NIB_KIND_TS_BLOCK, k,
+                                k_series_ts(k, series, first), pl, len, &fits);
             if (s != CDB_OK)
                 return s;
             if (fits) {
@@ -1231,8 +1287,8 @@ static cdb_status blk_store(cdb_db *db, const ts_store *t, uint64_t series, int6
         }
         if (old && (s = blk_release(db, old)) != CDB_OK)
             return s;
-        return cdb_nib_put(db, t->slot.store_id, CDB_NIB_KIND_TS_BLOCK, k, k_series_ts(k, series, first), pl, len,
-                           addr);
+        return cdb_nib_put(db, t->slot.store_id, CDB_NIB_KIND_TS_BLOCK, k,
+                           k_series_ts(k, series, first), pl, len, addr);
     }
     if (old && cdb_nib_is(old)) {
         if ((s = cdb_nib_free(db, old)) != CDB_OK)
@@ -1252,29 +1308,32 @@ static cdb_status blk_store(cdb_db *db, const ts_store *t, uint64_t series, int6
  * block, or one point). Each block takes up to MAX_POINTS points; if they
  * don't fit a page, the count is halved until they do. late sets the block
  * flag that says late points were folded in. */
-static cdb_status write_points(cdb_db *db, ts_store *t, const srec *r, uint64_t series, const cdb_ts_point *pts,
-                               size_t n, int late, uint64_t reuse, int64_t *last_key, cdb_tsblock_state *st)
+static cdb_status write_points(cdb_db *db, ts_store *t, const srec *r, uint64_t series,
+                               const cdb_ts_point *pts, size_t n, int late, uint64_t reuse,
+                               int64_t *last_key, cdb_tsblock_state *st)
 {
     size_t done = 0;
     cdb_ts_layout L;
     cdb_status s;
     while (done < n) {
         size_t take = n - done, len = 0;
-        blk b = { 0, 0, 0, 0 };
+        blk b = {0, 0, 0, 0};
         if (take > CDB_TS_BLOCK_MAX_POINTS)
             take = CDB_TS_BLOCK_MAX_POINTS;
         layout_of(r, series, pts[done].ts, &L);
         if (late)
             L.flags |= CDB_TS_BLOCK_LATE;
         for (;;) {
-            s = cdb_tsblock_build(&L, pts + done, take, db->pager.order, tbuf(db, B_OUT), capacity(db), &len, st);
+            s = cdb_tsblock_build(&L, pts + done, take, db->pager.order, tbuf(db, B_OUT),
+                                  capacity(db), &len, st);
             if (s != CDB_E_OVERFLOW || take == 1)
                 break;
             take /= 2; /* split: halve until it fits */
         }
         if (s != CDB_OK)
             return s;
-        if ((s = blk_store(db, t, series, pts[done].ts, reuse, tbuf(db, B_OUT), len, &b.lid)) != CDB_OK)
+        if ((s = blk_store(db, t, series, pts[done].ts, reuse, tbuf(db, B_OUT), len, &b.lid))
+            != CDB_OK)
             return s;
         reuse = 0;
         b.count = (uint32_t)take;
@@ -1291,10 +1350,11 @@ static cdb_status write_points(cdb_db *db, ts_store *t, const srec *r, uint64_t 
 
 /* The block holding ts, or where it belongs: the last block of ts's window
  * starting at or before ts, else the window's first block. */
-static cdb_status blk_for(cdb_db *db, ts_store *t, const srec *r, uint64_t series, int64_t ts, blk *b, int *found)
+static cdb_status blk_for(cdb_db *db, ts_store *t, const srec *r, uint64_t series, int64_t ts,
+                          blk *b, int *found)
 {
     int64_t ws = window_of(ts, r->def.window), we = window_end(ws, r->def.window), from = ws;
-    blk cur = { 0, 0, 0, 0 };
+    blk cur = {0, 0, 0, 0};
     int f;
     cdb_status s;
     *found = 0;
@@ -1313,12 +1373,13 @@ static cdb_status blk_for(cdb_db *db, ts_store *t, const srec *r, uint64_t serie
 
 /* -------------------------------------------------------- applying points */
 
-static cdb_status write_row(const srec *r, const cdb_ts_point *p, cdb_byte_order o, uint8_t *out, size_t cap,
-                            size_t *len);
+static cdb_status write_row(const srec *r, const cdb_ts_point *p, cdb_byte_order o, uint8_t *out,
+                            size_t cap, size_t *len);
 
 /* Tells the application and the audit log about a collision (spec 10.6, 10.7).
  * Called from the apply, so it is called again for the same point on recovery. */
-static void collided(cdb_db *db, const ts_store *t, uint64_t series, int64_t ts, const void *old_val, size_t old_len)
+static void collided(cdb_db *db, const ts_store *t, uint64_t series, int64_t ts,
+                     const void *old_val, size_t old_len)
 {
     (void)cdb_audit_log(db, CDB_AUDIT_COLLISION, 0, t->slot.store_id, series, old_val, old_len);
     if (db->cfg.ts_collision)
@@ -1330,13 +1391,14 @@ static void collided(cdb_db *db, const ts_store *t, uint64_t series, int64_t ts,
  * The block is decoded into the work array, edited there, and rewritten
  * (to its own page first). If it was the series' newest block, the record's
  * newest-block key and encoder state follow the rewrite. */
-static cdb_status merge_point(cdb_db *db, ts_store *t, srec *r, uint64_t series, const cdb_ts_point *p)
+static cdb_status merge_point(cdb_db *db, ts_store *t, srec *r, uint64_t series,
+                              const cdb_ts_point *p)
 {
     cdb_ts_point *pts = work(db);
     const uint8_t *pl;
     size_t len, n, i;
     cdb_ts_layout L;
-    blk b = { 0, 0, 0, 0 };
+    blk b = {0, 0, 0, 0};
     int found, latest;
     cdb_status s;
 
@@ -1345,7 +1407,9 @@ static cdb_status merge_point(cdb_db *db, ts_store *t, srec *r, uint64_t series,
     if (!found)
         return write_points(db, t, r, series, p, 1, 1, 0, NULL, NULL); /* an empty window */
     if ((s = blk_read(db, t, &b, &pl, &len)) != CDB_OK
-        || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS, &n, NULL)) != CDB_OK)
+        || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS, &n,
+                                   NULL))
+               != CDB_OK)
         return s;
     for (i = 0; i < n && pts[i].ts < p->ts; i++)
         ;
@@ -1381,13 +1445,14 @@ static cdb_status merge_point(cdb_db *db, ts_store *t, srec *r, uint64_t series,
 }
 
 /* The latest block's last point, decoded into the work array's first slot. */
-static cdb_status last_point(cdb_db *db, ts_store *t, const srec *r, uint64_t series, cdb_ts_point **last)
+static cdb_status last_point(cdb_db *db, ts_store *t, const srec *r, uint64_t series,
+                             cdb_ts_point **last)
 {
     cdb_ts_point *pts = work(db);
     const uint8_t *pl;
     size_t len, n;
     cdb_ts_layout L;
-    blk b = { 0, 0, 0, 0 };
+    blk b = {0, 0, 0, 0};
     int found;
     cdb_status s;
     if ((s = blk_at(db, t, series, r->last_block, &b, &found)) != CDB_OK)
@@ -1395,7 +1460,9 @@ static cdb_status last_point(cdb_db *db, ts_store *t, const srec *r, uint64_t se
     if (!found || b.first != r->last_block)
         return CDB_E_CORRUPT;
     if ((s = blk_read(db, t, &b, &pl, &len)) != CDB_OK
-        || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS, &n, NULL)) != CDB_OK)
+        || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS, &n,
+                                   NULL))
+               != CDB_OK)
         return s;
     *last = &pts[n - 1];
     return CDB_OK;
@@ -1406,7 +1473,8 @@ static cdb_status last_point(cdb_db *db, ts_store *t, const srec *r, uint64_t se
  * every stored one (append to the newest block if it is in the same window
  * and fits, else start a new block; with change-of-value, skip it when it
  * equals the last point); an older or equal point (merged, unless held). */
-static cdb_status apply_point(cdb_db *db, ts_store *t, srec *r, uint64_t series, const cdb_ts_point *p)
+static cdb_status apply_point(cdb_db *db, ts_store *t, srec *r, uint64_t series,
+                              const cdb_ts_point *p)
 {
     cdb_status s;
     if (!r->has_points) {
@@ -1415,7 +1483,7 @@ static cdb_status apply_point(cdb_db *db, ts_store *t, srec *r, uint64_t series,
         return write_points(db, t, r, series, p, 1, 0, 0, &r->last_block, &r->st);
     }
     if (p->ts > r->last_ts) {
-        blk b = { 0, 0, 0, 0 };
+        blk b = {0, 0, 0, 0};
         int found;
         if (r->def.change_of_value) {
             cdb_ts_point *last;
@@ -1435,12 +1503,14 @@ static cdb_status apply_point(cdb_db *db, ts_store *t, srec *r, uint64_t series,
                 return CDB_E_CORRUPT;
             if ((s = blk_read(db, t, &b, &pl, &len)) != CDB_OK)
                 return s;
-            s = cdb_tsblock_append(pl, len, db->pager.order, &st, p, tbuf(db, B_OUT), capacity(db), &out);
+            s = cdb_tsblock_append(pl, len, db->pager.order, &st, p, tbuf(db, B_OUT), capacity(db),
+                                   &out);
             if (s == CDB_OK) {
                 r->st = st;
                 b.count++;
                 b.last = p->ts;
-                if ((s = blk_store(db, t, series, b.first, b.lid, tbuf(db, B_OUT), out, &b.lid)) != CDB_OK)
+                if ((s = blk_store(db, t, series, b.first, b.lid, tbuf(db, B_OUT), out, &b.lid))
+                    != CDB_OK)
                     return s;
                 return blk_put(t, series, &b);
             }
@@ -1468,7 +1538,7 @@ static cdb_status hold(ts_store *t, uint64_t series, int64_t ts, const uint8_t *
 static cdb_status drop_before(cdb_db *db, ts_store *t, srec *r, uint64_t series, int64_t ts)
 {
     for (;;) {
-        blk b = { 0, 0, 0, 0 };
+        blk b = {0, 0, 0, 0};
         int found;
         cdb_status s = blk_at(db, t, series, INT64_MIN, &b, &found);
         if (s != CDB_OK)
@@ -1489,15 +1559,17 @@ static cdb_status drop_before(cdb_db *db, ts_store *t, srec *r, uint64_t series,
             cdb_ts_layout L;
             int latest = b.first == r->last_block;
             if ((s = blk_read(db, t, &b, &pl, &len)) != CDB_OK
-                || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS, &n, NULL))
+                || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts,
+                                           CDB_TS_BLOCK_MAX_POINTS, &n, NULL))
                        != CDB_OK)
                 return s;
             for (i = 0; i < n && pts[i].ts < ts; i++)
                 ;
-            s = latest ? write_points(db, t, r, series, pts + i, n - i, (L.flags & CDB_TS_BLOCK_LATE) != 0, b.lid,
-                                      &r->last_block, &r->st)
-                       : write_points(db, t, r, series, pts + i, n - i, (L.flags & CDB_TS_BLOCK_LATE) != 0, b.lid,
-                                      NULL, NULL);
+            s = latest ? write_points(db, t, r, series, pts + i, n - i,
+                                      (L.flags & CDB_TS_BLOCK_LATE) != 0, b.lid, &r->last_block,
+                                      &r->st)
+                       : write_points(db, t, r, series, pts + i, n - i,
+                                      (L.flags & CDB_TS_BLOCK_LATE) != 0, b.lid, NULL, NULL);
             if (s != CDB_OK)
                 return s;
             break; /* later blocks are newer than ts */
@@ -1510,9 +1582,11 @@ static cdb_status drop_before(cdb_db *db, ts_store *t, srec *r, uint64_t series,
         uint8_t k[16], got[16];
         size_t klen, vlen;
         int done, found;
-        cdb_status s = cdb_index_seek(&c, &t->held, tbuf(db, B_CURSOR), k, k_series_ts(k, series, INT64_MIN));
+        cdb_status s =
+            cdb_index_seek(&c, &t->held, tbuf(db, B_CURSOR), k, k_series_ts(k, series, INT64_MIN));
         if (s == CDB_OK)
-            s = cdb_index_next(&c, got, sizeof got, &klen, tbuf(db, B_OUT), db->pager.page_size, &vlen, &done);
+            s = cdb_index_next(&c, got, sizeof got, &klen, tbuf(db, B_OUT), db->pager.page_size,
+                               &vlen, &done);
         if (s != CDB_OK)
             return s;
         if (done || klen != 16 || cdb_load_u64(got, CDB_ORDER_BIG) != series || key_ts(got) >= ts)
@@ -1594,11 +1668,11 @@ cdb_status cdb_ts_apply(cdb_db *db, const cdb_delta *d, int *handled)
     case CDB_OP_DELETE:
         if (!found || d->len != 8)
             return CDB_OK;
-        if ((s = drop_before(db, t, &r, d->entry_id, (int64_t)cdb_load_u64(d->data, CDB_ORDER_BIG))) != CDB_OK)
+        if ((s = drop_before(db, t, &r, d->entry_id, (int64_t)cdb_load_u64(d->data, CDB_ORDER_BIG)))
+            != CDB_OK)
             return s;
         return rec_put(t, d->entry_id, &r);
-    default:
-        return CDB_OK;
+    default: return CDB_OK;
     }
 }
 
@@ -1608,7 +1682,8 @@ cdb_status cdb_ts_flush(cdb_db *db)
 {
     cdb_slot_iter it;
     ts_store *t;
-    for (t = (ts_store *)cdb_slots_first(&db->ts_slots, &it); t != NULL; t = (ts_store *)cdb_slots_next(&it)) {
+    for (t = (ts_store *)cdb_slots_first(&db->ts_slots, &it); t != NULL;
+         t = (ts_store *)cdb_slots_next(&it)) {
         cdb_status s;
         for (;;) {
             /* The held point's values go in record_buf: reconciliation is
@@ -1624,18 +1699,22 @@ cdb_status cdb_ts_flush(cdb_db *db)
             /* Take the first held row (in series, then time order), delete
              * it, and merge the point into its block. */
             if ((s = cdb_index_seek(&c, &t->held, tbuf(db, B_CURSOR), NULL, 0)) != CDB_OK
-                || (s = cdb_index_next(&c, k, sizeof k, &klen, obj, db->cfg.record_buf_size, &vlen, &done)) != CDB_OK)
+                || (s = cdb_index_next(&c, k, sizeof k, &klen, obj, db->cfg.record_buf_size, &vlen,
+                                       &done))
+                       != CDB_OK)
                 return s;
             if (done)
                 break;
             if (klen != 16)
                 return CDB_E_CORRUPT;
             series = cdb_load_u64(k, CDB_ORDER_BIG);
-            if ((s = cdb_index_delete(&t->held, k, 16, &found)) != CDB_OK || (s = rec_get(t, series, &r, &found)) != CDB_OK)
+            if ((s = cdb_index_delete(&t->held, k, 16, &found)) != CDB_OK
+                || (s = rec_get(t, series, &r, &found)) != CDB_OK)
                 return s;
             if (!found || point_of(&r.def, key_ts(k), obj, vlen, db->pager.order, &p) != CDB_OK)
                 continue;
-            if ((s = merge_point(db, t, &r, series, &p)) != CDB_OK || (s = rec_put(t, series, &r)) != CDB_OK)
+            if ((s = merge_point(db, t, &r, series, &p)) != CDB_OK
+                || (s = rec_put(t, series, &r)) != CDB_OK)
                 return s;
         }
         t->held_any = 0;
@@ -1649,8 +1728,8 @@ cdb_status cdb_ts_flush(cdb_db *db)
 
 /* Encodes a point's present fields as an object into out (the form
  * cdb_ts_range returns). */
-static cdb_status write_row(const srec *r, const cdb_ts_point *p, cdb_byte_order o, uint8_t *out, size_t cap,
-                            size_t *len)
+static cdb_status write_row(const srec *r, const cdb_ts_point *p, cdb_byte_order o, uint8_t *out,
+                            size_t cap, size_t *len)
 {
     cdb_value_writer w;
     unsigned f;
@@ -1686,11 +1765,13 @@ static cdb_status write_row(const srec *r, const cdb_ts_point *p, cdb_byte_order
     return w.error;
 }
 
-static cdb_status ts_range_in(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to, uint8_t *buf,
-                              size_t cap, cdb_ts_row *rows, size_t max, size_t *n, int64_t *next);
+static cdb_status ts_range_in(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to,
+                              uint8_t *buf, size_t cap, cdb_ts_row *rows, size_t max, size_t *n,
+                              int64_t *next);
 
-cdb_status cdb_ts_range(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to, uint8_t *buf,
-                        size_t cap, cdb_ts_row *rows, size_t max, size_t *n, int64_t *next)
+cdb_status cdb_ts_range(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to,
+                        uint8_t *buf, size_t cap, cdb_ts_row *rows, size_t max, size_t *n,
+                        int64_t *next)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1699,8 +1780,9 @@ cdb_status cdb_ts_range(cdb_db *db, uint64_t store, uint64_t series, int64_t fro
     return r;
 }
 
-static cdb_status ts_range_in(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to, uint8_t *buf,
-                              size_t cap, cdb_ts_row *rows, size_t max, size_t *n, int64_t *next)
+static cdb_status ts_range_in(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to,
+                              uint8_t *buf, size_t cap, cdb_ts_row *rows, size_t max, size_t *n,
+                              int64_t *next)
 {
     ts_store *t;
     srec r;
@@ -1729,14 +1811,15 @@ static cdb_status ts_range_in(cdb_db *db, uint64_t store, uint64_t series, int64
         const uint8_t *pl;
         size_t len, cnt, i;
         cdb_ts_layout L;
-        blk b = { 0, 0, 0, 0 };
+        blk b = {0, 0, 0, 0};
         if ((s = blk_at(db, t, series, at, &b, &found)) != CDB_OK)
             return s;
         if (!found || b.first >= to)
             return CDB_OK;
         if (b.last >= from) {
             if ((s = blk_read(db, t, &b, &pl, &len)) != CDB_OK
-                || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS, &cnt, NULL))
+                || (s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts,
+                                           CDB_TS_BLOCK_MAX_POINTS, &cnt, NULL))
                        != CDB_OK)
                 return s;
             for (i = 0; i < cnt; i++) {
@@ -1745,7 +1828,9 @@ static cdb_status ts_range_in(cdb_db *db, uint64_t store, uint64_t series, int64
                     continue;
                 if (pts[i].ts >= to)
                     return CDB_OK;
-                if (*n == max || write_row(&r, &pts[i], db->pager.order, buf + used, cap - used, &rl) != CDB_OK) {
+                if (*n == max
+                    || write_row(&r, &pts[i], db->pager.order, buf + used, cap - used, &rl)
+                           != CDB_OK) {
                     *next = pts[i].ts; /* full: continue from this point */
                     return *n ? CDB_OK : CDB_E_BUFFER_TOO_SMALL;
                 }
@@ -1791,15 +1876,18 @@ static cdb_status ts_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t series, 
         return CDB_OK;
     if ((s = db->in_tx ? tx_store(db, store, &t) : ts_get(db, store, &t)) != CDB_OK)
         return s;
-    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found)) != CDB_OK)
+    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found))
+        != CDB_OK)
         return s;
     *live = found;
     return CDB_OK;
 }
 
-static cdb_status ts_point_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t series, int64_t ts, int *live);
+static cdb_status ts_point_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t series, int64_t ts,
+                                         int *live);
 
-cdb_status cdb_ts_point_live_in_tx(cdb_db *db, uint64_t store, uint64_t series, int64_t ts, int *live)
+cdb_status cdb_ts_point_live_in_tx(cdb_db *db, uint64_t store, uint64_t series, int64_t ts,
+                                   int *live)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -1808,14 +1896,15 @@ cdb_status cdb_ts_point_live_in_tx(cdb_db *db, uint64_t store, uint64_t series, 
     return r;
 }
 
-static cdb_status ts_point_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t series, int64_t ts, int *live)
+static cdb_status ts_point_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t series, int64_t ts,
+                                         int *live)
 {
     cdb_store_info info;
     ts_store *t;
     srec r;
     int found = 0, in_tx_appended = 0, in_tx_dropped = 0;
     int64_t at;
-    blk b = { 0, 0, 0, 0 };
+    blk b = {0, 0, 0, 0};
     int bfound = 0;
     cdb_status s;
 
@@ -1830,7 +1919,8 @@ static cdb_status ts_point_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t se
         return CDB_OK;
     if ((s = db->in_tx ? tx_store(db, store, &t) : ts_get(db, store, &t)) != CDB_OK)
         return s;
-    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found)) != CDB_OK)
+    if ((s = db->in_tx ? tx_series(db, t, series, &r, &found) : rec_get(t, series, &r, &found))
+        != CDB_OK)
         return s;
     if (!found)
         return CDB_OK;
@@ -1892,7 +1982,9 @@ static cdb_status ts_point_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t se
             cdb_ts_layout L;
             if ((s = blk_read(db, t, &b, &pl, &len)) != CDB_OK)
                 return s;
-            if ((s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS, &cnt, NULL)) != CDB_OK)
+            if ((s = cdb_tsblock_decode(pl, len, db->pager.order, &L, pts, CDB_TS_BLOCK_MAX_POINTS,
+                                        &cnt, NULL))
+                != CDB_OK)
                 return s;
             for (i = 0; i < cnt; i++) {
                 if (pts[i].ts == ts) {
@@ -1911,7 +2003,9 @@ static cdb_status ts_point_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t se
         uint8_t hk[16], hv[1];
         size_t hvlen;
         int hfound;
-        if ((s = cdb_index_get(&t->held, hk, k_series_ts(hk, series, ts), hv, 0, &hvlen, &hfound)) == CDB_OK && hfound) {
+        if ((s = cdb_index_get(&t->held, hk, k_series_ts(hk, series, ts), hv, 0, &hvlen, &hfound))
+                == CDB_OK
+            && hfound) {
             *live = 1;
             return CDB_OK;
         }
@@ -1945,7 +2039,9 @@ static void write_agg_val(cdb_value_writer *w, const cdb_value *v)
     case CDB_TYPE_F64: cdb_value_write_f64(w, v->as.f64); break;
     case CDB_TYPE_F32: cdb_value_write_f32(w, v->as.f32); break;
     case CDB_TYPE_BOOL: cdb_value_write_bool(w, v->as.boolean); break;
-    case CDB_TYPE_STRING: cdb_value_write_string(w, (const char *)v->payload, v->payload_len); break;
+    case CDB_TYPE_STRING:
+        cdb_value_write_string(w, (const char *)v->payload, v->payload_len);
+        break;
     case CDB_TYPE_BINARY: cdb_value_write_binary(w, v->payload, v->payload_len); break;
     default: cdb_value_write_encoded(w, v->payload, v->payload_len); break;
     }
@@ -1983,9 +2079,7 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
 
         cdb_value_field(&w, fid);
         switch (spec->field_aggs[sf]) {
-        case CDB_TS_AGG_COUNT:
-            cdb_value_write_int(&w, (int64_t)aggs[sf].count);
-            break;
+        case CDB_TS_AGG_COUNT: cdb_value_write_int(&w, (int64_t)aggs[sf].count); break;
         case CDB_TS_AGG_SUM:
             if (ftype == CDB_TYPE_INT)
                 cdb_value_write_int(&w, aggs[sf].sum_i64);
@@ -2043,8 +2137,8 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
 static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec *spec,
                                        int64_t from_ts, int64_t to_ts, size_t *points_generated);
 
-cdb_status cdb_ts_downsample_run(cdb_db *db, const cdb_ts_downsample_spec *spec,
-                                 int64_t from_ts, int64_t to_ts, size_t *points_generated)
+cdb_status cdb_ts_downsample_run(cdb_db *db, const cdb_ts_downsample_spec *spec, int64_t from_ts,
+                                 int64_t to_ts, size_t *points_generated)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -2072,7 +2166,8 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
 
     if (spec->src_store == CDB_AUDIT_STORE_ID || spec->dst_store == CDB_AUDIT_STORE_ID)
         return CDB_E_SECURITY;
-    if (db->audit_store_id && (spec->src_store == db->audit_store_id || spec->dst_store == db->audit_store_id))
+    if (db->audit_store_id
+        && (spec->src_store == db->audit_store_id || spec->dst_store == db->audit_store_id))
         return CDB_E_SECURITY;
 
     *points_generated = 0;
@@ -2095,8 +2190,8 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
         size_t nrows = 0, i;
         int64_t next_ts = to_ts;
 
-        s = cdb_ts_range(db, spec->src_store, spec->src_series, cur_from, to_ts,
-                         row_buf, sizeof row_buf, rows, 32, &nrows, &next_ts);
+        s = cdb_ts_range(db, spec->src_store, spec->src_series, cur_from, to_ts, row_buf,
+                         sizeof row_buf, rows, 32, &nrows, &next_ts);
         if (s != CDB_OK)
             goto fail;
         if (nrows == 0)
@@ -2109,7 +2204,8 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
             unsigned sf;
 
             if (in_bucket && pt_bucket != cur_bucket) {
-                if ((s = flush_downsample_bucket(db, spec, &dst_def, &src_def, cur_bucket, aggs)) != CDB_OK)
+                if ((s = flush_downsample_bucket(db, spec, &dst_def, &src_def, cur_bucket, aggs))
+                    != CDB_OK)
                     goto fail;
                 generated++;
                 memset(aggs, 0, sizeof aggs);
@@ -2121,13 +2217,16 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
                 in_bucket = 1;
             }
 
-            if ((s = cdb_value_read(row_buf + rows[i].off, rows[i].len, db->pager.order, &obj)) != CDB_OK)
+            if ((s = cdb_value_read(row_buf + rows[i].off, rows[i].len, db->pager.order, &obj))
+                != CDB_OK)
                 goto fail;
 
             for (sf = 0; sf < src_def.nfields; sf++) {
                 cdb_value v;
                 int found = 0;
-                if (cdb_value_object_get(&obj, db->pager.order, src_def.fields[sf].id, &v, &found) == CDB_OK && found) {
+                if (cdb_value_object_get(&obj, db->pager.order, src_def.fields[sf].id, &v, &found)
+                        == CDB_OK
+                    && found) {
                     int64_t ival = 0;
                     double fval = 0.0;
                     if (v.type == CDB_TYPE_INT) {
@@ -2149,22 +2248,30 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
                         aggs[sf].sum_f64 = fval;
                         aggs[sf].first_val = v;
                         if (v.payload_len > 0 && v.payload != NULL) {
-                            size_t copy_len = v.payload_len < sizeof(aggs[sf].first_payload) ? v.payload_len : sizeof(aggs[sf].first_payload);
+                            size_t copy_len = v.payload_len < sizeof(aggs[sf].first_payload)
+                                                  ? v.payload_len
+                                                  : sizeof(aggs[sf].first_payload);
                             memcpy(aggs[sf].first_payload, v.payload, copy_len);
                             aggs[sf].first_val.payload = aggs[sf].first_payload;
                         }
                         aggs[sf].have_first = 1;
                     } else {
-                        if (ival < aggs[sf].min_i64) aggs[sf].min_i64 = ival;
-                        if (ival > aggs[sf].max_i64) aggs[sf].max_i64 = ival;
+                        if (ival < aggs[sf].min_i64)
+                            aggs[sf].min_i64 = ival;
+                        if (ival > aggs[sf].max_i64)
+                            aggs[sf].max_i64 = ival;
                         aggs[sf].sum_i64 += ival;
-                        if (fval < aggs[sf].min_f64) aggs[sf].min_f64 = fval;
-                        if (fval > aggs[sf].max_f64) aggs[sf].max_f64 = fval;
+                        if (fval < aggs[sf].min_f64)
+                            aggs[sf].min_f64 = fval;
+                        if (fval > aggs[sf].max_f64)
+                            aggs[sf].max_f64 = fval;
                         aggs[sf].sum_f64 += fval;
                     }
                     aggs[sf].last_val = v;
                     if (v.payload_len > 0 && v.payload != NULL) {
-                        size_t copy_len = v.payload_len < sizeof(aggs[sf].last_payload) ? v.payload_len : sizeof(aggs[sf].last_payload);
+                        size_t copy_len = v.payload_len < sizeof(aggs[sf].last_payload)
+                                              ? v.payload_len
+                                              : sizeof(aggs[sf].last_payload);
                         memcpy(aggs[sf].last_payload, v.payload, copy_len);
                         aggs[sf].last_val.payload = aggs[sf].last_payload;
                     }

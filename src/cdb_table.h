@@ -51,7 +51,7 @@
 typedef struct cdb_table_column {
     const char *name;
     size_t name_len;
-    cdb_value_type type;          /* CDB_TYPE_*, not NULL or UNKNOWN */
+    cdb_value_type type; /* CDB_TYPE_*, not NULL or UNKNOWN */
     int not_null;
     const uint8_t *default_value; /* one encoded value of the column's type, or NULL */
     size_t default_len;
@@ -63,15 +63,15 @@ typedef struct cdb_table_column {
 typedef struct cdb_table_def {
     const cdb_table_column *columns;
     unsigned ncolumns;
-    const unsigned *primary_key;  /* positions in columns[]; NULL for none */
+    const unsigned *primary_key; /* positions in columns[]; NULL for none */
     unsigned npk;
-    uint32_t keep;                /* 0: every revision; N: the last N (spec 9.11) */
+    uint32_t keep; /* 0: every revision; N: the last N (spec 9.11) */
     /* Column-oriented tables (spec 9.12; cdb_rowgroup.h). They need
      * cdb_db_config.col_work. Row calls on them are not built yet and
      * return CDB_E_UNSUPPORTED. */
-    unsigned layout;              /* CDB_TABLE_LAYOUT_* */
-    uint32_t group_rows;          /* 0: CDB_RG_ROWS_DEFAULT */
-    uint32_t chunk_cap;           /* 0: CDB_RG_CAP_DEFAULT; also the largest row the table takes */
+    unsigned layout;     /* CDB_TABLE_LAYOUT_* */
+    uint32_t group_rows; /* 0: CDB_RG_ROWS_DEFAULT */
+    uint32_t chunk_cap;  /* 0: CDB_RG_CAP_DEFAULT; also the largest row the table takes */
 } cdb_table_def;
 
 /* A column as described. */
@@ -80,8 +80,8 @@ typedef struct cdb_table_column_info {
     cdb_value_type type;
     int not_null;
     int has_default;
-    uint32_t added;               /* schema version that added it */
-    int primary;                  /* part of the primary key */
+    uint32_t added; /* schema version that added it */
+    int primary;    /* part of the primary key */
 } cdb_table_column_info;
 
 /* Where a scan stopped; zero it to start. */
@@ -97,31 +97,36 @@ size_t cdb_table_buffers_size(size_t page_size, size_t doc_max);
 /* Creates a table. CDB_E_EXISTS: the name is taken; CDB_E_INVALID_ARG: a bad
  * column, duplicate names, a default of the wrong type, a primary-key column
  * that cannot be indexed. Primary-key columns become not-null. */
-cdb_status cdb_table_create(cdb_db *db, const char *name, size_t len, const cdb_table_def *def, uint64_t *store);
+cdb_status cdb_table_create(cdb_db *db, const char *name, size_t len, const cdb_table_def *def,
+                            uint64_t *store);
 
 /* The current columns, in field-ID order; *n is their count (at most cap
  * are copied). Also the current schema version and keep setting. */
 cdb_status cdb_table_describe(cdb_db *db, uint64_t store, cdb_table_column_info *cols, unsigned cap,
                               unsigned *n, uint32_t *version, uint32_t *keep);
 /* A column's field ID by name; CDB_E_NOT_FOUND if no current column has it. */
-cdb_status cdb_table_column_id(cdb_db *db, uint64_t store, const char *name, size_t len, uint64_t *field_id);
+cdb_status cdb_table_column_id(cdb_db *db, uint64_t store, const char *name, size_t len,
+                               uint64_t *field_id);
 
 /* Schema changes (spec 9.8), each a new schema version except rename.
  * add: CDB_E_EXISTS if a current column has the name; a not-null column
  * needs a default. drop: CDB_E_STATE while an index uses the column.
  * widen: int to decimal or f32 to f64 only, else CDB_E_INVALID_ARG. */
-cdb_status cdb_table_add_column(cdb_db *db, uint64_t store, const cdb_table_column *col, uint64_t *field_id);
+cdb_status cdb_table_add_column(cdb_db *db, uint64_t store, const cdb_table_column *col,
+                                uint64_t *field_id);
 cdb_status cdb_table_drop_column(cdb_db *db, uint64_t store, uint64_t field_id);
-cdb_status cdb_table_rename_column(cdb_db *db, uint64_t store, uint64_t field_id, const char *name, size_t len);
-cdb_status cdb_table_widen_column(cdb_db *db, uint64_t store, uint64_t field_id, cdb_value_type type);
+cdb_status cdb_table_rename_column(cdb_db *db, uint64_t store, uint64_t field_id, const char *name,
+                                   size_t len);
+cdb_status cdb_table_widen_column(cdb_db *db, uint64_t store, uint64_t field_id,
+                                  cdb_value_type type);
 /* Changes the revision window; rows are pruned as they next change. */
 cdb_status cdb_table_set_keep(cdb_db *db, uint64_t store, uint32_t keep);
 
 /* Indexes (spec 9.10). create builds the index over the existing rows
  * before returning; CDB_E_EXISTS if a unique index finds a duplicate. Its
  * number stays until it is dropped; numbers are not reused while it lives. */
-cdb_status cdb_table_create_index(cdb_db *db, uint64_t store, const uint64_t *fields, unsigned n, int unique,
-                                  uint32_t *index);
+cdb_status cdb_table_create_index(cdb_db *db, uint64_t store, const uint64_t *fields, unsigned n,
+                                  int unique, uint32_t *index);
 cdb_status cdb_table_drop_index(cdb_db *db, uint64_t store, uint32_t index);
 
 /* Rows, inside a transaction. A row is an encoded object keyed by column
@@ -136,9 +141,12 @@ cdb_status cdb_table_drop_index(cdb_db *db, uint64_t store, uint32_t index);
  *   CDB_E_EXISTS       a unique index or the primary key already has the key
  *   CDB_E_NOT_FOUND    replace, update or delete of a row that does not exist
  *   CDB_E_OVERFLOW     the row, or one of its index keys, is too large */
-cdb_status cdb_table_insert(cdb_db *db, uint64_t store, const void *row, size_t len, uint64_t *entry);
-cdb_status cdb_table_replace(cdb_db *db, uint64_t store, uint64_t entry, const void *row, size_t len);
-cdb_status cdb_table_update(cdb_db *db, uint64_t store, uint64_t entry, const void *changes, size_t len);
+cdb_status cdb_table_insert(cdb_db *db, uint64_t store, const void *row, size_t len,
+                            uint64_t *entry);
+cdb_status cdb_table_replace(cdb_db *db, uint64_t store, uint64_t entry, const void *row,
+                             size_t len);
+cdb_status cdb_table_update(cdb_db *db, uint64_t store, uint64_t entry, const void *changes,
+                            size_t len);
 cdb_status cdb_table_delete(cdb_db *db, uint64_t store, uint64_t entry);
 
 /* Reads see committed rows only, through the current columns.
@@ -151,22 +159,24 @@ cdb_status cdb_table_delete(cdb_db *db, uint64_t store, uint64_t entry);
  * columns it gives), each an encoded array of values for the index's leading
  * columns, or NULL for no bound. At most max entries; *n of them; call again
  * with the same cursor for more until *n is 0. */
-cdb_status cdb_table_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap, size_t *len);
-cdb_status cdb_table_find(cdb_db *db, uint64_t store, const void *key, size_t key_len, uint64_t *entry,
-                          int *found);
-cdb_status cdb_table_scan(cdb_db *db, uint64_t store, uint32_t index, const void *from, size_t from_len,
-                          const void *to, size_t to_len, cdb_table_cursor *cur, uint64_t *entries, size_t max,
-                          size_t *n);
+cdb_status cdb_table_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap,
+                         size_t *len);
+cdb_status cdb_table_find(cdb_db *db, uint64_t store, const void *key, size_t key_len,
+                          uint64_t *entry, int *found);
+cdb_status cdb_table_scan(cdb_db *db, uint64_t store, uint32_t index, const void *from,
+                          size_t from_len, const void *to, size_t to_len, cdb_table_cursor *cur,
+                          uint64_t *entries, size_t max, size_t *n);
 
 /* Engine hooks. */
 cdb_status cdb_table_live_in_tx(cdb_db *db, uint64_t store, uint64_t entry, int *live);
-cdb_status cdb_table_keep_setting(const uint8_t *settings, size_t len, cdb_byte_order o, uint32_t *keep);
+cdb_status cdb_table_keep_setting(const uint8_t *settings, size_t len, cdb_byte_order o,
+                                  uint32_t *keep);
 cdb_status cdb_table_apply_before(cdb_db *db, uint64_t store, uint64_t entry);
 cdb_status cdb_table_apply_after(cdb_db *db, uint64_t store, uint64_t entry);
 cdb_status cdb_table_is_column(cdb_db *db, uint64_t store, int *is_col);
 cdb_status cdb_table_chunk_cap(cdb_db *db, uint64_t store, uint32_t *cap);
-cdb_status cdb_table_col_committed_row(cdb_db *db, uint64_t store, uint64_t entry, void *body, size_t cap,
-                                       size_t *len, int *live, uint32_t *schema);
+cdb_status cdb_table_col_committed_row(cdb_db *db, uint64_t store, uint64_t entry, void *body,
+                                       size_t cap, size_t *len, int *live, uint32_t *schema);
 cdb_status cdb_table_col_apply(cdb_db *db, uint64_t store, const cdb_delta *d);
 cdb_status cdb_table_flush(cdb_db *db);
 cdb_status cdb_table_col_fold_pending(cdb_db *db, uint64_t store);
@@ -178,7 +188,7 @@ struct cdb_rg;
 cdb_status cdb_table_rowgroups(cdb_db *db, uint64_t store, struct cdb_rg *g);
 /* A column-chunk nibblet moved (cdb_nib_merge). CDB_E_NOT_FOUND if its
  * table is gone or no group refers to it. */
-cdb_status cdb_table_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen, uint64_t old_addr,
-                               uint64_t addr);
+cdb_status cdb_table_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
+                               uint64_t old_addr, uint64_t addr);
 
 #endif

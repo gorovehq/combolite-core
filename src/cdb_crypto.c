@@ -30,11 +30,9 @@ void cdb_crypto_make_nonce(uint32_t track_id, uint64_t seq, uint8_t nonce[CDB_AE
 }
 
 cdb_status cdb_crypto_aead_encrypt(unsigned alg, const uint8_t key[CDB_CRYPTO_KEY_SIZE],
-                                   const uint8_t nonce[CDB_AEAD_NONCE_SIZE],
-                                   const uint8_t *aad, size_t aad_len,
-                                   const uint8_t *in_plaintext, size_t pt_len,
-                                   uint8_t *out_ciphertext,
-                                   uint8_t out_tag[CDB_AEAD_TAG_SIZE])
+                                   const uint8_t nonce[CDB_AEAD_NONCE_SIZE], const uint8_t *aad,
+                                   size_t aad_len, const uint8_t *in_plaintext, size_t pt_len,
+                                   uint8_t *out_ciphertext, uint8_t out_tag[CDB_AEAD_TAG_SIZE])
 {
     int ret;
     if (key == NULL || nonce == NULL || out_tag == NULL)
@@ -47,11 +45,9 @@ cdb_status cdb_crypto_aead_encrypt(unsigned alg, const uint8_t key[CDB_CRYPTO_KE
         mbedtls_gcm_init(&ctx);
         ret = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, 256);
         if (ret == 0) {
-            ret = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, pt_len,
-                                           nonce, CDB_AEAD_NONCE_SIZE,
-                                           aad, aad_len,
-                                           in_plaintext, out_ciphertext,
-                                           CDB_AEAD_TAG_SIZE, out_tag);
+            ret = mbedtls_gcm_crypt_and_tag(&ctx, MBEDTLS_GCM_ENCRYPT, pt_len, nonce,
+                                            CDB_AEAD_NONCE_SIZE, aad, aad_len, in_plaintext,
+                                            out_ciphertext, CDB_AEAD_TAG_SIZE, out_tag);
         }
         mbedtls_gcm_free(&ctx);
         return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
@@ -62,11 +58,8 @@ cdb_status cdb_crypto_aead_encrypt(unsigned alg, const uint8_t key[CDB_CRYPTO_KE
         mbedtls_chachapoly_init(&ctx);
         ret = mbedtls_chachapoly_setkey(&ctx, key);
         if (ret == 0) {
-            ret = mbedtls_chachapoly_encrypt_and_tag(&ctx, pt_len,
-                                                    nonce,
-                                                    aad, aad_len,
-                                                    in_plaintext, out_ciphertext,
-                                                    out_tag);
+            ret = mbedtls_chachapoly_encrypt_and_tag(&ctx, pt_len, nonce, aad, aad_len,
+                                                     in_plaintext, out_ciphertext, out_tag);
         }
         mbedtls_chachapoly_free(&ctx);
         return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
@@ -76,11 +69,9 @@ cdb_status cdb_crypto_aead_encrypt(unsigned alg, const uint8_t key[CDB_CRYPTO_KE
 }
 
 cdb_status cdb_crypto_aead_decrypt(unsigned alg, const uint8_t key[CDB_CRYPTO_KEY_SIZE],
-                                   const uint8_t nonce[CDB_AEAD_NONCE_SIZE],
-                                   const uint8_t *aad, size_t aad_len,
-                                   const uint8_t *in_ciphertext, size_t ct_len,
-                                   const uint8_t tag[CDB_AEAD_TAG_SIZE],
-                                   uint8_t *out_plaintext)
+                                   const uint8_t nonce[CDB_AEAD_NONCE_SIZE], const uint8_t *aad,
+                                   size_t aad_len, const uint8_t *in_ciphertext, size_t ct_len,
+                                   const uint8_t tag[CDB_AEAD_TAG_SIZE], uint8_t *out_plaintext)
 {
     int ret;
     if (key == NULL || nonce == NULL || tag == NULL)
@@ -93,11 +84,8 @@ cdb_status cdb_crypto_aead_decrypt(unsigned alg, const uint8_t key[CDB_CRYPTO_KE
         mbedtls_gcm_init(&ctx);
         ret = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, 256);
         if (ret == 0) {
-            ret = mbedtls_gcm_auth_decrypt(&ctx, ct_len,
-                                          nonce, CDB_AEAD_NONCE_SIZE,
-                                          aad, aad_len,
-                                          tag, CDB_AEAD_TAG_SIZE,
-                                          in_ciphertext, out_plaintext);
+            ret = mbedtls_gcm_auth_decrypt(&ctx, ct_len, nonce, CDB_AEAD_NONCE_SIZE, aad, aad_len,
+                                           tag, CDB_AEAD_TAG_SIZE, in_ciphertext, out_plaintext);
         }
         mbedtls_gcm_free(&ctx);
         return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
@@ -108,11 +96,8 @@ cdb_status cdb_crypto_aead_decrypt(unsigned alg, const uint8_t key[CDB_CRYPTO_KE
         mbedtls_chachapoly_init(&ctx);
         ret = mbedtls_chachapoly_setkey(&ctx, key);
         if (ret == 0) {
-            ret = mbedtls_chachapoly_auth_decrypt(&ctx, ct_len,
-                                                 nonce,
-                                                 aad, aad_len,
-                                                 tag,
-                                                 in_ciphertext, out_plaintext);
+            ret = mbedtls_chachapoly_auth_decrypt(&ctx, ct_len, nonce, aad, aad_len, tag,
+                                                  in_ciphertext, out_plaintext);
         }
         mbedtls_chachapoly_free(&ctx);
         return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
@@ -130,9 +115,8 @@ cdb_status cdb_crypto_sha256(const void *data, size_t len, uint8_t out_hash[CDB_
     return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
 }
 
-cdb_status cdb_crypto_hmac_sha256(const uint8_t key[CDB_CRYPTO_KEY_SIZE],
-                                  const void *data, size_t len,
-                                  uint8_t out_mac[CDB_CRYPTO_HASH_SIZE])
+cdb_status cdb_crypto_hmac_sha256(const uint8_t key[CDB_CRYPTO_KEY_SIZE], const void *data,
+                                  size_t len, uint8_t out_mac[CDB_CRYPTO_HASH_SIZE])
 {
     const mbedtls_md_info_t *md;
     int ret;
@@ -164,7 +148,8 @@ cdb_status cdb_crypto_hash_init(cdb_crypto_hash_ctx *ctx)
     return CDB_OK;
 }
 
-cdb_status cdb_crypto_hash_init_hmac(cdb_crypto_hash_ctx *ctx, const uint8_t key[CDB_CRYPTO_KEY_SIZE])
+cdb_status cdb_crypto_hash_init_hmac(cdb_crypto_hash_ctx *ctx,
+                                     const uint8_t key[CDB_CRYPTO_KEY_SIZE])
 {
     mbedtls_sha256_context *s;
     uint8_t k_ipad[64];
@@ -220,10 +205,9 @@ cdb_status cdb_crypto_hash_final(cdb_crypto_hash_ctx *ctx, uint8_t out_hash[CDB_
         uint8_t inner[CDB_CRYPTO_HASH_SIZE];
         if (mbedtls_sha256_finish(s, inner) != 0)
             return CDB_E_CORRUPT;
-        if (mbedtls_sha256_starts(s, 0) != 0 ||
-            mbedtls_sha256_update(s, ctx->opad, 64) != 0 ||
-            mbedtls_sha256_update(s, inner, sizeof inner) != 0 ||
-            mbedtls_sha256_finish(s, out_hash) != 0) {
+        if (mbedtls_sha256_starts(s, 0) != 0 || mbedtls_sha256_update(s, ctx->opad, 64) != 0
+            || mbedtls_sha256_update(s, inner, sizeof inner) != 0
+            || mbedtls_sha256_finish(s, out_hash) != 0) {
             mbedtls_platform_zeroize(inner, sizeof inner);
             return CDB_E_CORRUPT;
         }
@@ -242,8 +226,7 @@ void cdb_crypto_hash_free(cdb_crypto_hash_ctx *ctx)
 }
 
 cdb_status cdb_crypto_derive_subkey(const uint8_t base_key[CDB_CRYPTO_KEY_SIZE],
-                                    cdb_subkey_purpose purpose,
-                                    const uint8_t *salt,
+                                    cdb_subkey_purpose purpose, const uint8_t *salt,
                                     uint8_t subkey_out[CDB_CRYPTO_KEY_SIZE])
 {
     const mbedtls_md_info_t *md;
@@ -273,9 +256,8 @@ cdb_status cdb_crypto_derive_subkey(const uint8_t base_key[CDB_CRYPTO_KEY_SIZE],
     if (md == NULL)
         return CDB_E_UNSUPPORTED;
 
-    ret = mbedtls_hkdf(md, salt, salt != NULL ? CDB_SESSION_SALT_SIZE : 0u,
-                       base_key, CDB_CRYPTO_KEY_SIZE,
-                       (const unsigned char *)info_str, strlen(info_str),
+    ret = mbedtls_hkdf(md, salt, salt != NULL ? CDB_SESSION_SALT_SIZE : 0u, base_key,
+                       CDB_CRYPTO_KEY_SIZE, (const unsigned char *)info_str, strlen(info_str),
                        subkey_out, CDB_CRYPTO_KEY_SIZE);
     return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
 }
@@ -312,11 +294,8 @@ cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
     if (s != CDB_OK)
         return s;
 
-    return cdb_crypto_aead_encrypt(CDB_AEAD_AES_256_GCM, master_key, nonce,
-                                   NULL, 0,
-                                   enclave_key, CDB_CRYPTO_KEY_SIZE,
-                                   ciphertext,
-                                   tag);
+    return cdb_crypto_aead_encrypt(CDB_AEAD_AES_256_GCM, master_key, nonce, NULL, 0, enclave_key,
+                                   CDB_CRYPTO_KEY_SIZE, ciphertext, tag);
 }
 
 cdb_status cdb_crypto_unwrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
@@ -336,11 +315,8 @@ cdb_status cdb_crypto_unwrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
     const uint8_t *tag = wrapped_in + CDB_AEAD_NONCE_SIZE;
     const uint8_t *ciphertext = wrapped_in + CDB_AEAD_NONCE_SIZE + CDB_AEAD_TAG_SIZE;
 
-    return cdb_crypto_aead_decrypt(CDB_AEAD_AES_256_GCM, master_key, nonce,
-                                   NULL, 0,
-                                   ciphertext, CDB_CRYPTO_KEY_SIZE,
-                                   tag,
-                                   enclave_key_out);
+    return cdb_crypto_aead_decrypt(CDB_AEAD_AES_256_GCM, master_key, nonce, NULL, 0, ciphertext,
+                                   CDB_CRYPTO_KEY_SIZE, tag, enclave_key_out);
 }
 
 /* Parses 32 bytes from either a 64-hex-character string or raw bytes. */
@@ -404,11 +380,13 @@ cdb_status cdb_crypto_resolve_key(const char *uri, int is_production,
         FILE *f;
 
         if (is_production) {
-            fprintf(stderr, "combolite: ERROR: file:// key provider is prohibited in production mode! (spec 12.3)\n");
+            fprintf(stderr, "combolite: ERROR: file:// key provider is prohibited in production "
+                            "mode! (spec 12.3)\n");
             return CDB_E_SECURITY;
         }
 
-        fprintf(stderr, "combolite: WARNING: file:// key provider is for development only! Do not use in production. (spec 12.3)\n");
+        fprintf(stderr, "combolite: WARNING: file:// key provider is for development only! Do not "
+                        "use in production. (spec 12.3)\n");
 
         f = fopen(path, "rb");
         if (f == NULL)
@@ -417,7 +395,8 @@ cdb_status cdb_crypto_resolve_key(const char *uri, int is_production,
         nread = fread(buf, 1, sizeof(buf) - 1, f);
         fclose(f);
 
-        while (nread > 0 && (buf[nread - 1] == '\r' || buf[nread - 1] == '\n' || buf[nread - 1] == ' '))
+        while (nread > 0
+               && (buf[nread - 1] == '\r' || buf[nread - 1] == '\n' || buf[nread - 1] == ' '))
             nread--;
 
         if (!parse_key_bytes(buf, nread, key_out)) {
@@ -475,13 +454,11 @@ cdb_status cdb_identity_generate(cdb_identity *out_id, uint64_t principal_id, ui
         return CDB_E_CORRUPT;
     }
 
-    ret = mbedtls_mpi_write_binary(&ctx.MBEDTLS_PRIVATE(d), out_id->secret_key, CDB_IDENTITY_SECKEY_SIZE);
+    ret = mbedtls_mpi_write_binary(&ctx.MBEDTLS_PRIVATE(d), out_id->secret_key,
+                                   CDB_IDENTITY_SECKEY_SIZE);
     if (ret == 0) {
-        ret = mbedtls_ecp_point_write_binary(&ctx.MBEDTLS_PRIVATE(grp),
-                                             &ctx.MBEDTLS_PRIVATE(Q),
-                                             MBEDTLS_ECP_PF_COMPRESSED,
-                                             &olen,
-                                             out_id->public_key,
+        ret = mbedtls_ecp_point_write_binary(&ctx.MBEDTLS_PRIVATE(grp), &ctx.MBEDTLS_PRIVATE(Q),
+                                             MBEDTLS_ECP_PF_COMPRESSED, &olen, out_id->public_key,
                                              CDB_IDENTITY_PUBKEY_SIZE);
     }
 
@@ -517,7 +494,7 @@ cdb_status cdb_identity_sign(const cdb_identity *id, const void *msg, size_t msg
     if (ret == 0) {
         /* Deterministic ECDSA signature (RFC 6979). */
         ret = mbedtls_ecdsa_sign_det_ext(&grp, &r, &s, &d, hash, CDB_CRYPTO_HASH_SIZE,
-                                        MBEDTLS_MD_SHA256, platform_entropy_rng, NULL);
+                                         MBEDTLS_MD_SHA256, platform_entropy_rng, NULL);
     }
 
     if (ret == 0) {
@@ -535,9 +512,8 @@ cdb_status cdb_identity_sign(const cdb_identity *id, const void *msg, size_t msg
     return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
 }
 
-cdb_status cdb_identity_verify(const uint8_t public_key[CDB_IDENTITY_PUBKEY_SIZE],
-                               const void *msg, size_t msg_len,
-                               const uint8_t sig[CDB_SIGNATURE_SIZE])
+cdb_status cdb_identity_verify(const uint8_t public_key[CDB_IDENTITY_PUBKEY_SIZE], const void *msg,
+                               size_t msg_len, const uint8_t sig[CDB_SIGNATURE_SIZE])
 {
     mbedtls_ecp_group grp;
     mbedtls_ecp_point Q;

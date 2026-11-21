@@ -52,15 +52,15 @@
 #define CDB_LINK_STORE_NAME "$links"
 
 /* Reference flags (spec 6.1, 6.11). */
-#define CDB_REF_ENTRY   0x00u /* standard entry: (store, entry) */
-#define CDB_REF_POINT   0x01u /* time-series point: (store, series, ts) */
-#define CDB_REF_OPAQUE  0x02u /* cross-boundary enclave opaque pointer */
+#define CDB_REF_ENTRY 0x00u  /* standard entry: (store, entry) */
+#define CDB_REF_POINT 0x01u  /* time-series point: (store, series, ts) */
+#define CDB_REF_OPAQUE 0x02u /* cross-boundary enclave opaque pointer */
 
 typedef struct cdb_ref {
     uint64_t store;
-    uint64_t entry;       /* entry ID, series ID, or enclave_ptr */
-    int64_t  ts;          /* timestamp if CDB_REF_POINT */
-    uint32_t flags;       /* CDB_REF_* */
+    uint64_t entry; /* entry ID, series ID, or enclave_ptr */
+    int64_t ts;     /* timestamp if CDB_REF_POINT */
+    uint32_t flags; /* CDB_REF_* */
 } cdb_ref;
 
 static inline cdb_ref cdb_ref_entry(uint64_t store, uint64_t entry)
@@ -105,8 +105,8 @@ typedef struct cdb_link {
 
 /* Defines a link type; commits immediately, like other catalog changes, so
  * not inside a transaction. Creates the link store the first time. */
-cdb_status cdb_link_define_type(cdb_db *db, const char *name, size_t len, unsigned cardinality, int enforced,
-                                unsigned on_delete, uint64_t *type);
+cdb_status cdb_link_define_type(cdb_db *db, const char *name, size_t len, unsigned cardinality,
+                                int enforced, unsigned on_delete, uint64_t *type);
 cdb_status cdb_link_find_type(cdb_db *db, const char *name, size_t len, uint64_t *type, int *found);
 
 /* Inside a transaction. time is used only when the environment has no clock.
@@ -114,17 +114,19 @@ cdb_status cdb_link_find_type(cdb_db *db, const char *name, size_t len, uint64_t
  * the pair is linked under the type (a removed link is revived instead),
  * CDB_E_STATE if an enforced cardinality would break. reinforce and remove:
  * CDB_E_NOT_FOUND unless the link is live. */
-cdb_status cdb_link_add(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target, float weight, int64_t time);
-cdb_status cdb_link_reinforce(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target, float weight,
-                              int64_t time);
+cdb_status cdb_link_add(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target, float weight,
+                        int64_t time);
+cdb_status cdb_link_reinforce(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target,
+                              float weight, int64_t time);
 cdb_status cdb_link_remove(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target);
 
 /* Committed links. get: *found 0 when there is none. list: the links out of
  * (or into) entry, of one type or all (type 0), in key order, starting after
  * *after (NULL: from the first); at most max. */
-cdb_status cdb_link_get(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target, cdb_link *out, int *found);
-cdb_status cdb_link_list(cdb_db *db, cdb_ref entry, int direction, uint64_t type, const cdb_link *after,
-                         cdb_link *out, size_t max, size_t *n);
+cdb_status cdb_link_get(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target, cdb_link *out,
+                        int *found);
+cdb_status cdb_link_list(cdb_db *db, cdb_ref entry, int direction, uint64_t type,
+                         const cdb_link *after, cdb_link *out, size_t max, size_t *n);
 
 /* Engine hooks. */
 int cdb_link_is_store(cdb_db *db, uint64_t store);

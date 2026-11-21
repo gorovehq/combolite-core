@@ -290,7 +290,8 @@ static void free_all(cdb_faultenv *fe)
 
 /* The files and directories whose parent is dir, as the running process
  * sees them. */
-static cdb_status fe_list(void *ctx, const char *dir, int (*fn)(void *arg, const char *name), void *arg)
+static cdb_status fe_list(void *ctx, const char *dir, int (*fn)(void *arg, const char *name),
+                          void *arg)
 {
     cdb_faultenv *fe = (cdb_faultenv *)ctx;
     char parent[CDB_FAULTENV_NAME];
@@ -401,24 +402,16 @@ static void fe_lock_close(void *ctx, cdb_lock *l)
 }
 
 static const cdb_env_ops faultenv_ops = {
-    fe_open, fe_remove, fe_rename, fe_mkdir, fe_rmdir, fe_exists, fe_sync_dir, fe_now, fe_alloc, fe_free,
-    fe_list, fe_mono, fe_random, fe_sleep,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL,
-    fe_lock_open, fe_lock_close,
-    NULL
-};
+    fe_open, fe_remove, fe_rename, fe_mkdir, fe_rmdir,     fe_exists,     fe_sync_dir,
+    fe_now,  fe_alloc,  fe_free,   fe_list,  fe_mono,      fe_random,     fe_sleep,
+    NULL,    NULL,      NULL,      NULL,     NULL,         NULL,          NULL,
+    NULL,    NULL,      NULL,      NULL,     fe_lock_open, fe_lock_close, NULL};
 
 static const cdb_env_ops faultenv_ops_nolock = {
-    fe_open, fe_remove, fe_rename, fe_mkdir, fe_rmdir, fe_exists, fe_sync_dir, fe_now, fe_alloc, fe_free,
-    fe_list, fe_mono, fe_random, fe_sleep,
-    NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL,
-    NULL, NULL,
-    NULL
-};
+    fe_open, fe_remove, fe_rename, fe_mkdir, fe_rmdir, fe_exists, fe_sync_dir,
+    fe_now,  fe_alloc,  fe_free,   fe_list,  fe_mono,  fe_random, fe_sleep,
+    NULL,    NULL,      NULL,      NULL,     NULL,     NULL,      NULL,
+    NULL,    NULL,      NULL,      NULL,     NULL,     NULL,      NULL};
 
 unsigned cdb_faultenv_held_locks(const cdb_faultenv *fe)
 {
@@ -471,8 +464,8 @@ cdb_status cdb_faultenv_init(cdb_faultenv *fe, const cdb_faultenv_config *cfg, c
     return CDB_OK;
 }
 
-void cdb_faultenv_arm(cdb_faultenv *fe, uint64_t op, cdb_crash_mode mode,
-                      size_t keep_writes, size_t torn_bytes)
+void cdb_faultenv_arm(cdb_faultenv *fe, uint64_t op, cdb_crash_mode mode, size_t keep_writes,
+                      size_t torn_bytes)
 {
     fe->clock.crash_at = op == 0 ? 0 : fe->clock.ops + op;
     fe->clock.mode = mode;
@@ -480,8 +473,8 @@ void cdb_faultenv_arm(cdb_faultenv *fe, uint64_t op, cdb_crash_mode mode,
     fe->clock.torn_bytes = torn_bytes;
 }
 
-void cdb_faultenv_crash_now(cdb_faultenv *fe, cdb_crash_mode mode,
-                            size_t keep_writes, size_t torn_bytes)
+void cdb_faultenv_crash_now(cdb_faultenv *fe, cdb_crash_mode mode, size_t keep_writes,
+                            size_t torn_bytes)
 {
     fe->clock.crashed = 1;
     fe->clock.mode = mode;

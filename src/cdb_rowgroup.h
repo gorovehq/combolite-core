@@ -53,10 +53,10 @@
 
 /* One chunk reference of a group header. */
 typedef struct cdb_rg_ref {
-    uint64_t field_id;      /* 0: the entry-ID chunk */
-    uint8_t tag;            /* column value tag */
-    uint64_t addr;          /* nibblet address or first overflow page */
-    uint32_t stored;        /* chunk bytes as stored */
+    uint64_t field_id; /* 0: the entry-ID chunk */
+    uint8_t tag;       /* column value tag */
+    uint64_t addr;     /* nibblet address or first overflow page */
+    uint32_t stored;   /* chunk bytes as stored */
     uint32_t nulls;
     uint8_t min_len, max_len;
     uint8_t min[CDB_RG_STAT_MAX];
@@ -85,7 +85,8 @@ typedef struct cdb_rg_col {
 typedef struct cdb_rg_source {
     void *ctx;
     cdb_status (*rewind)(void *ctx);
-    cdb_status (*next)(void *ctx, uint64_t field_id, uint64_t *entry, const uint8_t **val, size_t *vlen);
+    cdb_status (*next)(void *ctx, uint64_t field_id, uint64_t *entry, const uint8_t **val,
+                       size_t *vlen);
 } cdb_rg_source;
 
 /* A table's row groups with their working memory. */
@@ -95,18 +96,18 @@ typedef struct cdb_rg {
     cdb_index *groups;
     uint32_t rows;
     size_t cap;
-    cdb_rg_header *hdr;     /* the group last read or built */
-    uint8_t *hbytes;        /* an encoded header */
-    uint64_t *entries;      /* the entry IDs of hdr's group, once loaded */
-    uint8_t *bitmap;        /* a null bitmap being built */
-    uint8_t *vals;          /* one column's values, or one row's (cap bytes) */
-    uint64_t *scratch;      /* cdb_colenc scratch */
+    cdb_rg_header *hdr; /* the group last read or built */
+    uint8_t *hbytes;    /* an encoded header */
+    uint64_t *entries;  /* the entry IDs of hdr's group, once loaded */
+    uint8_t *bitmap;    /* a null bitmap being built */
+    uint8_t *vals;      /* one column's values, or one row's (cap bytes) */
+    uint64_t *scratch;  /* cdb_colenc scratch */
     size_t scratch_words;
-    uint8_t *enc;           /* encoded or decompressed values; a row being assembled */
+    uint8_t *enc; /* encoded or decompressed values; a row being assembled */
     size_t enc_cap;
-    uint8_t *chunk;         /* a chunk as stored */
+    uint8_t *chunk; /* a chunk as stored */
     size_t chunk_cap;
-    uint8_t *page;          /* a page buffer */
+    uint8_t *page; /* a page buffer */
     cdb_codec_mem codec;
 } cdb_rg;
 
@@ -114,8 +115,8 @@ typedef struct cdb_rg {
 typedef struct cdb_rg_column {
     cdb_rg *g;
     const cdb_rg_ref *ref;
-    const uint8_t *bitmap;  /* NULL when the column has no nulls */
-    uint32_t row;           /* rows read so far */
+    const uint8_t *bitmap; /* NULL when the column has no nulls */
+    uint32_t row;          /* rows read so far */
     cdb_colenc_reader r;
 } cdb_rg_column;
 
@@ -126,16 +127,16 @@ size_t cdb_rg_work_size(size_t page_size, uint32_t rows, size_t cap, int with_co
 
 /* Sets g up over the table's groups index. CDB_E_BUFFER_TOO_SMALL if the
  * work area is too small for rows and cap. */
-cdb_status cdb_rg_init(cdb_rg *g, cdb_db *db, uint64_t store, cdb_index *groups, uint32_t rows, size_t cap,
-                       uint8_t *work, size_t work_size);
+cdb_status cdb_rg_init(cdb_rg *g, cdb_db *db, uint64_t store, cdb_index *groups, uint32_t rows,
+                       size_t cap, uint8_t *work, size_t work_size);
 
 /* Builds a group of n rows (1..g->rows) from src with the given columns
  * (ascending field IDs), written under schema version `schema`: chunks
  * first, then the header. CDB_E_OVERFLOW if a column's values pass g->cap;
  * nothing is left behind then. CDB_E_INVALID_ARG for entries that do not
  * ascend or a value of another type. */
-cdb_status cdb_rg_write(cdb_rg *g, const cdb_rg_source *src, uint32_t n, uint32_t schema, const cdb_rg_col *cols,
-                        unsigned ncols);
+cdb_status cdb_rg_write(cdb_rg *g, const cdb_rg_source *src, uint32_t n, uint32_t schema,
+                        const cdb_rg_col *cols, unsigned ncols);
 
 /* Loads the header of the group that holds entry (or would: the group whose
  * range reaches it) into g->hdr. *found 0 when no group's last entry is at
@@ -148,7 +149,8 @@ cdb_status cdb_rg_load_entries(cdb_rg *g);
 
 /* Reads the row of entry as an encoded object of its present columns.
  * *found 0 if no group holds it. CDB_E_BUFFER_TOO_SMALL with *len set. */
-cdb_status cdb_rg_get_row(cdb_rg *g, uint64_t entry, void *out, size_t cap, size_t *len, int *found);
+cdb_status cdb_rg_get_row(cdb_rg *g, uint64_t entry, void *out, size_t cap, size_t *len,
+                          int *found);
 
 /* Opens column i of g->hdr (-1: the entry-ID chunk) for reading. Only one
  * column of a cdb_rg is open at a time; it uses g->chunk and g->enc. */
@@ -156,14 +158,15 @@ cdb_status cdb_rg_column_open(cdb_rg *g, int i, cdb_rg_column *c);
 /* The next row's value, written to dst as an encoded value (tag and
  * payload), *vlen bytes; *present 0 for null. *done after the last row,
  * once the chunk's closing rules have been checked. */
-cdb_status cdb_rg_column_next(cdb_rg_column *c, uint8_t *dst, size_t dcap, size_t *vlen, int *present,
-                              int *done);
+cdb_status cdb_rg_column_next(cdb_rg_column *c, uint8_t *dst, size_t dcap, size_t *vlen,
+                              int *present, int *done);
 
 /* Frees the chunks of the group whose last entry is `last` and removes it. */
 cdb_status cdb_rg_drop(cdb_rg *g, uint64_t last);
 
 /* A chunk nibblet of the group moved (cdb_nib_merge): the header points at
  * its new address. CDB_E_NOT_FOUND if no group refers to it. */
-cdb_status cdb_rg_nib_moved(cdb_rg *g, const uint8_t *okey, size_t oklen, uint64_t old_addr, uint64_t addr);
+cdb_status cdb_rg_nib_moved(cdb_rg *g, const uint8_t *okey, size_t oklen, uint64_t old_addr,
+                            uint64_t addr);
 
 #endif

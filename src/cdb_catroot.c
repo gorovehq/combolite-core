@@ -12,16 +12,16 @@
 #include "cdb_endian.h"
 
 /* "\x89CDBCAT\n", and the same bytes reversed. */
-static const uint8_t start_magic[8] = { 0x89, 0x43, 0x44, 0x42, 0x43, 0x41, 0x54, 0x0A };
-static const uint8_t end_magic[8] = { 0x0A, 0x54, 0x41, 0x43, 0x42, 0x44, 0x43, 0x89 };
+static const uint8_t start_magic[8] = {0x89, 0x43, 0x44, 0x42, 0x43, 0x41, 0x54, 0x0A};
+static const uint8_t end_magic[8] = {0x0A, 0x54, 0x41, 0x43, 0x42, 0x44, 0x43, 0x89};
 
 #define EPOCH 1u
-#define OFF_NIB_ROOT 96u  /* public nibblet free-space root (spec 14.18.3) */
+#define OFF_NIB_ROOT 96u   /* public nibblet free-space root (spec 14.18.3) */
 #define OFF_SALT_ROOT 104u /* session salt table root (spec 14.2.8) */
 #define OFF_RESERVED 112u
 #define RESERVED_LEN 372u
 #define OFF_END_MAGIC 484u
-#define OFF_TAG 492u   /* tamper-evident tag: left zero, not checked yet */
+#define OFF_TAG 492u /* tamper-evident tag: left zero, not checked yet */
 #define OFF_CRC 508u
 
 /* Writes every field in the file's byte order; reserved bytes and the tag
@@ -52,7 +52,8 @@ void cdb_catroot_encode(const cdb_catroot *r, uint8_t out[CDB_CATROOT_SLOT_SIZE]
 /* Checks in this order: start magic (absent: never written), CRC and end
  * magic (damaged), epoch and format (a newer layout: CDB_E_UNSUPPORTED),
  * then that reserved bytes are zero (CDB_E_MALFORMED). */
-cdb_status cdb_catroot_decode(const uint8_t in[CDB_CATROOT_SLOT_SIZE], cdb_catroot *r, cdb_byte_order o)
+cdb_status cdb_catroot_decode(const uint8_t in[CDB_CATROOT_SLOT_SIZE], cdb_catroot *r,
+                              cdb_byte_order o)
 {
     size_t i;
     if (memcmp(in, start_magic, sizeof start_magic) != 0)

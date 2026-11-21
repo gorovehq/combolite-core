@@ -289,8 +289,8 @@ int cdb_crdt_ts_same_point(cdb_crdt_ts_point a, cdb_crdt_ts_point b)
 
 /* ------------------------------------------------------------ Wire Protocol */
 
-cdb_status cdb_crdt_handshake_encode(uint32_t peer_id, const cdb_crdt_vector *v,
-                                     uint8_t *buf, size_t cap, size_t *len)
+cdb_status cdb_crdt_handshake_encode(uint32_t peer_id, const cdb_crdt_vector *v, uint8_t *buf,
+                                     size_t cap, size_t *len)
 {
     size_t needed, off;
     uint32_t i;
@@ -320,8 +320,8 @@ cdb_status cdb_crdt_handshake_encode(uint32_t peer_id, const cdb_crdt_vector *v,
     return CDB_OK;
 }
 
-cdb_status cdb_crdt_handshake_decode(const uint8_t *buf, size_t len,
-                                     uint32_t *peer_id, cdb_crdt_vector *v)
+cdb_status cdb_crdt_handshake_decode(const uint8_t *buf, size_t len, uint32_t *peer_id,
+                                     cdb_crdt_vector *v)
 {
     uint32_t magic;
     uint16_t count;
@@ -359,8 +359,8 @@ cdb_status cdb_crdt_handshake_decode(const uint8_t *buf, size_t len,
     return CDB_OK;
 }
 
-cdb_status cdb_crdt_slice_encode(uint32_t sender_peer_id, const cdb_crdt_delta_rec *recs, size_t count,
-                                 uint8_t *buf, size_t cap, size_t *len)
+cdb_status cdb_crdt_slice_encode(uint32_t sender_peer_id, const cdb_crdt_delta_rec *recs,
+                                 size_t count, uint8_t *buf, size_t cap, size_t *len)
 {
     size_t needed = 4u + 4u + 4u;
     size_t off, i;
@@ -400,8 +400,7 @@ cdb_status cdb_crdt_slice_encode(uint32_t sender_peer_id, const cdb_crdt_delta_r
     return CDB_OK;
 }
 
-cdb_status cdb_crdt_slice_decode(const uint8_t *buf, size_t len,
-                                 uint32_t *sender_peer_id,
+cdb_status cdb_crdt_slice_decode(const uint8_t *buf, size_t len, uint32_t *sender_peer_id,
                                  cdb_crdt_delta_rec *recs, size_t cap, size_t *count)
 {
     uint32_t magic, nrecs;

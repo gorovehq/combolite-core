@@ -58,10 +58,9 @@ void cdb_query_writer_init(cdb_query_writer *w, uint8_t *buf, size_t cap)
 
 cdb_status cdb_query_writer_begin(cdb_query_writer *w)
 {
-    static const uint8_t header[CDB_QUERY_HEADER_SIZE] = {
-        CDB_QUERY_MAGIC_0, CDB_QUERY_MAGIC_1, CDB_QUERY_MAGIC_2, CDB_QUERY_MAGIC_3,
-        CDB_QUERY_VERSION_1, 0x00u
-    };
+    static const uint8_t header[CDB_QUERY_HEADER_SIZE] = {CDB_QUERY_MAGIC_0,   CDB_QUERY_MAGIC_1,
+                                                          CDB_QUERY_MAGIC_2,   CDB_QUERY_MAGIC_3,
+                                                          CDB_QUERY_VERSION_1, 0x00u};
     return w_bytes(w, header, sizeof header);
 }
 
@@ -135,8 +134,7 @@ cdb_status cdb_query_write_sort_key_suffix(cdb_query_writer *w, uint8_t dir, uin
 cdb_status cdb_query_write_limit(cdb_query_writer *w, uint64_t count, uint64_t offset)
 {
     cdb_status s;
-    if ((s = w_byte(w, CDB_QUERY_NODE_LIMIT)) != CDB_OK
-        || (s = w_u64(w, count)) != CDB_OK)
+    if ((s = w_byte(w, CDB_QUERY_NODE_LIMIT)) != CDB_OK || (s = w_u64(w, count)) != CDB_OK)
         return s;
     return w_u64(w, offset);
 }
@@ -162,7 +160,8 @@ cdb_status cdb_query_write_aggregate(cdb_query_writer *w, size_t n_groups, size_
     return w_u64(w, (uint64_t)n_aggs);
 }
 
-cdb_status cdb_query_write_aggregate_output(cdb_query_writer *w, const char *alias, size_t alias_len, uint8_t fn)
+cdb_status cdb_query_write_aggregate_output(cdb_query_writer *w, const char *alias,
+                                            size_t alias_len, uint8_t fn)
 {
     cdb_status s;
     if (fn < CDB_AGG_COUNT || fn > CDB_AGG__HIGHEST)
@@ -172,30 +171,27 @@ cdb_status cdb_query_write_aggregate_output(cdb_query_writer *w, const char *ali
     return w_byte(w, fn);
 }
 
-cdb_status cdb_query_write_traverse(cdb_query_writer *w, const char *link_type, size_t len, uint8_t dir,
-                                    uint64_t min_hops, uint64_t max_hops)
+cdb_status cdb_query_write_traverse(cdb_query_writer *w, const char *link_type, size_t len,
+                                    uint8_t dir, uint64_t min_hops, uint64_t max_hops)
 {
     cdb_status s;
     if (dir < CDB_TRAVERSE_FWD || dir > CDB_TRAVERSE_BOTH || max_hops < min_hops)
         return (w->error = CDB_E_INVALID_ARG);
     if ((s = w_byte(w, CDB_QUERY_NODE_TRAVERSE)) != CDB_OK
-        || (s = w_str(w, link_type, len)) != CDB_OK
-        || (s = w_byte(w, dir)) != CDB_OK
+        || (s = w_str(w, link_type, len)) != CDB_OK || (s = w_byte(w, dir)) != CDB_OK
         || (s = w_u64(w, min_hops)) != CDB_OK)
         return s;
     return w_u64(w, max_hops);
 }
 
 cdb_status cdb_query_write_text_search(cdb_query_writer *w, uint8_t mode, uint64_t limit,
-                                      const char *query, size_t query_len, size_t n_fields)
+                                       const char *query, size_t query_len, size_t n_fields)
 {
     cdb_status s;
     if (mode != CDB_QUERY_FTS_ANY && mode != CDB_QUERY_FTS_ALL)
         return (w->error = CDB_E_INVALID_ARG);
-    if ((s = w_byte(w, CDB_QUERY_NODE_TEXT_SEARCH)) != CDB_OK
-        || (s = w_byte(w, mode)) != CDB_OK
-        || (s = w_u64(w, limit)) != CDB_OK
-        || (s = w_str(w, query, query_len)) != CDB_OK)
+    if ((s = w_byte(w, CDB_QUERY_NODE_TEXT_SEARCH)) != CDB_OK || (s = w_byte(w, mode)) != CDB_OK
+        || (s = w_u64(w, limit)) != CDB_OK || (s = w_str(w, query, query_len)) != CDB_OK)
         return s;
     return w_u64(w, (uint64_t)n_fields);
 }
@@ -206,14 +202,13 @@ cdb_status cdb_query_write_field_name(cdb_query_writer *w, const char *field, si
 }
 
 cdb_status cdb_query_write_vector_search(cdb_query_writer *w, const char *field, size_t field_len,
-                                        uint64_t k, uint8_t metric)
+                                         uint64_t k, uint8_t metric)
 {
     cdb_status s;
     if (metric > CDB_QUERY_METRIC_DOT)
         return (w->error = CDB_E_INVALID_ARG);
     if ((s = w_byte(w, CDB_QUERY_NODE_VECTOR_SEARCH)) != CDB_OK
-        || (s = w_str(w, field, field_len)) != CDB_OK
-        || (s = w_u64(w, k)) != CDB_OK)
+        || (s = w_str(w, field, field_len)) != CDB_OK || (s = w_u64(w, k)) != CDB_OK)
         return s;
     return w_byte(w, metric);
 }
@@ -223,8 +218,7 @@ cdb_status cdb_query_write_hybrid_rank(cdb_query_writer *w, uint8_t fuse, size_t
     cdb_status s;
     if (fuse != CDB_FUSE_RRF || n_branches == 0)
         return (w->error = CDB_E_INVALID_ARG);
-    if ((s = w_byte(w, CDB_QUERY_NODE_HYBRID_RANK)) != CDB_OK
-        || (s = w_byte(w, fuse)) != CDB_OK)
+    if ((s = w_byte(w, CDB_QUERY_NODE_HYBRID_RANK)) != CDB_OK || (s = w_byte(w, fuse)) != CDB_OK)
         return s;
     return w_u64(w, (uint64_t)n_branches);
 }
@@ -234,16 +228,14 @@ cdb_status cdb_query_write_branch_weight(cdb_query_writer *w, uint32_t weight)
     return w_u64(w, (uint64_t)weight);
 }
 
-cdb_status cdb_query_write_window(cdb_query_writer *w, uint8_t type, const char *time_field, size_t len,
-                                  uint64_t size_ns, uint64_t step_ns)
+cdb_status cdb_query_write_window(cdb_query_writer *w, uint8_t type, const char *time_field,
+                                  size_t len, uint64_t size_ns, uint64_t step_ns)
 {
     cdb_status s;
     if (type < CDB_WINDOW_TUMBLING || type > CDB_WINDOW_HOPPING)
         return (w->error = CDB_E_INVALID_ARG);
-    if ((s = w_byte(w, CDB_QUERY_NODE_WINDOW)) != CDB_OK
-        || (s = w_byte(w, type)) != CDB_OK
-        || (s = w_str(w, time_field, len)) != CDB_OK
-        || (s = w_u64(w, size_ns)) != CDB_OK)
+    if ((s = w_byte(w, CDB_QUERY_NODE_WINDOW)) != CDB_OK || (s = w_byte(w, type)) != CDB_OK
+        || (s = w_str(w, time_field, len)) != CDB_OK || (s = w_u64(w, size_ns)) != CDB_OK)
         return s;
     return w_u64(w, step_ns);
 }
@@ -253,8 +245,7 @@ cdb_status cdb_query_write_asof_join(cdb_query_writer *w, uint8_t kind, uint64_t
     cdb_status s;
     if (kind < CDB_ASOF_BACKWARD || kind > CDB_ASOF_NEAREST)
         return (w->error = CDB_E_INVALID_ARG);
-    if ((s = w_byte(w, CDB_QUERY_NODE_ASOF_JOIN)) != CDB_OK
-        || (s = w_byte(w, kind)) != CDB_OK)
+    if ((s = w_byte(w, CDB_QUERY_NODE_ASOF_JOIN)) != CDB_OK || (s = w_byte(w, kind)) != CDB_OK)
         return s;
     return w_u64(w, tolerance_ns);
 }
@@ -271,7 +262,8 @@ cdb_status cdb_query_write_unnest(cdb_query_writer *w, const char *item_alias, s
     return w_str(w, index_alias != NULL ? index_alias : "", index_alias != NULL ? idx_len : 0u);
 }
 
-cdb_status cdb_query_write_expr_literal(cdb_query_writer *w, const uint8_t *val_bytes, size_t val_len)
+cdb_status cdb_query_write_expr_literal(cdb_query_writer *w, const uint8_t *val_bytes,
+                                        size_t val_len)
 {
     cdb_status s;
     if (val_bytes == NULL && val_len != 0)
@@ -335,8 +327,7 @@ cdb_status cdb_query_write_expr_binary(cdb_query_writer *w, uint8_t op)
 cdb_status cdb_query_write_expr_call(cdb_query_writer *w, uint16_t fn_id, uint16_t n_args)
 {
     cdb_status s;
-    if ((s = w_byte(w, CDB_QUERY_EXPR_CALL)) != CDB_OK
-        || (s = w_u64(w, (uint64_t)fn_id)) != CDB_OK
+    if ((s = w_byte(w, CDB_QUERY_EXPR_CALL)) != CDB_OK || (s = w_u64(w, (uint64_t)fn_id)) != CDB_OK
         || (s = w_u64(w, (uint64_t)n_args)) != CDB_OK)
         return s;
     return CDB_OK;
@@ -465,8 +456,7 @@ static cdb_status skip_expr_d(const uint8_t **p, const uint8_t *end, size_t dept
         }
         return CDB_OK;
     }
-    default:
-        return CDB_E_INVALID_ARG;
+    default: return CDB_E_INVALID_ARG;
     }
 }
 
@@ -762,8 +752,7 @@ static cdb_status skip_node_d(const uint8_t **p, const uint8_t *end, size_t dept
             return s;
         return cdb_query_skip_expr(p, end); /* array_expr */
     }
-    default:
-        return CDB_E_INVALID_ARG;
+    default: return CDB_E_INVALID_ARG;
     }
 }
 
@@ -782,8 +771,8 @@ cdb_status cdb_query_validate(const uint8_t *wire, size_t len, size_t *root_offs
 
     if (wire == NULL || len < CDB_QUERY_HEADER_SIZE)
         return CDB_E_INVALID_ARG;
-    if (wire[0] != CDB_QUERY_MAGIC_0 || wire[1] != CDB_QUERY_MAGIC_1
-        || wire[2] != CDB_QUERY_MAGIC_2 || wire[3] != CDB_QUERY_MAGIC_3)
+    if (wire[0] != CDB_QUERY_MAGIC_0 || wire[1] != CDB_QUERY_MAGIC_1 || wire[2] != CDB_QUERY_MAGIC_2
+        || wire[3] != CDB_QUERY_MAGIC_3)
         return CDB_E_INVALID_ARG;
     if (wire[4] != CDB_QUERY_VERSION_1)
         return CDB_E_UNSUPPORTED;
@@ -826,8 +815,7 @@ cdb_status cdb_query_read_expr(const uint8_t **p, const uint8_t *end, cdb_query_
         *p += (size_t)len;
         return CDB_OK;
     }
-    case CDB_QUERY_EXPR_FIELD:
-        return r_str(p, end, &expr->as.field.path, &expr->as.field.len);
+    case CDB_QUERY_EXPR_FIELD: return r_str(p, end, &expr->as.field.path, &expr->as.field.len);
     case CDB_QUERY_EXPR_PARAM: {
         uint8_t kind;
         s = r_byte(p, end, &kind);
@@ -848,14 +836,16 @@ cdb_status cdb_query_read_expr(const uint8_t **p, const uint8_t *end, cdb_query_
     }
     case CDB_QUERY_EXPR_UNARY: {
         s = r_byte(p, end, &expr->as.unary.op);
-        if (s != CDB_OK || expr->as.unary.op < CDB_UNARY_NOT || expr->as.unary.op > CDB_UNARY_IS_NOT_NULL)
+        if (s != CDB_OK || expr->as.unary.op < CDB_UNARY_NOT
+            || expr->as.unary.op > CDB_UNARY_IS_NOT_NULL)
             return CDB_E_INVALID_ARG;
         expr->as.unary.operand_wire = *p;
         return cdb_query_skip_expr(p, end);
     }
     case CDB_QUERY_EXPR_BINARY: {
         s = r_byte(p, end, &expr->as.binary.op);
-        if (s != CDB_OK || expr->as.binary.op < CDB_BIN_AND || expr->as.binary.op > CDB_BIN_CONTAINS)
+        if (s != CDB_OK || expr->as.binary.op < CDB_BIN_AND
+            || expr->as.binary.op > CDB_BIN_CONTAINS)
             return CDB_E_INVALID_ARG;
         expr->as.binary.left_wire = *p;
         s = cdb_query_skip_expr(p, end);
@@ -882,8 +872,7 @@ cdb_status cdb_query_read_expr(const uint8_t **p, const uint8_t *end, cdb_query_
         }
         return CDB_OK;
     }
-    default:
-        return CDB_E_INVALID_ARG;
+    default: return CDB_E_INVALID_ARG;
     }
 }
 
@@ -898,8 +887,7 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
     (*p)++;
     node->tag = tag;
     switch (tag) {
-    case CDB_QUERY_NODE_SCAN:
-        return r_str(p, end, &node->as.scan.name, &node->as.scan.name_len);
+    case CDB_QUERY_NODE_SCAN: return r_str(p, end, &node->as.scan.name, &node->as.scan.name_len);
     case CDB_QUERY_NODE_FILTER: {
         node->as.filter.input_wire = *p;
         s = cdb_query_skip_node(p, end);
@@ -938,7 +926,8 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
     }
     case CDB_QUERY_NODE_JOIN: {
         s = r_byte(p, end, &node->as.join.kind);
-        if (s != CDB_OK || (node->as.join.kind != CDB_JOIN_INNER && node->as.join.kind != CDB_JOIN_LEFT_OUTER))
+        if (s != CDB_OK
+            || (node->as.join.kind != CDB_JOIN_INNER && node->as.join.kind != CDB_JOIN_LEFT_OUTER))
             return CDB_E_INVALID_ARG;
         node->as.join.left_wire = *p;
         s = cdb_query_skip_node(p, end);
@@ -1042,7 +1031,8 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
         if (s != CDB_OK)
             return s;
         s = r_byte(p, end, &node->as.traverse.dir);
-        if (s != CDB_OK || node->as.traverse.dir < CDB_TRAVERSE_FWD || node->as.traverse.dir > CDB_TRAVERSE_BOTH)
+        if (s != CDB_OK || node->as.traverse.dir < CDB_TRAVERSE_FWD
+            || node->as.traverse.dir > CDB_TRAVERSE_BOTH)
             return CDB_E_INVALID_ARG;
         s = r_u64(p, end, &node->as.traverse.min_hops);
         if (s != CDB_OK)
@@ -1056,7 +1046,9 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
     case CDB_QUERY_NODE_TEXT_SEARCH: {
         uint64_t i;
         s = r_byte(p, end, &node->as.text_search.mode);
-        if (s != CDB_OK || (node->as.text_search.mode != CDB_QUERY_FTS_ANY && node->as.text_search.mode != CDB_QUERY_FTS_ALL))
+        if (s != CDB_OK
+            || (node->as.text_search.mode != CDB_QUERY_FTS_ANY
+                && node->as.text_search.mode != CDB_QUERY_FTS_ALL))
             return CDB_E_INVALID_ARG;
         s = r_u64(p, end, &node->as.text_search.limit);
         if (s != CDB_OK)
@@ -1121,7 +1113,8 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
     }
     case CDB_QUERY_NODE_WINDOW: {
         s = r_byte(p, end, &node->as.window.type);
-        if (s != CDB_OK || node->as.window.type < CDB_WINDOW_TUMBLING || node->as.window.type > CDB_WINDOW_HOPPING)
+        if (s != CDB_OK || node->as.window.type < CDB_WINDOW_TUMBLING
+            || node->as.window.type > CDB_WINDOW_HOPPING)
             return CDB_E_INVALID_ARG;
         s = r_str(p, end, &node->as.window.time_field, &node->as.window.time_field_len);
         if (s != CDB_OK)
@@ -1137,7 +1130,8 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
     }
     case CDB_QUERY_NODE_ASOF_JOIN: {
         s = r_byte(p, end, &node->as.asof_join.kind);
-        if (s != CDB_OK || node->as.asof_join.kind < CDB_ASOF_BACKWARD || node->as.asof_join.kind > CDB_ASOF_NEAREST)
+        if (s != CDB_OK || node->as.asof_join.kind < CDB_ASOF_BACKWARD
+            || node->as.asof_join.kind > CDB_ASOF_NEAREST)
             return CDB_E_INVALID_ARG;
         s = r_u64(p, end, &node->as.asof_join.tolerance_ns);
         if (s != CDB_OK)
@@ -1175,7 +1169,6 @@ cdb_status cdb_query_read_node(const uint8_t **p, const uint8_t *end, cdb_query_
         node->as.unnest.array_expr_wire = *p;
         return cdb_query_skip_expr(p, end);
     }
-    default:
-        return CDB_E_INVALID_ARG;
+    default: return CDB_E_INVALID_ARG;
     }
 }

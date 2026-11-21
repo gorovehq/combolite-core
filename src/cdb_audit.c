@@ -8,15 +8,15 @@
 #include "cdb_index.h"
 #include "combolite/cdb_crypto.h"
 
-#define AUDIT_OFF_TYPE        0u
-#define AUDIT_OFF_PRINCIPAL   2u
-#define AUDIT_OFF_STORE       6u
-#define AUDIT_OFF_ENTITY      14u
-#define AUDIT_OFF_PREV_HASH   22u
-#define AUDIT_OFF_HASH        54u
+#define AUDIT_OFF_TYPE 0u
+#define AUDIT_OFF_PRINCIPAL 2u
+#define AUDIT_OFF_STORE 6u
+#define AUDIT_OFF_ENTITY 14u
+#define AUDIT_OFF_PREV_HASH 22u
+#define AUDIT_OFF_HASH 54u
 #define AUDIT_OFF_PAYLOAD_LEN 86u
-#define AUDIT_OFF_PAYLOAD     90u
-#define AUDIT_HDR_LEN         90u
+#define AUDIT_OFF_PAYLOAD 90u
+#define AUDIT_HDR_LEN 90u
 
 #define AUDIT_MAX_PAYLOAD 3900u
 
@@ -37,14 +37,17 @@ static cdb_status open_audit_index(cdb_db *db, cdb_index *ix, int create, int *h
     cdb_status s;
     *have = 0;
     if (db->pager.catroot.audit_root != 0) {
-        if ((s = cdb_index_open(ix, &db->pager, db->pager.catroot.audit_root, &db->cfg.catalog_work)) != CDB_OK)
+        if ((s = cdb_index_open(ix, &db->pager, db->pager.catroot.audit_root,
+                                &db->cfg.catalog_work))
+            != CDB_OK)
             return s;
         *have = 1;
         return CDB_OK;
     }
     if (!create)
         return CDB_OK;
-    if ((s = cdb_index_create(ix, &db->pager, 0, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work)) != CDB_OK)
+    if ((s = cdb_index_create(ix, &db->pager, 0, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
     {
         cdb_catroot r = db->pager.catroot;
@@ -55,9 +58,10 @@ static cdb_status open_audit_index(cdb_db *db, cdb_index *ix, int create, int *h
     return CDB_OK;
 }
 
-static cdb_status compute_audit_hash(const uint8_t key[16], uint16_t event_type, uint32_t principal_id,
-                                     uint64_t store_id, uint64_t entity_id, const uint8_t prev_hash[32],
-                                     const void *payload, uint32_t payload_len, uint8_t out_hash[32])
+static cdb_status compute_audit_hash(const uint8_t key[16], uint16_t event_type,
+                                     uint32_t principal_id, uint64_t store_id, uint64_t entity_id,
+                                     const uint8_t prev_hash[32], const void *payload,
+                                     uint32_t payload_len, uint8_t out_hash[32])
 {
     cdb_crypto_hash_ctx h;
     uint8_t hdr[24];
@@ -138,7 +142,8 @@ static cdb_status audit_init(cdb_db *db)
         return s;
 
     for (;;) {
-        if ((s = cdb_index_next(&cur, k, sizeof k, &klen, v, sizeof v, &vlen, &done)) != CDB_OK || done)
+        if ((s = cdb_index_next(&cur, k, sizeof k, &klen, v, sizeof v, &vlen, &done)) != CDB_OK
+            || done)
             break;
         if (klen == 16 && vlen >= AUDIT_HDR_LEN) {
             db->audit_seq = cdb_load_u64(k + 8, CDB_ORDER_BIG);
@@ -148,9 +153,8 @@ static cdb_status audit_init(cdb_db *db)
     return CDB_OK;
 }
 
-cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
-                         uint64_t store_id, uint64_t entity_id,
-                         const void *payload, size_t payload_len)
+cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id, uint64_t store_id,
+                         uint64_t entity_id, const void *payload, size_t payload_len)
 {
     cdb_index ix;
     uint8_t k[16];
@@ -184,7 +188,8 @@ cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
 
     if ((s = compute_audit_hash(k, event_type, principal_id, store_id, entity_id,
                                 db->last_audit_hash, payload, (uint32_t)payload_len,
-                                vbuf + AUDIT_OFF_HASH)) != CDB_OK)
+                                vbuf + AUDIT_OFF_HASH))
+        != CDB_OK)
         return s;
 
     cdb_store_u32(vbuf + AUDIT_OFF_PAYLOAD_LEN, (uint32_t)payload_len, CDB_ORDER_BIG);
@@ -280,10 +285,9 @@ cdb_status cdb_audit_verify(cdb_db *db, int64_t from_ts, int64_t to_ts, int *val
         }
 
         /* Verify self-hash */
-        if ((s = compute_audit_hash(k, type, principal, store, entity,
-                                    v + AUDIT_OFF_PREV_HASH,
-                                    plen > 0 ? v + AUDIT_OFF_PAYLOAD : NULL,
-                                    plen, calc_hash)) != CDB_OK)
+        if ((s = compute_audit_hash(k, type, principal, store, entity, v + AUDIT_OFF_PREV_HASH,
+                                    plen > 0 ? v + AUDIT_OFF_PAYLOAD : NULL, plen, calc_hash))
+            != CDB_OK)
             return s;
 
         if (memcmp(calc_hash, v + AUDIT_OFF_HASH, 32) != 0) {
@@ -299,9 +303,9 @@ cdb_status cdb_audit_verify(cdb_db *db, int64_t from_ts, int64_t to_ts, int *val
     return CDB_OK;
 }
 
-cdb_status cdb_audit_query(cdb_db *db, int64_t from_ts, int64_t to_ts,
-                           uint8_t *payload_buf, size_t payload_cap,
-                           cdb_audit_event *events, size_t max_events, size_t *count)
+cdb_status cdb_audit_query(cdb_db *db, int64_t from_ts, int64_t to_ts, uint8_t *payload_buf,
+                           size_t payload_cap, cdb_audit_event *events, size_t max_events,
+                           size_t *count)
 {
     cdb_index ix;
     cdb_index_cursor cur;
