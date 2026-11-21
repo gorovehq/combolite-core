@@ -26,8 +26,9 @@
 #define CDB_MODEL_DOCUMENT 2u
 #define CDB_MODEL_VECTOR 3u
 #define CDB_MODEL_TIME_SERIES 4u
-#define CDB_MODEL_LINK 5u /* the one link store (cdb_link.h): a reserved name, starting with '$' \
-                           */
+#define CDB_MODEL_LINK                                                        \
+    5u /* the one link store (cdb_link.h): a reserved name, starting with '$' \
+        */
 
 /* Store flags. */
 #define CDB_STORE_DROPPED 0x1u
