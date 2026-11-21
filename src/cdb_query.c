@@ -380,10 +380,16 @@ static cdb_status r_str(const uint8_t **p, const uint8_t *end, const char **s, s
     return CDB_OK;
 }
 
-cdb_status cdb_query_skip_expr(const uint8_t **p, const uint8_t *end)
+/* Depth-bounded expression skipper (CWE-674). `depth` is a size_t only ever
+ * reached via `depth + 1` below, which is evaluated only on the
+ * `depth < CDB_QUERY_MAX_DEPTH` branch, so depth <= CDB_QUERY_MAX_DEPTH (64)
+ * holds at every call: it cannot overflow (rule_0024 / CWE-190). */
+static cdb_status skip_expr_d(const uint8_t **p, const uint8_t *end, size_t depth)
 {
     uint8_t tag;
     cdb_status s;
+    if (depth >= CDB_QUERY_MAX_DEPTH)
+        return CDB_E_DEPTH;
     if (*p >= end)
         return CDB_E_INVALID_ARG;
     tag = **p;
@@ -430,7 +436,7 @@ cdb_status cdb_query_skip_expr(const uint8_t **p, const uint8_t *end)
             return s;
         if (op < CDB_UNARY_NOT || op > CDB_UNARY_IS_NOT_NULL)
             return CDB_E_INVALID_ARG;
-        return cdb_query_skip_expr(p, end);
+        return skip_expr_d(p, end, depth + 1);
     }
     case CDB_QUERY_EXPR_BINARY: {
         uint8_t op;
@@ -439,10 +445,10 @@ cdb_status cdb_query_skip_expr(const uint8_t **p, const uint8_t *end)
             return s;
         if (op < CDB_BIN_AND || op > CDB_BIN_CONTAINS)
             return CDB_E_INVALID_ARG;
-        s = cdb_query_skip_expr(p, end);
+        s = skip_expr_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
-        return cdb_query_skip_expr(p, end);
+        return skip_expr_d(p, end, depth + 1);
     }
     case CDB_QUERY_EXPR_CALL: {
         uint64_t fn_id, n_args, i;
@@ -453,7 +459,7 @@ cdb_status cdb_query_skip_expr(const uint8_t **p, const uint8_t *end)
         if (s != CDB_OK)
             return s;
         for (i = 0; i < n_args; i++) {
-            s = cdb_query_skip_expr(p, end);
+            s = skip_expr_d(p, end, depth + 1);
             if (s != CDB_OK)
                 return s;
         }
@@ -464,10 +470,26 @@ cdb_status cdb_query_skip_expr(const uint8_t **p, const uint8_t *end)
     }
 }
 
-cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
+/* Public expression skipper: starts a fresh expression-nesting budget (depth 0).
+ * Preserves the existing ABI; the bound lives in skip_expr_d. */
+cdb_status cdb_query_skip_expr(const uint8_t **p, const uint8_t *end)
+{
+    return skip_expr_d(p, end, 0);
+}
+
+/* Depth-bounded node skipper (CWE-674). Node nesting has its own budget,
+ * independent of expression nesting (each capped at CDB_QUERY_MAX_DEPTH, the
+ * compiler's max emitted plan depth), so all valid wire still parses while the
+ * C stack stays bounded. `depth` is a size_t only ever reached via `depth + 1`
+ * on the `depth < CDB_QUERY_MAX_DEPTH` branch, so it never exceeds the cap and
+ * cannot overflow (rule_0024 / CWE-190). Expression descents call the depth-0
+ * wrapper cdb_query_skip_expr, giving each expression a fresh budget. */
+static cdb_status skip_node_d(const uint8_t **p, const uint8_t *end, size_t depth)
 {
     uint8_t tag;
     cdb_status s;
+    if (depth >= CDB_QUERY_MAX_DEPTH)
+        return CDB_E_DEPTH;
     if (*p >= end)
         return CDB_E_INVALID_ARG;
     tag = **p;
@@ -479,7 +501,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         return r_str(p, end, &name, &len);
     }
     case CDB_QUERY_NODE_FILTER: {
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         return cdb_query_skip_expr(p, end);
@@ -493,7 +515,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &count);
         if (s != CDB_OK)
             return s;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         for (i = 0; i < count; i++) {
@@ -513,10 +535,10 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_byte(p, end, &kind);
         if (s != CDB_OK || (kind != CDB_JOIN_INNER && kind != CDB_JOIN_LEFT_OUTER))
             return CDB_E_INVALID_ARG;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         return cdb_query_skip_expr(p, end);
@@ -526,7 +548,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &count);
         if (s != CDB_OK || count == 0)
             return CDB_E_INVALID_ARG;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         for (i = 0; i < count; i++) {
@@ -551,7 +573,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &offset);
         if (s != CDB_OK)
             return s;
-        return cdb_query_skip_node(p, end);
+        return skip_node_d(p, end, depth + 1);
     }
     case CDB_QUERY_NODE_UNION: {
         uint64_t count, i;
@@ -559,7 +581,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         if (s != CDB_OK || count == 0)
             return CDB_E_INVALID_ARG;
         for (i = 0; i < count; i++) {
-            s = cdb_query_skip_node(p, end);
+            s = skip_node_d(p, end, depth + 1);
             if (s != CDB_OK)
                 return s;
         }
@@ -573,7 +595,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &n_aggs);
         if (s != CDB_OK || (n_groups == 0 && n_aggs == 0))
             return CDB_E_INVALID_ARG;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         for (i = 0; i < n_groups; i++) {
@@ -614,7 +636,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &max_hops);
         if (s != CDB_OK || max_hops < min_hops)
             return CDB_E_INVALID_ARG;
-        return cdb_query_skip_node(p, end);
+        return skip_node_d(p, end, depth + 1);
     }
     case CDB_QUERY_NODE_TEXT_SEARCH: {
         uint8_t mode;
@@ -633,7 +655,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &n_fields);
         if (s != CDB_OK)
             return s;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         for (i = 0; i < n_fields; i++) {
@@ -659,7 +681,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_byte(p, end, &metric);
         if (s != CDB_OK || metric > CDB_QUERY_METRIC_DOT)
             return CDB_E_INVALID_ARG;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         return cdb_query_skip_expr(p, end); /* near expr */
@@ -675,7 +697,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
             return CDB_E_INVALID_ARG;
         for (i = 0; i < count; i++) {
             uint64_t weight;
-            s = cdb_query_skip_node(p, end);
+            s = skip_node_d(p, end, depth + 1);
             if (s != CDB_OK)
                 return s;
             s = r_u64(p, end, &weight);
@@ -701,7 +723,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &step_ns);
         if (s != CDB_OK)
             return s;
-        return cdb_query_skip_node(p, end);
+        return skip_node_d(p, end, depth + 1);
     }
     case CDB_QUERY_NODE_ASOF_JOIN: {
         uint8_t kind;
@@ -712,10 +734,10 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_u64(p, end, &tol);
         if (s != CDB_OK)
             return s;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         s = cdb_query_skip_expr(p, end); /* left_time */
@@ -735,7 +757,7 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
         s = r_str(p, end, &idx_alias, &idx_len);
         if (s != CDB_OK)
             return s;
-        s = cdb_query_skip_node(p, end);
+        s = skip_node_d(p, end, depth + 1);
         if (s != CDB_OK)
             return s;
         return cdb_query_skip_expr(p, end); /* array_expr */
@@ -743,6 +765,13 @@ cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
     default:
         return CDB_E_INVALID_ARG;
     }
+}
+
+/* Public node skipper: starts a fresh node-nesting budget (depth 0).
+ * Preserves the existing ABI; the bound lives in skip_node_d. */
+cdb_status cdb_query_skip_node(const uint8_t **p, const uint8_t *end)
+{
+    return skip_node_d(p, end, 0);
 }
 
 cdb_status cdb_query_validate(const uint8_t *wire, size_t len, size_t *root_offset)
