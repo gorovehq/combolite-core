@@ -81,13 +81,14 @@ typedef struct cdb_tsblock_state {
  * timestamps strictly increasing, all within the window). st (may be NULL)
  * gets the state after the last point. CDB_E_OVERFLOW when it doesn't fit cap.
  * A bad layout or point is CDB_E_INVALID_ARG. */
-cdb_status cdb_tsblock_build(const cdb_ts_layout *L, const cdb_ts_point *pts, size_t n, cdb_byte_order o,
-                             uint8_t *out, size_t cap, size_t *len, cdb_tsblock_state *st);
+cdb_status cdb_tsblock_build(const cdb_ts_layout *L, const cdb_ts_point *pts, size_t n,
+                             cdb_byte_order o, uint8_t *out, size_t cap, size_t *len,
+                             cdb_tsblock_state *st);
 
 /* Reads and checks a block's header (and that its columns are well formed).
  * count, first_ts and last_ts may be NULL. */
-cdb_status cdb_tsblock_parse(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_layout *L, uint32_t *count,
-                             int64_t *first_ts, int64_t *last_ts);
+cdb_status cdb_tsblock_parse(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_layout *L,
+                             uint32_t *count, int64_t *first_ts, int64_t *last_ts);
 
 /* Decodes every point, fully validating canonical form. Strings and plain
  * values point into pl. st (may be NULL) gets the state after the last point.
@@ -100,7 +101,8 @@ cdb_status cdb_tsblock_decode(const uint8_t *pl, size_t len, cdb_byte_order o, c
  * from build/decode/append, and is updated. The result is byte-identical to
  * building the block from all its points at once. CDB_E_OVERFLOW when it
  * doesn't fit cap, or the block has MAX_POINTS. On failure st is unchanged. */
-cdb_status cdb_tsblock_append(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_tsblock_state *st,
-                              const cdb_ts_point *p, uint8_t *out, size_t cap, size_t *outlen);
+cdb_status cdb_tsblock_append(const uint8_t *pl, size_t len, cdb_byte_order o,
+                              cdb_tsblock_state *st, const cdb_ts_point *p, uint8_t *out,
+                              size_t cap, size_t *outlen);
 
 #endif

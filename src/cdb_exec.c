@@ -184,7 +184,8 @@ static cdb_status pin_value(cdb_exec_cursor *cur, cdb_exec_pool *pool, cdb_value
     return CDB_OK;
 }
 
-static cdb_status pin_bytes(cdb_exec_cursor *cur, cdb_exec_pool *pool, const uint8_t **data, size_t len)
+static cdb_status pin_bytes(cdb_exec_cursor *cur, cdb_exec_pool *pool, const uint8_t **data,
+                            size_t len)
 {
     uint8_t *copy;
 
@@ -202,7 +203,8 @@ static cdb_status pin_bytes(cdb_exec_cursor *cur, cdb_exec_pool *pool, const uin
 static cdb_status store_row(cdb_exec_cursor *cur, cdb_exec_pool *pool, const cdb_exec_row *src,
                             cdb_exec_row **out)
 {
-    cdb_exec_row *r = (cdb_exec_row *)pool_alloc(cur, pool, CDB_EXEC_ROW_SIZE(src->n_fields), sizeof(void *));
+    cdb_exec_row *r =
+        (cdb_exec_row *)pool_alloc(cur, pool, CDB_EXEC_ROW_SIZE(src->n_fields), sizeof(void *));
     cdb_status s;
     size_t i;
 
@@ -259,9 +261,8 @@ static cdb_status row_field_resolver(void *user_data, const char *path, size_t p
     return CDB_OK;
 }
 
-cdb_status cdb_exec_row_get_field(const cdb_exec_row *row, cdb_eval_ctx *eval_ctx,
-                                  const char *name, size_t name_len,
-                                  cdb_value *out_val, int *found)
+cdb_status cdb_exec_row_get_field(const cdb_exec_row *row, cdb_eval_ctx *eval_ctx, const char *name,
+                                  size_t name_len, cdb_value *out_val, int *found)
 {
     cdb_status s;
 
@@ -321,7 +322,9 @@ static cdb_status scan_open(cdb_exec_op *op, cdb_exec_cursor *cur)
      * misspelt name must not read as "no rows match" */
     if (cur->cat != NULL) {
         int found = 0;
-        if ((st = cdb_catalog_find_store(cur->cat, s->store_name, s->store_name_len, &s->store_id, &found)) != CDB_OK)
+        if ((st = cdb_catalog_find_store(cur->cat, s->store_name, s->store_name_len, &s->store_id,
+                                         &found))
+            != CDB_OK)
             return st;
         if (!found)
             return CDB_E_NOT_FOUND;
@@ -363,15 +366,16 @@ static cdb_status scan_read(cdb_exec_scan *s, cdb_exec_cursor *cur, uint64_t eid
     case CDB_MODEL_RELATIONAL:
         return cdb_table_get(cur->db, s->store_id, eid, s->rec_buf, s->rec_cap, len);
     case CDB_MODEL_DOCUMENT:
-        return cdb_doc_get(cur->db, s->store_id, eid, 0, s->rec_buf, s->rec_cap, len, NULL, 0, NULL, NULL);
+        return cdb_doc_get(cur->db, s->store_id, eid, 0, s->rec_buf, s->rec_cap, len, NULL, 0, NULL,
+                           NULL);
     case CDB_MODEL_VECTOR: {
-        cdb_status st = cdb_vec_get(cur->db, s->store_id, eid, s->rec_buf, s->rec_cap, len, &src_store, &src_entry);
+        cdb_status st = cdb_vec_get(cur->db, s->store_id, eid, s->rec_buf, s->rec_cap, len,
+                                    &src_store, &src_entry);
         if (st != CDB_E_BUFFER_TOO_SMALL)
             *len = 0;
         return st;
     }
-    default:
-        return CDB_OK;
+    default: return CDB_OK;
     }
 }
 
@@ -396,7 +400,8 @@ static cdb_status scan_load(cdb_exec_scan *s, cdb_exec_cursor *cur, uint64_t eid
     return st;
 }
 
-static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                            int *has_row)
 {
     cdb_exec_scan *s = (cdb_exec_scan *)op;
     (void)cur;
@@ -422,14 +427,16 @@ static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
 
             if (s->model == CDB_MODEL_RELATIONAL) {
                 size_t n = 0;
-                if ((st = cdb_table_scan(cur->db, s->store_id, CDB_TABLE_NO_INDEX, NULL, 0, NULL, 0, &s->tcur, &eid,
-                                         1, &n)) != CDB_OK)
+                if ((st = cdb_table_scan(cur->db, s->store_id, CDB_TABLE_NO_INDEX, NULL, 0, NULL, 0,
+                                         &s->tcur, &eid, 1, &n))
+                    != CDB_OK)
                     return st;
                 if (n == 0)
                     break;
             } else if (s->model == CDB_MODEL_DOCUMENT) {
                 int done = 0;
-                if ((st = cdb_doc_next_live(cur->db, s->store_id, s->cur_entry_id, &eid, &done)) != CDB_OK)
+                if ((st = cdb_doc_next_live(cur->db, s->store_id, s->cur_entry_id, &eid, &done))
+                    != CDB_OK)
                     return st;
                 if (done)
                     break;
@@ -460,12 +467,7 @@ static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
     return CDB_OK;
 }
 
-static const cdb_exec_vtab scan_vtab = {
-    scan_open,
-    scan_next,
-    scan_reset,
-    scan_close
-};
+static const cdb_exec_vtab scan_vtab = {scan_open, scan_next, scan_reset, scan_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x02: FILTER
@@ -495,7 +497,8 @@ static void filter_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     f->input->vtab->close(f->input, cur);
 }
 
-static cdb_status filter_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status filter_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                              int *has_row)
 {
     cdb_exec_filter *f = (cdb_exec_filter *)op;
     cdb_status st;
@@ -530,12 +533,7 @@ static cdb_status filter_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
     }
 }
 
-static const cdb_exec_vtab filter_vtab = {
-    filter_open,
-    filter_next,
-    filter_reset,
-    filter_close
-};
+static const cdb_exec_vtab filter_vtab = {filter_open, filter_next, filter_reset, filter_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x03: PROJECT
@@ -573,7 +571,8 @@ static void project_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     p->input->vtab->close(p->input, cur);
 }
 
-static cdb_status project_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status project_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                               int *has_row)
 {
     cdb_exec_project *p = (cdb_exec_project *)op;
     cdb_exec_row in_row;
@@ -613,7 +612,8 @@ static cdb_status project_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_r
     for (i = 0; i < p->count && out_row->n_fields < CDB_EXEC_MAX_FIELDS; i++) {
         cdb_value val;
         size_t consumed = 0;
-        st = cdb_eval_expr_wire(&cur->eval_ctx, p->cols[i].expr_wire, p->cols[i].expr_len, &val, &consumed);
+        st = cdb_eval_expr_wire(&cur->eval_ctx, p->cols[i].expr_wire, p->cols[i].expr_len, &val,
+                                &consumed);
         if (st != CDB_OK)
             return st;
 
@@ -627,12 +627,8 @@ static cdb_status project_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_r
     return CDB_OK;
 }
 
-static const cdb_exec_vtab project_vtab = {
-    project_open,
-    project_next,
-    project_reset,
-    project_close
-};
+static const cdb_exec_vtab project_vtab = {project_open, project_next, project_reset,
+                                           project_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x06: LIMIT
@@ -668,7 +664,8 @@ static void limit_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     l->input->vtab->close(l->input, cur);
 }
 
-static cdb_status limit_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status limit_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                             int *has_row)
 {
     cdb_exec_limit *l = (cdb_exec_limit *)op;
     cdb_status st;
@@ -697,12 +694,7 @@ static cdb_status limit_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row
     return st;
 }
 
-static const cdb_exec_vtab limit_vtab = {
-    limit_open,
-    limit_next,
-    limit_reset,
-    limit_close
-};
+static const cdb_exec_vtab limit_vtab = {limit_open, limit_next, limit_reset, limit_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x07: UNION
@@ -749,7 +741,8 @@ static void union_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     }
 }
 
-static cdb_status union_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status union_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                             int *has_row)
 {
     cdb_exec_union *u = (cdb_exec_union *)op;
     cdb_status st;
@@ -757,7 +750,8 @@ static cdb_status union_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row
     *has_row = 0;
 
     while (u->cur_branch < u->count) {
-        st = u->branches[u->cur_branch]->vtab->next(u->branches[u->cur_branch], cur, out_row, has_row);
+        st = u->branches[u->cur_branch]->vtab->next(u->branches[u->cur_branch], cur, out_row,
+                                                    has_row);
         if (st != CDB_OK)
             return st;
         if (*has_row)
@@ -769,12 +763,7 @@ static cdb_status union_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row
     return CDB_OK;
 }
 
-static const cdb_exec_vtab union_vtab = {
-    union_open,
-    union_next,
-    union_reset,
-    union_close
-};
+static const cdb_exec_vtab union_vtab = {union_open, union_next, union_reset, union_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x04: JOIN (Nested Loop Join: Inner & Left-Outer)
@@ -825,7 +814,8 @@ static void join_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     j->right->vtab->close(j->right, cur);
 }
 
-static cdb_status join_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status join_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                            int *has_row)
 {
     cdb_exec_join *j = (cdb_exec_join *)op;
     cdb_exec_row cur_right;
@@ -905,12 +895,7 @@ static cdb_status join_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
     }
 }
 
-static const cdb_exec_vtab join_vtab = {
-    join_open,
-    join_next,
-    join_reset,
-    join_close
-};
+static const cdb_exec_vtab join_vtab = {join_open, join_next, join_reset, join_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x05: SORT
@@ -928,17 +913,18 @@ typedef struct cdb_exec_sort {
     size_t count;
     cdb_exec_sort_key keys[CDB_EXEC_MAX_SORT_KEYS];
 
-    cdb_exec_row **rows;         /* the buffered rows: compact copies in pool */
+    cdb_exec_row **rows; /* the buffered rows: compact copies in pool */
     size_t n_rows;
     size_t max_rows;
     size_t cur_idx;
     int is_buffered;
-    cdb_exec_block *row_blocks;  /* host profile: the grown rows array */
+    cdb_exec_block *row_blocks; /* host profile: the grown rows array */
     cdb_exec_pool pool;
-    uint64_t keep;               /* a Limit above needs only the first keep rows; 0: all */
+    uint64_t keep; /* a Limit above needs only the first keep rows; 0: all */
 } cdb_exec_sort;
 
-static int compare_rows(cdb_exec_cursor *cur, const cdb_exec_sort *s, const cdb_exec_row *a, const cdb_exec_row *b)
+static int compare_rows(cdb_exec_cursor *cur, const cdb_exec_sort *s, const cdb_exec_row *a,
+                        const cdb_exec_row *b)
 {
     size_t k;
 
@@ -955,7 +941,9 @@ static int compare_rows(cdb_exec_cursor *cur, const cdb_exec_sort *s, const cdb_
         cur->eval_ctx.record_len = a->record_len;
         cur->eval_ctx.store_id = a->store_id;
         cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)a);
-        if (cdb_eval_expr_wire(&cur->eval_ctx, s->keys[k].expr_wire, s->keys[k].expr_len, &va, &consumed) != CDB_OK)
+        if (cdb_eval_expr_wire(&cur->eval_ctx, s->keys[k].expr_wire, s->keys[k].expr_len, &va,
+                               &consumed)
+            != CDB_OK)
             cdb_eval_make_null(&va);
 
         /* Eval key for B */
@@ -966,7 +954,9 @@ static int compare_rows(cdb_exec_cursor *cur, const cdb_exec_sort *s, const cdb_
         cur->eval_ctx.record_len = b->record_len;
         cur->eval_ctx.store_id = b->store_id;
         cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)b);
-        if (cdb_eval_expr_wire(&cur->eval_ctx, s->keys[k].expr_wire, s->keys[k].expr_len, &vb, &consumed) != CDB_OK)
+        if (cdb_eval_expr_wire(&cur->eval_ctx, s->keys[k].expr_wire, s->keys[k].expr_len, &vb,
+                               &consumed)
+            != CDB_OK)
             cdb_eval_make_null(&vb);
 
         a_null = cdb_eval_is_null(&va);
@@ -991,7 +981,8 @@ static int compare_rows(cdb_exec_cursor *cur, const cdb_exec_sort *s, const cdb_
 }
 
 /* Stable insertion sort: few rows, or no memory for a merge buffer */
-static void sort_insertion(cdb_exec_cursor *cur, const cdb_exec_sort *s, cdb_exec_row **rows, size_t n)
+static void sort_insertion(cdb_exec_cursor *cur, const cdb_exec_sort *s, cdb_exec_row **rows,
+                           size_t n)
 {
     size_t i, j;
     for (i = 1; i < n; i++) {
@@ -1018,7 +1009,8 @@ static void sort_rows(cdb_exec_cursor *cur, cdb_exec_sort *s, cdb_exec_row **row
     to = tmp;
     for (width = 1; width < n; width *= 2) {
         for (i = 0; i < n; i += 2 * width) {
-            size_t lo = i, mid = i + width < n ? i + width : n, hi = i + 2 * width < n ? i + 2 * width : n;
+            size_t lo = i, mid = i + width < n ? i + width : n,
+                   hi = i + 2 * width < n ? i + 2 * width : n;
             size_t a = lo, b = mid, k = lo;
             while (a < mid && b < hi)
                 to[k++] = compare_rows(cur, s, from[b], from[a]) < 0 ? from[b++] : from[a++];
@@ -1027,7 +1019,11 @@ static void sort_rows(cdb_exec_cursor *cur, cdb_exec_sort *s, cdb_exec_row **row
             while (b < hi)
                 to[k++] = from[b++];
         }
-        { cdb_exec_row **t = from; from = to; to = t; }
+        {
+            cdb_exec_row **t = from;
+            from = to;
+            to = t;
+        }
     }
     if (from != rows)
         memcpy(rows, from, n * sizeof *rows);
@@ -1065,8 +1061,9 @@ static cdb_status sort_open(cdb_exec_op *op, cdb_exec_cursor *cur)
     /* The input first, so a breaker below gets its memory before this one */
     if ((st = s->input->vtab->open(s->input, cur)) != CDB_OK)
         return st;
-    if ((st = carve_buffer(&cur->arena, sizeof(cdb_exec_row *), cur->max_buffered_rows, &items, &s->max_rows,
-                           &s->pool)) != CDB_OK)
+    if ((st = carve_buffer(&cur->arena, sizeof(cdb_exec_row *), cur->max_buffered_rows, &items,
+                           &s->max_rows, &s->pool))
+        != CDB_OK)
         return st;
     s->rows = (cdb_exec_row **)items;
     return CDB_OK;
@@ -1090,7 +1087,8 @@ static void sort_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     s->input->vtab->close(s->input, cur);
 }
 
-static cdb_status sort_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status sort_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                            int *has_row)
 {
     cdb_exec_sort *s = (cdb_exec_sort *)op;
     cdb_status st;
@@ -1115,11 +1113,13 @@ static cdb_status sort_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
                 /* Host profile: a larger rows array; mcu: the limit (17.3) */
                 cdb_exec_row **grown;
                 if (s->max_rows > SIZE_MAX / 2 / sizeof *grown
-                    || (grown = (cdb_exec_row **)exec_grow(cur, &s->row_blocks, 2 * s->max_rows * sizeof *grown))
+                    || (grown = (cdb_exec_row **)exec_grow(cur, &s->row_blocks,
+                                                           2 * s->max_rows * sizeof *grown))
                            == NULL)
                     return CDB_E_OUT_OF_BUDGET;
                 memcpy(grown, s->rows, s->n_rows * sizeof *grown);
-                if (s->row_blocks->next != NULL && (uint8_t *)s->row_blocks->next + BLOCK_HEAD == (uint8_t *)s->rows)
+                if (s->row_blocks->next != NULL
+                    && (uint8_t *)s->row_blocks->next + BLOCK_HEAD == (uint8_t *)s->rows)
                     exec_free_one(cur, &s->row_blocks, s->rows);
                 s->rows = grown;
                 s->max_rows *= 2;
@@ -1127,7 +1127,8 @@ static cdb_status sort_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
             if ((st = store_row(cur, &s->pool, &item, &s->rows[s->n_rows])) != CDB_OK)
                 return st;
             s->n_rows++;
-            if (trim && s->n_rows >= 2 * s->keep && s->n_rows >= 64 && (st = sort_trim(cur, s)) != CDB_OK)
+            if (trim && s->n_rows >= 2 * s->keep && s->n_rows >= 64
+                && (st = sort_trim(cur, s)) != CDB_OK)
                 return st;
         }
 
@@ -1148,12 +1149,7 @@ static cdb_status sort_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
     return CDB_OK;
 }
 
-static const cdb_exec_vtab sort_vtab = {
-    sort_open,
-    sort_next,
-    sort_reset,
-    sort_close
-};
+static const cdb_exec_vtab sort_vtab = {sort_open, sort_next, sort_reset, sort_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x08: AGGREGATE
@@ -1169,11 +1165,11 @@ typedef struct cdb_exec_agg_desc {
 typedef struct cdb_exec_agg_group {
     cdb_value group_vals[CDB_EXEC_MAX_FIELDS];
     double sum[CDB_EXEC_MAX_AGGS];
-    double sumsq[CDB_EXEC_MAX_AGGS];   /* sum of squares, for STDDEV/VARIANCE */
+    double sumsq[CDB_EXEC_MAX_AGGS]; /* sum of squares, for STDDEV/VARIANCE */
     uint64_t count[CDB_EXEC_MAX_AGGS];
     cdb_value min_val[CDB_EXEC_MAX_AGGS];
     cdb_value max_val[CDB_EXEC_MAX_AGGS];
-    cdb_value fl_val[CDB_EXEC_MAX_AGGS];    /* FIRST or LAST value; each slot is one or the other */
+    cdb_value fl_val[CDB_EXEC_MAX_AGGS]; /* FIRST or LAST value; each slot is one or the other */
     int has_val[CDB_EXEC_MAX_AGGS];
 } cdb_exec_agg_group;
 
@@ -1208,8 +1204,9 @@ static cdb_status aggregate_open(cdb_exec_op *op, cdb_exec_cursor *cur)
     /* The input first, so a breaker below gets its memory before this one */
     if ((st = a->input->vtab->open(a->input, cur)) != CDB_OK)
         return st;
-    if ((st = carve_buffer(&cur->arena, sizeof(cdb_exec_agg_group), cur->max_buffered_rows, &items, &a->max_groups,
-                           &a->pool)) != CDB_OK)
+    if ((st = carve_buffer(&cur->arena, sizeof(cdb_exec_agg_group), cur->max_buffered_rows, &items,
+                           &a->max_groups, &a->pool))
+        != CDB_OK)
         return st;
     a->groups = (cdb_exec_agg_group *)items;
     return CDB_OK;
@@ -1233,7 +1230,8 @@ static void aggregate_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     a->input->vtab->close(a->input, cur);
 }
 
-static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                                 int *has_row)
 {
     cdb_exec_aggregate *a = (cdb_exec_aggregate *)op;
     cdb_status st;
@@ -1267,7 +1265,8 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
             /* Evaluate group keys */
             for (g = 0; g < a->groups_count; g++) {
                 size_t consumed = 0;
-                st = cdb_eval_expr_wire(&cur->eval_ctx, a->group_wires[g], a->group_lens[g], &gvals[g], &consumed);
+                st = cdb_eval_expr_wire(&cur->eval_ctx, a->group_wires[g], a->group_lens[g],
+                                        &gvals[g], &consumed);
                 if (st != CDB_OK)
                     return st;
             }
@@ -1278,7 +1277,9 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
                 for (i = 0; i < a->groups_count; i++) {
                     int c_res = 0;
                     int is_null = 0;
-                    if (cdb_eval_compare(&gvals[i], &a->groups[g].group_vals[i], &c_res, &is_null) != CDB_OK || is_null || c_res != 0) {
+                    if (cdb_eval_compare(&gvals[i], &a->groups[g].group_vals[i], &c_res, &is_null)
+                            != CDB_OK
+                        || is_null || c_res != 0) {
                         match = 0;
                         break;
                     }
@@ -1295,8 +1296,9 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
                     /* Host profile: a larger groups array; mcu: the limit */
                     cdb_exec_agg_group *grown;
                     if (a->max_groups > SIZE_MAX / 2 / sizeof *grown
-                        || (grown = (cdb_exec_agg_group *)exec_grow(cur, &a->group_blocks,
-                                                                     2 * a->max_groups * sizeof *grown)) == NULL)
+                        || (grown = (cdb_exec_agg_group *)exec_grow(
+                                cur, &a->group_blocks, 2 * a->max_groups * sizeof *grown))
+                               == NULL)
                         return CDB_E_OUT_OF_BUDGET;
                     memcpy(grown, a->groups, a->n_groups * sizeof *grown);
                     if (a->group_blocks->next != NULL
@@ -1322,7 +1324,8 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
                 size_t consumed = 0;
                 double dval = 0.0;
 
-                st = cdb_eval_expr_wire(&cur->eval_ctx, a->aggs[i].arg_wire, a->aggs[i].arg_len, &aval, &consumed);
+                st = cdb_eval_expr_wire(&cur->eval_ctx, a->aggs[i].arg_wire, a->aggs[i].arg_len,
+                                        &aval, &consumed);
                 if (st != CDB_OK)
                     return st;
 
@@ -1344,7 +1347,7 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
 
                 grp->count[i]++;
                 grp->sum[i] += dval;
-                grp->sumsq[i] += dval * dval;   /* for STDDEV / VARIANCE */
+                grp->sumsq[i] += dval * dval; /* for STDDEV / VARIANCE */
 
                 /* FIRST / LAST keep the non-null value itself (scan order), so
                  * pin a copy — but ONLY for those aggregates, so the common
@@ -1375,10 +1378,12 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
                 } else {
                     int c_res = 0;
                     int is_null = 0;
-                    int lower = cdb_eval_compare(&aval, &grp->min_val[i], &c_res, &is_null) == CDB_OK && !is_null
-                                && c_res < 0;
-                    int higher = cdb_eval_compare(&aval, &grp->max_val[i], &c_res, &is_null) == CDB_OK && !is_null
-                                 && c_res > 0;
+                    int lower =
+                        cdb_eval_compare(&aval, &grp->min_val[i], &c_res, &is_null) == CDB_OK
+                        && !is_null && c_res < 0;
+                    int higher =
+                        cdb_eval_compare(&aval, &grp->max_val[i], &c_res, &is_null) == CDB_OK
+                        && !is_null && c_res > 0;
                     if (lower || higher) {
                         if ((st = pin_value(cur, &a->pool, &aval)) != CDB_OK)
                             return st;
@@ -1422,21 +1427,14 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
             memset(&res, 0, sizeof(res));
 
             switch (a->aggs[i].fn) {
-            case CDB_AGG_COUNT:
-                cdb_eval_make_int(&res, (int64_t)grp->count[i]);
-                break;
-            case CDB_AGG_SUM:
-                cdb_eval_make_f64(&res, grp->sum[i]);
-                break;
+            case CDB_AGG_COUNT: cdb_eval_make_int(&res, (int64_t)grp->count[i]); break;
+            case CDB_AGG_SUM: cdb_eval_make_f64(&res, grp->sum[i]); break;
             case CDB_AGG_AVG:
-                cdb_eval_make_f64(&res, (grp->count[i] > 0) ? (grp->sum[i] / (double)grp->count[i]) : 0.0);
+                cdb_eval_make_f64(&res, (grp->count[i] > 0) ? (grp->sum[i] / (double)grp->count[i])
+                                                            : 0.0);
                 break;
-            case CDB_AGG_MIN:
-                res = grp->min_val[i];
-                break;
-            case CDB_AGG_MAX:
-                res = grp->max_val[i];
-                break;
+            case CDB_AGG_MIN: res = grp->min_val[i]; break;
+            case CDB_AGG_MAX: res = grp->max_val[i]; break;
             case CDB_AGG_FIRST:
             case CDB_AGG_LAST:
                 if (grp->has_val[i])
@@ -1455,13 +1453,12 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
                     double var = (grp->sumsq[i] - (double)n * mean * mean) / (double)(n - 1);
                     if (var < 0.0)
                         var = 0.0; /* guard tiny negative from rounding */
-                    cdb_eval_make_f64(&res, a->aggs[i].fn == CDB_AGG_STDDEV ? cdb_math_sqrt(var) : var);
+                    cdb_eval_make_f64(&res,
+                                      a->aggs[i].fn == CDB_AGG_STDDEV ? cdb_math_sqrt(var) : var);
                 }
                 break;
             }
-            default:
-                cdb_eval_make_null(&res);
-                break;
+            default: cdb_eval_make_null(&res); break;
             }
 
             out_row->fields[out_row->n_fields].name = a->aggs[i].alias;
@@ -1477,12 +1474,8 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
     return CDB_OK;
 }
 
-static const cdb_exec_vtab aggregate_vtab = {
-    aggregate_open,
-    aggregate_next,
-    aggregate_reset,
-    aggregate_close
-};
+static const cdb_exec_vtab aggregate_vtab = {aggregate_open, aggregate_next, aggregate_reset,
+                                             aggregate_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x0D: WINDOW
@@ -1515,7 +1508,8 @@ static void window_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     w->input->vtab->close(w->input, cur);
 }
 
-static cdb_status window_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status window_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                              int *has_row)
 {
     cdb_exec_window *w = (cdb_exec_window *)op;
     cdb_status st;
@@ -1531,7 +1525,8 @@ static cdb_status window_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
     /* Extract timestamp */
     if (w->time_field_len > 0) {
         cdb_value tval;
-        st = cdb_exec_row_get_field(out_row, &cur->eval_ctx, w->time_field, w->time_field_len, &tval, &found);
+        st = cdb_exec_row_get_field(out_row, &cur->eval_ctx, w->time_field, w->time_field_len,
+                                    &tval, &found);
         if (st == CDB_OK && found && tval.type == CDB_TYPE_INT) {
             ts = tval.as.i64;
         } else {
@@ -1544,7 +1539,8 @@ static cdb_status window_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
     /* Compute tumbling/sliding bounds */
     if (w->size_ns > 0) {
         uint64_t s = w->size_ns;
-        win_start = (ts >= 0) ? (ts / (int64_t)s) * (int64_t)s : ((ts - (int64_t)s + 1) / (int64_t)s) * (int64_t)s;
+        win_start = (ts >= 0) ? (ts / (int64_t)s) * (int64_t)s
+                              : ((ts - (int64_t)s + 1) / (int64_t)s) * (int64_t)s;
         win_end = win_start + (int64_t)s;
     } else {
         win_start = ts;
@@ -1568,12 +1564,7 @@ static cdb_status window_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
     return CDB_OK;
 }
 
-static const cdb_exec_vtab window_vtab = {
-    window_open,
-    window_next,
-    window_reset,
-    window_close
-};
+static const cdb_exec_vtab window_vtab = {window_open, window_next, window_reset, window_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x0E: ASOF_JOIN
@@ -1617,7 +1608,8 @@ static void asof_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     a->right->vtab->close(a->right, cur);
 }
 
-static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                            int *has_row)
 {
     cdb_exec_asof *a = (cdb_exec_asof *)op;
     cdb_exec_row left_row;
@@ -1647,7 +1639,9 @@ static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
     cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)&left_row);
 
     if (a->left_time_wire != NULL && a->left_time_len > 0) {
-        if (cdb_eval_expr_wire(&cur->eval_ctx, a->left_time_wire, a->left_time_len, &tv, &consumed) == CDB_OK && tv.type == CDB_TYPE_INT)
+        if (cdb_eval_expr_wire(&cur->eval_ctx, a->left_time_wire, a->left_time_len, &tv, &consumed)
+                == CDB_OK
+            && tv.type == CDB_TYPE_INT)
             t_left = tv.as.i64;
         else
             t_left = left_row.timestamp;
@@ -1680,7 +1674,10 @@ static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
         cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)&rrow);
 
         if (a->right_time_wire != NULL && a->right_time_len > 0) {
-            if (cdb_eval_expr_wire(&cur->eval_ctx, a->right_time_wire, a->right_time_len, &tv, &consumed) == CDB_OK && tv.type == CDB_TYPE_INT)
+            if (cdb_eval_expr_wire(&cur->eval_ctx, a->right_time_wire, a->right_time_len, &tv,
+                                   &consumed)
+                    == CDB_OK
+                && tv.type == CDB_TYPE_INT)
                 t_right = tv.as.i64;
             else
                 t_right = rrow.timestamp;
@@ -1697,7 +1694,8 @@ static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
         if (a->kind == 2 && diff > 0)
             continue;
 
-        if (diff < 0) diff = -diff;
+        if (diff < 0)
+            diff = -diff;
         if (a->tolerance_ns > 0 && (uint64_t)diff > a->tolerance_ns)
             continue;
 
@@ -1725,12 +1723,7 @@ static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
     return CDB_OK;
 }
 
-static const cdb_exec_vtab asof_vtab = {
-    asof_open,
-    asof_next,
-    asof_reset,
-    asof_close
-};
+static const cdb_exec_vtab asof_vtab = {asof_open, asof_next, asof_reset, asof_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x0F: UNNEST
@@ -1773,7 +1766,8 @@ static void unnest_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     u->input->vtab->close(u->input, cur);
 }
 
-static cdb_status unnest_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status unnest_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                              int *has_row)
 {
     cdb_exec_unnest *u = (cdb_exec_unnest *)op;
     cdb_status st;
@@ -1794,9 +1788,11 @@ static cdb_status unnest_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
             cur->eval_ctx.record_data = u->cur_parent.record_data;
             cur->eval_ctx.record_len = u->cur_parent.record_len;
             cur->eval_ctx.store_id = u->cur_parent.store_id;
-            cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)&u->cur_parent);
+            cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver,
+                                             (void *)&u->cur_parent);
 
-            st = cdb_eval_expr_wire(&cur->eval_ctx, u->array_wire, u->array_len, &u->cur_array, &consumed);
+            st = cdb_eval_expr_wire(&cur->eval_ctx, u->array_wire, u->array_len, &u->cur_array,
+                                    &consumed);
             if (st != CDB_OK)
                 return st;
 
@@ -1839,7 +1835,8 @@ static cdb_status unnest_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
             if (u->index_alias_len > 0 && out_row->n_fields < CDB_EXEC_MAX_FIELDS) {
                 out_row->fields[out_row->n_fields].name = u->index_alias;
                 out_row->fields[out_row->n_fields].name_len = u->index_alias_len;
-                cdb_eval_make_int(&out_row->fields[out_row->n_fields].val, (int64_t)u->cur_elem_idx);
+                cdb_eval_make_int(&out_row->fields[out_row->n_fields].val,
+                                  (int64_t)u->cur_elem_idx);
                 out_row->n_fields++;
             }
 
@@ -1853,12 +1850,7 @@ static cdb_status unnest_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
     }
 }
 
-static const cdb_exec_vtab unnest_vtab = {
-    unnest_open,
-    unnest_next,
-    unnest_reset,
-    unnest_close
-};
+static const cdb_exec_vtab unnest_vtab = {unnest_open, unnest_next, unnest_reset, unnest_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x09: TRAVERSE
@@ -1891,7 +1883,8 @@ static void traverse_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     t->input->vtab->close(t->input, cur);
 }
 
-static cdb_status traverse_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status traverse_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                                int *has_row)
 {
     cdb_exec_traverse *t = (cdb_exec_traverse *)op;
     cdb_exec_row in_row;
@@ -1915,12 +1908,8 @@ static cdb_status traverse_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_
     return CDB_OK;
 }
 
-static const cdb_exec_vtab traverse_vtab = {
-    traverse_open,
-    traverse_next,
-    traverse_reset,
-    traverse_close
-};
+static const cdb_exec_vtab traverse_vtab = {traverse_open, traverse_next, traverse_reset,
+                                            traverse_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x0A: TEXT_SEARCH
@@ -1955,7 +1944,8 @@ static void text_search_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     ts->input->vtab->close(ts->input, cur);
 }
 
-static cdb_status text_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status text_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                                   int *has_row)
 {
     cdb_exec_text_search *ts = (cdb_exec_text_search *)op;
     cdb_status st;
@@ -1977,12 +1967,8 @@ static cdb_status text_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_ex
     return CDB_OK;
 }
 
-static const cdb_exec_vtab text_search_vtab = {
-    text_search_open,
-    text_search_next,
-    text_search_reset,
-    text_search_close
-};
+static const cdb_exec_vtab text_search_vtab = {text_search_open, text_search_next,
+                                               text_search_reset, text_search_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x0B: VECTOR_SEARCH
@@ -2019,7 +2005,8 @@ static void vec_search_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     vs->input->vtab->close(vs->input, cur);
 }
 
-static cdb_status vec_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status vec_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                                  int *has_row)
 {
     cdb_exec_vec_search *vs = (cdb_exec_vec_search *)op;
     cdb_status st;
@@ -2041,12 +2028,8 @@ static cdb_status vec_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exe
     return CDB_OK;
 }
 
-static const cdb_exec_vtab vec_search_vtab = {
-    vec_search_open,
-    vec_search_next,
-    vec_search_reset,
-    vec_search_close
-};
+static const cdb_exec_vtab vec_search_vtab = {vec_search_open, vec_search_next, vec_search_reset,
+                                              vec_search_close};
 
 /* --------------------------------------------------------------------------
  * Operator 0x0C: HYBRID_RANK
@@ -2082,7 +2065,8 @@ static cdb_status hybrid_open(cdb_exec_op *op, cdb_exec_cursor *cur)
     h->cur_idx = 0;
     h->is_buffered = 0;
     h->max_rows = max_rows;
-    h->fused_buf = (cdb_exec_row *)cdb_exec_arena_alloc(&cur->arena, row_size * max_rows, sizeof(void *));
+    h->fused_buf =
+        (cdb_exec_row *)cdb_exec_arena_alloc(&cur->arena, row_size * max_rows, sizeof(void *));
     if (h->fused_buf == NULL)
         return CDB_E_OUT_OF_BUDGET;
 
@@ -2111,7 +2095,8 @@ static void hybrid_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     }
 }
 
-static cdb_status hybrid_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row, int *has_row)
+static cdb_status hybrid_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
+                              int *has_row)
 {
     cdb_exec_hybrid *h = (cdb_exec_hybrid *)op;
     size_t b;
@@ -2124,7 +2109,8 @@ static cdb_status hybrid_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
             int in_has = 0;
             uint32_t rank = 0;
             float weight = (float)h->weights[b] / 1000.0f;
-            if (weight <= 0.0f) weight = 1.0f;
+            if (weight <= 0.0f)
+                weight = 1.0f;
 
             while (1) {
                 size_t c;
@@ -2139,7 +2125,8 @@ static cdb_status hybrid_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
 
                 /* Check if entry_id already present */
                 for (c = 0; c < h->n_fused; c++) {
-                    if (h->fused_buf[c].entry_id == item.entry_id && h->fused_buf[c].store_id == item.store_id) {
+                    if (h->fused_buf[c].entry_id == item.entry_id
+                        && h->fused_buf[c].store_id == item.store_id) {
                         /* Add RRF score: weight / (60 + rank) */
                         h->fused_buf[c].score += weight / (60.0f + (float)rank);
                         found = 1;
@@ -2183,12 +2170,7 @@ static cdb_status hybrid_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
     return CDB_OK;
 }
 
-static const cdb_exec_vtab hybrid_vtab = {
-    hybrid_open,
-    hybrid_next,
-    hybrid_reset,
-    hybrid_close
-};
+static const cdb_exec_vtab hybrid_vtab = {hybrid_open, hybrid_next, hybrid_reset, hybrid_close};
 
 /* --------------------------------------------------------------------------
  * Recursive Plan Tree Builder
@@ -2216,8 +2198,10 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
 
     switch (node.tag) {
     case CDB_QUERY_NODE_SCAN: {
-        cdb_exec_scan *op = (cdb_exec_scan *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_scan), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_scan *op = (cdb_exec_scan *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_scan), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &scan_vtab;
         op->base.tag = CDB_QUERY_NODE_SCAN;
         op->store_name = node.as.scan.name;
@@ -2228,21 +2212,25 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         if (cur->db != NULL) {
             op->rec_cap = CDB_EXEC_SCAN_RECORD_PAGES * cur->db->pager.page_size;
             op->rec_buf = (uint8_t *)cdb_exec_arena_alloc(&cur->arena, op->rec_cap, sizeof(void *));
-            if (op->rec_buf == NULL) return CDB_E_OUT_OF_BUDGET;
+            if (op->rec_buf == NULL)
+                return CDB_E_OUT_OF_BUDGET;
         }
         *out_op = &op->base;
         return CDB_OK;
     }
 
     case CDB_QUERY_NODE_FILTER: {
-        cdb_exec_filter *op = (cdb_exec_filter *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_filter), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_filter *op = (cdb_exec_filter *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_filter), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &filter_vtab;
         op->base.tag = CDB_QUERY_NODE_FILTER;
         op->pred_wire = node.as.filter.pred_wire;
         op->pred_len = (size_t)(end - node.as.filter.pred_wire);
         st = build_exec_tree(cur, &node.as.filter.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
@@ -2250,14 +2238,17 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
     case CDB_QUERY_NODE_PROJECT: {
         size_t i;
         const uint8_t *cur_wire;
-        cdb_exec_project *op = (cdb_exec_project *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_project), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_project *op = (cdb_exec_project *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_project), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &project_vtab;
         op->base.tag = CDB_QUERY_NODE_PROJECT;
         op->passthrough = (uint8_t)node.as.project.passthrough;
         op->count = node.as.project.count;
         st = build_exec_tree(cur, &node.as.project.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
 
         cur_wire = node.as.project.outputs_wire;
         for (i = 0; i < op->count && i < CDB_EXEC_MAX_FIELDS; i++) {
@@ -2274,7 +2265,8 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
             cur_wire += alen;
             expr_wire = cur_wire;
             st = cdb_query_skip_expr(&cur_wire, end);
-            if (st != CDB_OK) return st;
+            if (st != CDB_OK)
+                return st;
             op->cols[i].expr_wire = expr_wire;
             op->cols[i].expr_len = (size_t)(cur_wire - expr_wire);
         }
@@ -2283,14 +2275,17 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
     }
 
     case CDB_QUERY_NODE_LIMIT: {
-        cdb_exec_limit *op = (cdb_exec_limit *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_limit), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_limit *op = (cdb_exec_limit *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_limit), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &limit_vtab;
         op->base.tag = CDB_QUERY_NODE_LIMIT;
         op->count = node.as.limit.count;
         op->offset = node.as.limit.offset;
         st = build_exec_tree(cur, &node.as.limit.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         /* A Sort below (through Projects, which keep every row) need only
          * hold the rows this Limit can reach: top-N */
         if (op->count > 0 && op->offset <= UINT64_MAX - op->count) {
@@ -2307,8 +2302,10 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
     case CDB_QUERY_NODE_UNION: {
         size_t i;
         const uint8_t *cur_wire;
-        cdb_exec_union *op = (cdb_exec_union *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_union), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_union *op = (cdb_exec_union *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_union), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &union_vtab;
         op->base.tag = CDB_QUERY_NODE_UNION;
         op->count = node.as.union_node.count;
@@ -2316,24 +2313,29 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         cur_wire = node.as.union_node.branches_wire;
         for (i = 0; i < op->count && i < CDB_EXEC_MAX_BRANCHES; i++) {
             st = build_exec_tree(cur, &cur_wire, end, &op->branches[i], depth + 1);
-            if (st != CDB_OK) return st;
+            if (st != CDB_OK)
+                return st;
         }
         *out_op = &op->base;
         return CDB_OK;
     }
 
     case CDB_QUERY_NODE_JOIN: {
-        cdb_exec_join *op = (cdb_exec_join *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_join), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_join *op = (cdb_exec_join *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_join), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &join_vtab;
         op->base.tag = CDB_QUERY_NODE_JOIN;
         op->kind = node.as.join.kind;
         op->cond_wire = node.as.join.cond_wire;
         op->cond_len = (size_t)(end - node.as.join.cond_wire);
         st = build_exec_tree(cur, &node.as.join.left_wire, end, &op->left, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         st = build_exec_tree(cur, &node.as.join.right_wire, end, &op->right, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
@@ -2341,22 +2343,27 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
     case CDB_QUERY_NODE_SORT: {
         size_t i;
         const uint8_t *cur_wire;
-        cdb_exec_sort *op = (cdb_exec_sort *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_sort), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_sort *op = (cdb_exec_sort *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_sort), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &sort_vtab;
         op->base.tag = CDB_QUERY_NODE_SORT;
         op->count = node.as.sort.count;
         st = build_exec_tree(cur, &node.as.sort.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
 
         cur_wire = node.as.sort.keys_wire;
         for (i = 0; i < op->count && i < CDB_EXEC_MAX_SORT_KEYS; i++) {
             const uint8_t *k_start = cur_wire;
             st = cdb_query_skip_expr(&cur_wire, end);
-            if (st != CDB_OK) return st;
+            if (st != CDB_OK)
+                return st;
             op->keys[i].expr_wire = k_start;
             op->keys[i].expr_len = (size_t)(cur_wire - k_start);
-            if (cur_wire + 2 > end) return CDB_E_TRUNCATED;
+            if (cur_wire + 2 > end)
+                return CDB_E_TRUNCATED;
             op->keys[i].dir = *cur_wire++;
             op->keys[i].nulls = *cur_wire++;
         }
@@ -2367,20 +2374,24 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
     case CDB_QUERY_NODE_AGGREGATE: {
         size_t i;
         const uint8_t *cur_wire;
-        cdb_exec_aggregate *op = (cdb_exec_aggregate *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_aggregate), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_aggregate *op = (cdb_exec_aggregate *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_aggregate), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &aggregate_vtab;
         op->base.tag = CDB_QUERY_NODE_AGGREGATE;
         op->groups_count = node.as.aggregate.n_groups;
         op->aggs_count = node.as.aggregate.n_aggs;
         st = build_exec_tree(cur, &node.as.aggregate.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
 
         cur_wire = node.as.aggregate.groups_wire;
         for (i = 0; i < op->groups_count && i < CDB_EXEC_MAX_FIELDS; i++) {
             const uint8_t *g_start = cur_wire;
             st = cdb_query_skip_expr(&cur_wire, end);
-            if (st != CDB_OK) return st;
+            if (st != CDB_OK)
+                return st;
             op->group_wires[i] = g_start;
             op->group_lens[i] = (size_t)(cur_wire - g_start);
         }
@@ -2398,11 +2409,13 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
             op->aggs[i].alias = (const char *)cur_wire;
             op->aggs[i].alias_len = (size_t)alen;
             cur_wire += alen;
-            if (cur_wire >= end) return CDB_E_TRUNCATED;
+            if (cur_wire >= end)
+                return CDB_E_TRUNCATED;
             op->aggs[i].fn = *cur_wire++;
             arg_start = cur_wire;
             st = cdb_query_skip_expr(&cur_wire, end);
-            if (st != CDB_OK) return st;
+            if (st != CDB_OK)
+                return st;
             op->aggs[i].arg_wire = arg_start;
             op->aggs[i].arg_len = (size_t)(cur_wire - arg_start);
         }
@@ -2411,8 +2424,10 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
     }
 
     case CDB_QUERY_NODE_WINDOW: {
-        cdb_exec_window *op = (cdb_exec_window *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_window), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_window *op = (cdb_exec_window *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_window), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &window_vtab;
         op->base.tag = CDB_QUERY_NODE_WINDOW;
         op->type = node.as.window.type;
@@ -2421,14 +2436,17 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->size_ns = node.as.window.size_ns;
         op->step_ns = node.as.window.step_ns;
         st = build_exec_tree(cur, &node.as.window.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
 
     case CDB_QUERY_NODE_ASOF_JOIN: {
-        cdb_exec_asof *op = (cdb_exec_asof *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_asof), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_asof *op = (cdb_exec_asof *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_asof), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &asof_vtab;
         op->base.tag = CDB_QUERY_NODE_ASOF_JOIN;
         op->kind = node.as.asof_join.kind;
@@ -2440,16 +2458,20 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->match_cond_wire = node.as.asof_join.match_cond_wire;
         op->match_cond_len = (size_t)(end - node.as.asof_join.match_cond_wire);
         st = build_exec_tree(cur, &node.as.asof_join.left_wire, end, &op->left, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         st = build_exec_tree(cur, &node.as.asof_join.right_wire, end, &op->right, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
 
     case CDB_QUERY_NODE_UNNEST: {
-        cdb_exec_unnest *op = (cdb_exec_unnest *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_unnest), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_unnest *op = (cdb_exec_unnest *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_unnest), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &unnest_vtab;
         op->base.tag = CDB_QUERY_NODE_UNNEST;
         op->item_alias = node.as.unnest.item_alias;
@@ -2459,14 +2481,17 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->array_wire = node.as.unnest.array_expr_wire;
         op->array_len = (size_t)(end - node.as.unnest.array_expr_wire);
         st = build_exec_tree(cur, &node.as.unnest.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
 
     case CDB_QUERY_NODE_TRAVERSE: {
-        cdb_exec_traverse *op = (cdb_exec_traverse *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_traverse), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_traverse *op = (cdb_exec_traverse *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_traverse), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &traverse_vtab;
         op->base.tag = CDB_QUERY_NODE_TRAVERSE;
         op->link_type = node.as.traverse.link_type;
@@ -2475,14 +2500,17 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->min_hops = node.as.traverse.min_hops;
         op->max_hops = node.as.traverse.max_hops;
         st = build_exec_tree(cur, &node.as.traverse.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
 
     case CDB_QUERY_NODE_TEXT_SEARCH: {
-        cdb_exec_text_search *op = (cdb_exec_text_search *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_text_search), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_text_search *op = (cdb_exec_text_search *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_text_search), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &text_search_vtab;
         op->base.tag = CDB_QUERY_NODE_TEXT_SEARCH;
         op->mode = node.as.text_search.mode;
@@ -2490,14 +2518,17 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->query = node.as.text_search.query;
         op->query_len = node.as.text_search.query_len;
         st = build_exec_tree(cur, &node.as.text_search.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
 
     case CDB_QUERY_NODE_VECTOR_SEARCH: {
-        cdb_exec_vec_search *op = (cdb_exec_vec_search *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_vec_search), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_vec_search *op = (cdb_exec_vec_search *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_vec_search), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &vec_search_vtab;
         op->base.tag = CDB_QUERY_NODE_VECTOR_SEARCH;
         op->field = node.as.vector_search.field;
@@ -2507,7 +2538,8 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->near_wire = node.as.vector_search.near_wire;
         op->near_len = (size_t)(end - node.as.vector_search.near_wire);
         st = build_exec_tree(cur, &node.as.vector_search.input_wire, end, &op->input, depth + 1);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         *out_op = &op->base;
         return CDB_OK;
     }
@@ -2515,8 +2547,10 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
     case CDB_QUERY_NODE_HYBRID_RANK: {
         size_t i;
         const uint8_t *cur_wire;
-        cdb_exec_hybrid *op = (cdb_exec_hybrid *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_exec_hybrid), sizeof(void *));
-        if (op == NULL) return CDB_E_OUT_OF_BUDGET;
+        cdb_exec_hybrid *op = (cdb_exec_hybrid *)cdb_exec_arena_alloc(
+            &cur->arena, sizeof(cdb_exec_hybrid), sizeof(void *));
+        if (op == NULL)
+            return CDB_E_OUT_OF_BUDGET;
         op->base.vtab = &hybrid_vtab;
         op->base.tag = CDB_QUERY_NODE_HYBRID_RANK;
         op->fuse = node.as.hybrid_rank.fuse;
@@ -2527,7 +2561,8 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
             uint64_t w_val = 0;
             size_t w_len = 0;
             st = build_exec_tree(cur, &cur_wire, end, &op->branches[i], depth + 1);
-            if (st != CDB_OK) return st;
+            if (st != CDB_OK)
+                return st;
             if (cdb_varint_decode(cur_wire, (size_t)(end - cur_wire), &w_val, &w_len) != CDB_OK)
                 return CDB_E_MALFORMED;
             cur_wire += w_len;
@@ -2537,9 +2572,7 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         return CDB_OK;
     }
 
-    default:
-        (void)node_start;
-        return CDB_E_UNSUPPORTED;
+    default: (void)node_start; return CDB_E_UNSUPPORTED;
     }
 }
 
@@ -2548,8 +2581,8 @@ static cdb_status exec_open_in(cdb_exec_cursor *cur, cdb_db *db, const uint8_t *
                                size_t scratch_cap);
 
 cdb_status cdb_exec_open(cdb_exec_cursor *cur, cdb_db *db, const uint8_t *wire, size_t len,
-                         const cdb_eval_param *params, size_t n_params,
-                         uint8_t *scratch, size_t scratch_cap)
+                         const cdb_eval_param *params, size_t n_params, uint8_t *scratch,
+                         size_t scratch_cap)
 {
     cdb_status s;
     cdb_db_lock(db);
@@ -2667,7 +2700,8 @@ cdb_status cdb_exec_close(cdb_exec_cursor *cur)
 static int set_mock_scan_recursive(cdb_exec_op *op, const char *name, size_t name_len,
                                    const cdb_exec_row *rows, size_t n_rows)
 {
-    if (op == NULL) return 0;
+    if (op == NULL)
+        return 0;
     if (op->tag == CDB_QUERY_NODE_SCAN) {
         cdb_exec_scan *s = (cdb_exec_scan *)op;
         if (s->store_name_len == name_len && memcmp(s->store_name, name, name_len) == 0) {
@@ -2679,10 +2713,12 @@ static int set_mock_scan_recursive(cdb_exec_op *op, const char *name, size_t nam
         return 0;
     }
     if (op->tag == CDB_QUERY_NODE_FILTER) {
-        return set_mock_scan_recursive(((cdb_exec_filter *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_filter *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_PROJECT) {
-        return set_mock_scan_recursive(((cdb_exec_project *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_project *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_LIMIT) {
         return set_mock_scan_recursive(((cdb_exec_limit *)op)->input, name, name_len, rows, n_rows);
@@ -2691,31 +2727,39 @@ static int set_mock_scan_recursive(cdb_exec_op *op, const char *name, size_t nam
         return set_mock_scan_recursive(((cdb_exec_sort *)op)->input, name, name_len, rows, n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_AGGREGATE) {
-        return set_mock_scan_recursive(((cdb_exec_aggregate *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_aggregate *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_WINDOW) {
-        return set_mock_scan_recursive(((cdb_exec_window *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_window *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_UNNEST) {
-        return set_mock_scan_recursive(((cdb_exec_unnest *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_unnest *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_TRAVERSE) {
-        return set_mock_scan_recursive(((cdb_exec_traverse *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_traverse *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_TEXT_SEARCH) {
-        return set_mock_scan_recursive(((cdb_exec_text_search *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_text_search *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_VECTOR_SEARCH) {
-        return set_mock_scan_recursive(((cdb_exec_vec_search *)op)->input, name, name_len, rows, n_rows);
+        return set_mock_scan_recursive(((cdb_exec_vec_search *)op)->input, name, name_len, rows,
+                                       n_rows);
     }
     if (op->tag == CDB_QUERY_NODE_JOIN) {
         int r1 = set_mock_scan_recursive(((cdb_exec_join *)op)->left, name, name_len, rows, n_rows);
-        int r2 = set_mock_scan_recursive(((cdb_exec_join *)op)->right, name, name_len, rows, n_rows);
+        int r2 =
+            set_mock_scan_recursive(((cdb_exec_join *)op)->right, name, name_len, rows, n_rows);
         return r1 || r2;
     }
     if (op->tag == CDB_QUERY_NODE_ASOF_JOIN) {
         int r1 = set_mock_scan_recursive(((cdb_exec_asof *)op)->left, name, name_len, rows, n_rows);
-        int r2 = set_mock_scan_recursive(((cdb_exec_asof *)op)->right, name, name_len, rows, n_rows);
+        int r2 =
+            set_mock_scan_recursive(((cdb_exec_asof *)op)->right, name, name_len, rows, n_rows);
         return r1 || r2;
     }
     if (op->tag == CDB_QUERY_NODE_UNION) {
@@ -2723,7 +2767,8 @@ static int set_mock_scan_recursive(cdb_exec_op *op, const char *name, size_t nam
         size_t i;
         int any = 0;
         for (i = 0; i < u->count; i++) {
-            if (set_mock_scan_recursive(u->branches[i], name, name_len, rows, n_rows)) any = 1;
+            if (set_mock_scan_recursive(u->branches[i], name, name_len, rows, n_rows))
+                any = 1;
         }
         return any;
     }
@@ -2732,7 +2777,8 @@ static int set_mock_scan_recursive(cdb_exec_op *op, const char *name, size_t nam
         size_t i;
         int any = 0;
         for (i = 0; i < h->count; i++) {
-            if (set_mock_scan_recursive(h->branches[i], name, name_len, rows, n_rows)) any = 1;
+            if (set_mock_scan_recursive(h->branches[i], name, name_len, rows, n_rows))
+                any = 1;
         }
         return any;
     }

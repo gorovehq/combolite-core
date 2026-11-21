@@ -7,9 +7,11 @@
 #include "cdb_db.h"
 #include <string.h>
 
-void cdb_trigger_registry_init(cdb_trigger_registry *reg, cdb_worker_pool *pool, uint64_t cascade_threshold)
+void cdb_trigger_registry_init(cdb_trigger_registry *reg, cdb_worker_pool *pool,
+                               uint64_t cascade_threshold)
 {
-    if (reg == NULL) return;
+    if (reg == NULL)
+        return;
     memset(reg, 0, sizeof(*reg));
     reg->pool = pool;
     reg->cascade_threshold = cascade_threshold ? cascade_threshold : 100u;
@@ -17,9 +19,8 @@ void cdb_trigger_registry_init(cdb_trigger_registry *reg, cdb_worker_pool *pool,
 }
 
 cdb_status cdb_trigger_register(cdb_trigger_registry *reg, const char *name, size_t name_len,
-                                uint64_t store_id, uint8_t events,
-                                const char *proc_name, size_t proc_len,
-                                uint8_t max_depth)
+                                uint64_t store_id, uint8_t events, const char *proc_name,
+                                size_t proc_len, uint8_t max_depth)
 {
     if (reg == NULL || name == NULL || name_len == 0 || proc_name == NULL || proc_len == 0)
         return CDB_E_INVALID_ARG;
@@ -30,8 +31,8 @@ cdb_status cdb_trigger_register(cdb_trigger_registry *reg, const char *name, siz
 
     /* Check for duplicate name */
     for (size_t i = 0; i < reg->n_triggers; i++) {
-        if (reg->triggers[i].name_len == name_len &&
-            memcmp(reg->triggers[i].name, name, name_len) == 0) {
+        if (reg->triggers[i].name_len == name_len
+            && memcmp(reg->triggers[i].name, name, name_len) == 0) {
             return CDB_E_EXISTS;
         }
     }
@@ -56,8 +57,8 @@ cdb_status cdb_trigger_unregister(cdb_trigger_registry *reg, const char *name, s
         return CDB_E_INVALID_ARG;
 
     for (size_t i = 0; i < reg->n_triggers; i++) {
-        if (reg->triggers[i].name_len == name_len &&
-            memcmp(reg->triggers[i].name, name, name_len) == 0) {
+        if (reg->triggers[i].name_len == name_len
+            && memcmp(reg->triggers[i].name, name, name_len) == 0) {
             /* Shift down remaining entries */
             for (size_t j = i + 1; j < reg->n_triggers; j++) {
                 reg->triggers[j - 1] = reg->triggers[j];
@@ -70,16 +71,16 @@ cdb_status cdb_trigger_unregister(cdb_trigger_registry *reg, const char *name, s
     return CDB_E_NOT_FOUND;
 }
 
-cdb_status cdb_trigger_dispatch(cdb_trigger_registry *reg, cdb_db *db,
-                                uint64_t store_id, uint8_t event,
-                                const cdb_value *old_val, const cdb_value *new_val,
+cdb_status cdb_trigger_dispatch(cdb_trigger_registry *reg, cdb_db *db, uint64_t store_id,
+                                uint8_t event, const cdb_value *old_val, const cdb_value *new_val,
                                 unsigned current_depth)
 {
     (void)db;
     (void)old_val;
     (void)new_val;
 
-    if (reg == NULL) return CDB_E_INVALID_ARG;
+    if (reg == NULL)
+        return CDB_E_INVALID_ARG;
 
     for (size_t i = 0; i < reg->n_triggers; i++) {
         cdb_trigger_def *t = &reg->triggers[i];
@@ -101,7 +102,8 @@ cdb_status cdb_trigger_dispatch(cdb_trigger_registry *reg, cdb_db *db,
 }
 
 cdb_status cdb_schedule_register(cdb_trigger_registry *reg, const char *name, size_t name_len,
-                                 uint64_t interval_ns, void (*task_fn)(cdb_db *db, void *arg), void *arg)
+                                 uint64_t interval_ns, void (*task_fn)(cdb_db *db, void *arg),
+                                 void *arg)
 {
     if (reg == NULL || name == NULL || name_len == 0 || task_fn == NULL)
         return CDB_E_INVALID_ARG;
@@ -124,7 +126,8 @@ cdb_status cdb_schedule_register(cdb_trigger_registry *reg, const char *name, si
 
 cdb_status cdb_schedule_tick(cdb_trigger_registry *reg, cdb_db *db, int64_t now_ns)
 {
-    if (reg == NULL) return CDB_E_INVALID_ARG;
+    if (reg == NULL)
+        return CDB_E_INVALID_ARG;
 
     for (size_t i = 0; i < reg->n_schedules; i++) {
         cdb_schedule_def *s = &reg->schedules[i];

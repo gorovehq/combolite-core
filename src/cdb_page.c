@@ -112,9 +112,8 @@ static cdb_status protection(cdb_page_format fmt, unsigned aead_alg, const cdb_p
 }
 
 cdb_status cdb_page_seal_crypto(uint8_t *page, size_t page_size, cdb_page_format fmt,
-                               cdb_byte_order order, unsigned checksum_alg,
-                               unsigned aead_alg, const uint8_t *key, uint32_t track,
-                               const cdb_page_header *h)
+                                cdb_byte_order order, unsigned checksum_alg, unsigned aead_alg,
+                                const uint8_t *key, uint32_t track, const cdb_page_header *h)
 {
     size_t hsize = cdb_page_header_size(fmt);
     size_t ssize = cdb_page_slot_size(fmt);
@@ -128,7 +127,8 @@ cdb_status cdb_page_seal_crypto(uint8_t *page, size_t page_size, cdb_page_format
         return s;
     if ((s = protection(fmt, aead_alg, h, &encrypted)) != CDB_OK)
         return s;
-    if (encrypted != (h->salt_index != 0)) /* exactly the encrypted pages name a salt (spec 14.2.8) */
+    if (encrypted
+        != (h->salt_index != 0)) /* exactly the encrypted pages name a salt (spec 14.2.8) */
         return CDB_E_INVALID_ARG;
     if (h->payload_len > cdb_page_capacity(fmt, page_size))
         return CDB_E_OVERFLOW;
@@ -190,8 +190,8 @@ cdb_status cdb_page_seal_crypto(uint8_t *page, size_t page_size, cdb_page_format
         if (key == NULL)
             return CDB_E_INVALID_ARG;
         cdb_crypto_make_nonce(track, h->write_seq, nonce);
-        s = cdb_crypto_aead_encrypt(aead_alg, key, nonce, page, hsize,
-                                    page + hsize, cap, page + hsize, trailer);
+        s = cdb_crypto_aead_encrypt(aead_alg, key, nonce, page, hsize, page + hsize, cap,
+                                    page + hsize, trailer);
         if (s != CDB_OK)
             return s;
     } else if (h->flags & CDB_PAGE_FLAG_TAMPER_EVIDENT) {
@@ -211,10 +211,11 @@ cdb_status cdb_page_seal_crypto(uint8_t *page, size_t page_size, cdb_page_format
     return CDB_OK;
 }
 
-cdb_status cdb_page_seal(uint8_t *page, size_t page_size, cdb_page_format fmt,
-                         cdb_byte_order order, unsigned checksum_alg, const cdb_page_header *h)
+cdb_status cdb_page_seal(uint8_t *page, size_t page_size, cdb_page_format fmt, cdb_byte_order order,
+                         unsigned checksum_alg, const cdb_page_header *h)
 {
-    return cdb_page_seal_crypto(page, page_size, fmt, order, checksum_alg, CDB_AEAD_NONE, NULL, 0, h);
+    return cdb_page_seal_crypto(page, page_size, fmt, order, checksum_alg, CDB_AEAD_NONE, NULL, 0,
+                                h);
 }
 
 cdb_status cdb_page_peek(const uint8_t *page, size_t page_size, cdb_page_format fmt,
@@ -224,7 +225,8 @@ cdb_status cdb_page_peek(const uint8_t *page, size_t page_size, cdb_page_format 
     size_t ssize = cdb_page_slot_size(fmt);
     uint32_t disk_len;
 
-    if (cdb_page_capacity(fmt, page_size) == 0 || (order != CDB_ORDER_LITTLE && order != CDB_ORDER_BIG))
+    if (cdb_page_capacity(fmt, page_size) == 0
+        || (order != CDB_ORDER_LITTLE && order != CDB_ORDER_BIG))
         return CDB_E_INVALID_ARG;
     if (page[0] != MARKER_0 || page[1] != MARKER_1)
         return CDB_E_CORRUPT;
@@ -268,9 +270,8 @@ cdb_status cdb_page_peek(const uint8_t *page, size_t page_size, cdb_page_format 
 }
 
 cdb_status cdb_page_open_crypto(uint8_t *page, size_t page_size, cdb_page_format fmt,
-                               cdb_byte_order order, unsigned checksum_alg,
-                               unsigned aead_alg, const uint8_t *key, uint32_t track,
-                               cdb_page_header *h)
+                                cdb_byte_order order, unsigned checksum_alg, unsigned aead_alg,
+                                const uint8_t *key, uint32_t track, cdb_page_header *h)
 {
     size_t hsize = cdb_page_header_size(fmt);
     size_t ssize = cdb_page_slot_size(fmt);
@@ -288,7 +289,8 @@ cdb_status cdb_page_open_crypto(uint8_t *page, size_t page_size, cdb_page_format
 
     if ((s = protection(fmt, aead_alg, h, &encrypted)) != CDB_OK)
         return s;
-    if (encrypted != (h->salt_index != 0)) /* exactly the encrypted pages name a salt (spec 14.2.8) */
+    if (encrypted
+        != (h->salt_index != 0)) /* exactly the encrypted pages name a salt (spec 14.2.8) */
         return CDB_E_MALFORMED;
 
     /* Integrity and Decryption verification */
@@ -300,8 +302,8 @@ cdb_status cdb_page_open_crypto(uint8_t *page, size_t page_size, cdb_page_format
         if (h->store_id != 0) /* an encrypted page hides its store (spec 14.2.7) */
             return CDB_E_MALFORMED;
         cdb_crypto_make_nonce(track, h->write_seq, nonce);
-        s = cdb_crypto_aead_decrypt(aead_alg, key, nonce, page, hsize,
-                                    page + hsize, cap, trailer, page + hsize);
+        s = cdb_crypto_aead_decrypt(aead_alg, key, nonce, page, hsize, page + hsize, cap, trailer,
+                                    page + hsize);
         if (s != CDB_OK)
             return CDB_E_CORRUPT;
     } else if (h->flags & CDB_PAGE_FLAG_TAMPER_EVIDENT) {

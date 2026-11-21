@@ -27,19 +27,19 @@
 /* Codec registry (spec 15.1): algorithms, not containers. */
 #define CDB_CODEC_NONE 0u
 #define CDB_CODEC_LZMA2 1u
-#define CDB_CODEC_DEFLATE 2u   /* reserved */
-#define CDB_CODEC_ZSTD 3u      /* reserved */
-#define CDB_CODEC_LZ4 4u       /* reserved */
-#define CDB_CODEC_BZIP2 5u     /* reserved */
-#define CDB_CODEC_LZMA 6u      /* reserved */
-#define CDB_CODEC_BROTLI 7u    /* reserved */
-#define CDB_CODEC_SNAPPY 8u    /* reserved */
+#define CDB_CODEC_DEFLATE 2u /* reserved */
+#define CDB_CODEC_ZSTD 3u    /* reserved */
+#define CDB_CODEC_LZ4 4u     /* reserved */
+#define CDB_CODEC_BZIP2 5u   /* reserved */
+#define CDB_CODEC_LZMA 6u    /* reserved */
+#define CDB_CODEC_BROTLI 7u  /* reserved */
+#define CDB_CODEC_SNAPPY 8u  /* reserved */
 
 typedef struct cdb_codec_mem {
-    const cdb_env *env;  /* its alloc/free are used when both are set */
-    uint8_t *work;       /* otherwise: scratch memory, reset per call */
+    const cdb_env *env; /* its alloc/free are used when both are set */
+    uint8_t *work;      /* otherwise: scratch memory, reset per call */
     size_t work_size;
-    size_t used;         /* scratch in use during a call */
+    size_t used; /* scratch in use during a call */
 } cdb_codec_mem;
 
 /* Whether this build has the codec. */
@@ -62,8 +62,8 @@ int cdb_codec_keeps(size_t plain, size_t packed);
 
 /* Compresses in into out in the spec 15.2 form. CDB_E_BUFFER_TOO_SMALL if
  * out cannot hold it (size out with cdb_codec_bound). */
-cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len, void *out,
-                              size_t cap, size_t *out_len);
+cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len,
+                              void *out, size_t cap, size_t *out_len);
 
 /* The stated uncompressed length of a compressed form, without decoding. */
 cdb_status cdb_codec_length(const void *in, size_t len, size_t *plain);
@@ -71,7 +71,7 @@ cdb_status cdb_codec_length(const void *in, size_t len, size_t *plain);
 /* Decompresses a spec 15.2 form into out; *out_len is the stated length.
  * CDB_E_BUFFER_TOO_SMALL if it does not fit (with *out_len set),
  * CDB_E_CORRUPT if the stream is damaged or its length differs. */
-cdb_status cdb_codec_decompress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len, void *out,
-                                size_t cap, size_t *out_len);
+cdb_status cdb_codec_decompress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len,
+                                void *out, size_t cap, size_t *out_len);
 
 #endif

@@ -8,8 +8,8 @@
 #include <lzma.h>
 #endif
 
-#define PRESET 1u               /* low preset (spec 15.4) */
-#define DICT_MIN 4096u          /* LZMA2's smallest dictionary */
+#define PRESET 1u      /* low preset (spec 15.4) */
+#define DICT_MIN 4096u /* LZMA2's smallest dictionary */
 #define WORK_ALIGN 16u
 
 int cdb_codec_available(unsigned codec)
@@ -42,7 +42,8 @@ cdb_status cdb_codec_length(const void *in, size_t len, size_t *plain)
 {
     uint64_t v;
     size_t n;
-    if (in == NULL || cdb_varint_decode((const uint8_t *)in, len, &v, &n) != CDB_OK || v > (uint64_t)SIZE_MAX)
+    if (in == NULL || cdb_varint_decode((const uint8_t *)in, len, &v, &n) != CDB_OK
+        || v > (uint64_t)SIZE_MAX)
         return CDB_E_CORRUPT;
     *plain = (size_t)v;
     return CDB_OK;
@@ -122,8 +123,8 @@ size_t cdb_codec_work_size(unsigned codec, size_t max_len)
     return (size_t)(enc > dec ? enc : dec) + 64u * WORK_ALIGN;
 }
 
-cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len, void *out,
-                              size_t cap, size_t *out_len)
+cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len,
+                              void *out, size_t cap, size_t *out_len)
 {
     lzma_options_lzma opt;
     lzma_filter f[2];
@@ -158,8 +159,8 @@ cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in
     return CDB_OK;
 }
 
-cdb_status cdb_codec_decompress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len, void *out,
-                                size_t cap, size_t *out_len)
+cdb_status cdb_codec_decompress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len,
+                                void *out, size_t cap, size_t *out_len)
 {
     const uint8_t *p = (const uint8_t *)in;
     lzma_options_lzma opt;
@@ -218,8 +219,8 @@ size_t cdb_codec_work_size(unsigned codec, size_t max_len)
     return 0;
 }
 
-cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len, void *out,
-                              size_t cap, size_t *out_len)
+cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len,
+                              void *out, size_t cap, size_t *out_len)
 {
     (void)mem;
     (void)codec;
@@ -231,8 +232,8 @@ cdb_status cdb_codec_compress(cdb_codec_mem *mem, unsigned codec, const void *in
     return CDB_E_UNSUPPORTED;
 }
 
-cdb_status cdb_codec_decompress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len, void *out,
-                                size_t cap, size_t *out_len)
+cdb_status cdb_codec_decompress(cdb_codec_mem *mem, unsigned codec, const void *in, size_t len,
+                                void *out, size_t cap, size_t *out_len)
 {
     (void)mem;
     (void)codec;

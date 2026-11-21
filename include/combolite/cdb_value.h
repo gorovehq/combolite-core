@@ -99,12 +99,12 @@ typedef enum cdb_decimal_mode {
 
 /* One open array or object (internal to the writer). */
 typedef struct cdb_value_frame {
-    uint8_t kind;          /* CDB_TAG_ARRAY or CDB_TAG_OBJECT */
-    uint8_t expect_value;  /* object: a field ID was written, its value is due */
-    size_t start;          /* offset of the container's tag byte */
+    uint8_t kind;         /* CDB_TAG_ARRAY or CDB_TAG_OBJECT */
+    uint8_t expect_value; /* object: a field ID was written, its value is due */
+    size_t start;         /* offset of the container's tag byte */
     uint64_t count;
     uint64_t last_field;
-    size_t scratch_base;   /* scratch_top when the container began */
+    size_t scratch_base; /* scratch_top when the container began */
 } cdb_value_frame;
 
 /* Containers are built in place. While an object is open, its field
@@ -125,8 +125,8 @@ typedef struct cdb_value_writer {
 
 /* Starts a writer over buf (cap bytes). order is the byte order of the file
  * the value is for; decimal_mode limits which decimals are accepted. */
-void cdb_value_writer_init(cdb_value_writer *w, uint8_t *buf, size_t cap,
-                           cdb_byte_order order, cdb_decimal_mode decimal_mode);
+void cdb_value_writer_init(cdb_value_writer *w, uint8_t *buf, size_t cap, cdb_byte_order order,
+                           cdb_decimal_mode decimal_mode);
 
 /* Number of encoded bytes once the root value is complete. */
 size_t cdb_value_writer_len(const cdb_value_writer *w);
@@ -137,19 +137,20 @@ cdb_status cdb_value_write_int(cdb_value_writer *w, int64_t value);
 /* NaN is stored as the canonical NaN and -0.0 as 0.0 (spec 14.6.5). */
 cdb_status cdb_value_write_f64(cdb_value_writer *w, double value);
 cdb_status cdb_value_write_f32(cdb_value_writer *w, float value);
-cdb_status cdb_value_write_timestamp(cdb_value_writer *w, cdb_ts_precision precision, int64_t ticks);
+cdb_status cdb_value_write_timestamp(cdb_value_writer *w, cdb_ts_precision precision,
+                                     int64_t ticks);
 cdb_status cdb_value_write_ref(cdb_value_writer *w, uint64_t store_id, uint64_t entry_id);
 /* Rejects text that is not well-formed UTF-8. */
 cdb_status cdb_value_write_string(cdb_value_writer *w, const char *utf8, size_t len);
 cdb_status cdb_value_write_binary(cdb_value_writer *w, const void *data, size_t len);
 /* unscaled_be: the unscaled integer in shortest big-endian two's complement. */
-cdb_status cdb_value_write_decimal(cdb_value_writer *w, uint64_t scale,
-                                   const uint8_t *unscaled_be, size_t unscaled_len);
+cdb_status cdb_value_write_decimal(cdb_value_writer *w, uint64_t scale, const uint8_t *unscaled_be,
+                                   size_t unscaled_len);
 cdb_status cdb_value_write_decimal_i64(cdb_value_writer *w, uint64_t scale, int64_t unscaled);
 /* elems points to host-order elements: float for F32, uint16_t bit patterns
  * for F16/BF16, int8_t for I8, and packed bits (LSB first) for BINARY. */
-cdb_status cdb_value_write_vector(cdb_value_writer *w, cdb_vector_elem elem,
-                                  uint64_t dims, const void *elems);
+cdb_status cdb_value_write_vector(cdb_value_writer *w, cdb_vector_elem elem, uint64_t dims,
+                                  const void *elems);
 
 /* data: the elements already in the writer's byte order and canonical form,
  * as found in an encoded vector (cdb_value.as.vector.data). */
@@ -189,18 +190,39 @@ typedef struct cdb_value {
         int64_t i64;
         double f64;
         float f32;
-        struct { cdb_ts_precision precision; int64_t ticks; } ts;
-        struct { uint64_t store_id; uint64_t entry_id; } ref;
-        struct { uint64_t scale; const uint8_t *unscaled; size_t unscaled_len; } decimal;
-        struct { uint64_t count; const uint8_t *items; size_t items_len; } array;
+        struct {
+            cdb_ts_precision precision;
+            int64_t ticks;
+        } ts;
+        struct {
+            uint64_t store_id;
+            uint64_t entry_id;
+        } ref;
+        struct {
+            uint64_t scale;
+            const uint8_t *unscaled;
+            size_t unscaled_len;
+        } decimal;
+        struct {
+            uint64_t count;
+            const uint8_t *items;
+            size_t items_len;
+        } array;
         struct {
             uint64_t count;
             uint8_t id_width;  /* bytes per directory field ID: 1, 2, 4 or 8 */
             uint8_t off_width; /* bytes per directory value offset */
-            const uint8_t *directory; size_t directory_len;
-            const uint8_t *values; size_t values_len;
+            const uint8_t *directory;
+            size_t directory_len;
+            const uint8_t *values;
+            size_t values_len;
         } object;
-        struct { cdb_vector_elem elem; uint64_t dims; const uint8_t *data; size_t data_len; } vector;
+        struct {
+            cdb_vector_elem elem;
+            uint64_t dims;
+            const uint8_t *data;
+            size_t data_len;
+        } vector;
         cdb_blob_ref blob;
     } as;
 } cdb_value;
@@ -227,16 +249,18 @@ cdb_status cdb_value_array_iter(const cdb_value *array, cdb_byte_order order, cd
 cdb_status cdb_value_array_next(cdb_value_iter *it, cdb_value *item, int *done);
 
 cdb_status cdb_value_object_iter(const cdb_value *object, cdb_byte_order order, cdb_value_iter *it);
-cdb_status cdb_value_object_next(cdb_value_iter *it, uint64_t *field_id, cdb_value *value, int *done);
+cdb_status cdb_value_object_next(cdb_value_iter *it, uint64_t *field_id, cdb_value *value,
+                                 int *done);
 /* Binary-searches the fixed-width directory; never decodes other values.
  * *found is 0 when the field is absent. */
-cdb_status cdb_value_object_get(const cdb_value *object, cdb_byte_order order,
-                                uint64_t field_id, cdb_value *value, int *found);
+cdb_status cdb_value_object_get(const cdb_value *object, cdb_byte_order order, uint64_t field_id,
+                                cdb_value *value, int *found);
 
 /* Element bytes of a vector, converted to host order where needed.
  * Only F32 vectors are supported; another element type, or an index past
  * the last element, is CDB_E_INVALID_ARG. */
-cdb_status cdb_value_vector_f32(const cdb_value *vec, cdb_byte_order order, uint64_t index, float *out);
+cdb_status cdb_value_vector_f32(const cdb_value *vec, cdb_byte_order order, uint64_t index,
+                                float *out);
 
 #define CDB_VALIDATE_ALLOW_UNKNOWN 0x1u /* accept, and skip, unknown variable-size tags */
 

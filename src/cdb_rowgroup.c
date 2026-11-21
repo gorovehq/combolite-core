@@ -12,11 +12,12 @@
 #define BIG CDB_ORDER_BIG
 #define ALIGN 16u
 #define HDR_FIXED 18u
-#define REF_MAX (8u + 1u + 1u + CDB_RG_ADDR_MAX + 4u + 4u + 1u + CDB_RG_STAT_MAX + 1u + CDB_RG_STAT_MAX)
+#define REF_MAX \
+    (8u + 1u + 1u + CDB_RG_ADDR_MAX + 4u + 4u + 1u + CDB_RG_STAT_MAX + 1u + CDB_RG_STAT_MAX)
 #define HDR_MAX (HDR_FIXED + (1u + CDB_TABLE_MAX_COLUMNS) * REF_MAX)
 #define ROW_EXTRA (32u + CDB_TABLE_MAX_COLUMNS * 18u) /* an object's bytes past its values */
-#define ID_ITEM_MAX (1u + CDB_VARINT_MAX_LEN)          /* an entry ID as an int value */
-#define KEY_SMALL 24u                                  /* key of a fixed-size value */
+#define ID_ITEM_MAX (1u + CDB_VARINT_MAX_LEN)         /* an entry ID as an int value */
+#define KEY_SMALL 24u                                 /* key of a fixed-size value */
 
 /* -------------------------------------------------------- sizes */
 
@@ -37,9 +38,9 @@ static size_t chunk_cap_for(uint32_t rows, size_t cap)
 
 size_t cdb_rg_work_size(size_t page_size, uint32_t rows, size_t cap, int with_codec)
 {
-    size_t n = up(sizeof(cdb_rg_header)) + up(HDR_MAX) + up((size_t)rows * 8u) + up(bm_bytes(rows)) + up(cap)
-             + up(cdb_colenc_scratch_words(rows) * 8u) + up(cap + ROW_EXTRA) + up(chunk_cap_for(rows, cap))
-             + up(page_size);
+    size_t n = up(sizeof(cdb_rg_header)) + up(HDR_MAX) + up((size_t)rows * 8u) + up(bm_bytes(rows))
+               + up(cap) + up(cdb_colenc_scratch_words(rows) * 8u) + up(cap + ROW_EXTRA)
+               + up(chunk_cap_for(rows, cap)) + up(page_size);
     if (with_codec)
         n += cdb_codec_work_size(CDB_CODEC_LZMA2, cap);
     return n + ALIGN; /* the area's start may need aligning */
@@ -50,8 +51,8 @@ static int has_alloc(const cdb_db *db)
     return db->env.ops != NULL && db->env.ops->alloc != NULL && db->env.ops->free != NULL;
 }
 
-cdb_status cdb_rg_init(cdb_rg *g, cdb_db *db, uint64_t store, cdb_index *groups, uint32_t rows, size_t cap,
-                       uint8_t *work, size_t work_size)
+cdb_status cdb_rg_init(cdb_rg *g, cdb_db *db, uint64_t store, cdb_index *groups, uint32_t rows,
+                       size_t cap, uint8_t *work, size_t work_size)
 {
     size_t page = db->pager.page_size, skip, end;
     uint8_t *p;
@@ -105,14 +106,14 @@ cdb_status cdb_rg_init(cdb_rg *g, cdb_db *db, uint64_t store, cdb_index *groups,
 static int col_tag_ok(uint8_t tag)
 {
     return tag == CDB_TAG_FALSE || (tag >= CDB_TAG_INT && tag <= CDB_TAG_REF)
-        || (tag >= CDB_TAG_STRING && tag <= CDB_TAG_VECTOR);
+           || (tag >= CDB_TAG_STRING && tag <= CDB_TAG_VECTOR);
 }
 
 /* Types whose values are ordered (they have keys, cdb_key.h). */
 static int orderable(uint8_t tag)
 {
-    return tag == CDB_TAG_FALSE || (tag >= CDB_TAG_INT && tag <= CDB_TAG_REF) || tag == CDB_TAG_STRING
-        || tag == CDB_TAG_BINARY;
+    return tag == CDB_TAG_FALSE || (tag >= CDB_TAG_INT && tag <= CDB_TAG_REF)
+           || tag == CDB_TAG_STRING || tag == CDB_TAG_BINARY;
 }
 
 static int of_column(uint8_t tag, const cdb_value *v)
@@ -139,18 +140,21 @@ static cdb_status small_key(const cdb_value *v, uint8_t *k, size_t *klen)
 
 /* Orders two values of one orderable column the way their index keys
  * would (strings and binaries: bytes, shorter first on a tie). */
-static cdb_status compare(cdb_byte_order o, const uint8_t *a, size_t al, const uint8_t *b, size_t bl, int *out)
+static cdb_status compare(cdb_byte_order o, const uint8_t *a, size_t al, const uint8_t *b,
+                          size_t bl, int *out)
 {
     cdb_value va, vb;
     uint8_t ka[KEY_SMALL], kb[KEY_SMALL];
     size_t kal, kbl;
     cdb_status s;
-    if ((s = cdb_value_read(a, al, o, &va)) != CDB_OK || (s = cdb_value_read(b, bl, o, &vb)) != CDB_OK)
+    if ((s = cdb_value_read(a, al, o, &va)) != CDB_OK
+        || (s = cdb_value_read(b, bl, o, &vb)) != CDB_OK)
         return s;
     if (va.type == CDB_TYPE_STRING || va.type == CDB_TYPE_BINARY) {
         size_t n = va.payload_len < vb.payload_len ? va.payload_len : vb.payload_len;
         int c = n ? memcmp(va.payload, vb.payload, n) : 0;
-        *out = c != 0 ? c : (va.payload_len < vb.payload_len ? -1 : va.payload_len > vb.payload_len);
+        *out =
+            c != 0 ? c : (va.payload_len < vb.payload_len ? -1 : va.payload_len > vb.payload_len);
         return CDB_OK;
     }
     if ((s = small_key(&va, ka, &kal)) != CDB_OK || (s = small_key(&vb, kb, &kbl)) != CDB_OK)
@@ -256,8 +260,8 @@ static cdb_status hdr_get(cdb_rg *g, const uint8_t *p, size_t len, uint64_t last
     h->rows = cdb_load_u32(p + 8, BIG);
     h->schema = cdb_load_u32(p + 12, BIG);
     h->ncols = cdb_load_u16(p + 16, BIG);
-    if (h->rows == 0 || h->rows > CDB_RG_ROWS_MAX || h->first > last || last - h->first < h->rows - 1u
-        || h->ncols > CDB_TABLE_MAX_COLUMNS)
+    if (h->rows == 0 || h->rows > CDB_RG_ROWS_MAX || h->first > last
+        || last - h->first < h->rows - 1u || h->ncols > CDB_TABLE_MAX_COLUMNS)
         return CDB_E_CORRUPT;
     if ((s = ref_get(p, len, &pos, &h->ids)) != CDB_OK)
         return s;
@@ -269,11 +273,12 @@ static cdb_status hdr_get(cdb_rg *g, const uint8_t *p, size_t len, uint64_t last
         int c;
         if ((s = ref_get(p, len, &pos, r)) != CDB_OK)
             return s;
-        if (r->field_id == 0 || (i > 0 && r->field_id <= h->cols[i - 1u].field_id) || !col_tag_ok(r->tag)
-            || r->nulls > h->rows || r->stored < 2u)
+        if (r->field_id == 0 || (i > 0 && r->field_id <= h->cols[i - 1u].field_id)
+            || !col_tag_ok(r->tag) || r->nulls > h->rows || r->stored < 2u)
             return CDB_E_CORRUPT;
         /* Statistics come in pairs, only for ordered types with values. */
-        if ((r->min_len == 0) != (r->max_len == 0) || (r->min_len && (!orderable(r->tag) || r->nulls == h->rows)))
+        if ((r->min_len == 0) != (r->max_len == 0)
+            || (r->min_len && (!orderable(r->tag) || r->nulls == h->rows)))
             return CDB_E_CORRUPT;
         if (r->min_len) {
             if ((s = stat_ok(o, r->tag, r->min, r->min_len)) != CDB_OK
@@ -299,7 +304,8 @@ cdb_status cdb_rg_load(cdb_rg *g, uint64_t last, int *found)
     uint8_t k[8];
     size_t vlen;
     cdb_status s;
-    if ((s = cdb_index_get(g->groups, k, gkey(k, last), g->hbytes, HDR_MAX, &vlen, found)) != CDB_OK)
+    if ((s = cdb_index_get(g->groups, k, gkey(k, last), g->hbytes, HDR_MAX, &vlen, found))
+        != CDB_OK)
         return s == CDB_E_BUFFER_TOO_SMALL ? CDB_E_CORRUPT : s;
     if (!*found)
         return CDB_OK;
@@ -343,13 +349,15 @@ static cdb_status put_chunk(cdb_rg *g, uint64_t last, cdb_rg_ref *r, size_t clen
     r->stored = (uint32_t)clen;
     if (cdb_nib_fits(g->db, clen)) {
         okey_of(ok, last, r->field_id);
-        return cdb_nib_put(g->db, g->store, CDB_NIB_KIND_COLCHUNK, ok, sizeof ok, g->chunk, clen, &r->addr);
+        return cdb_nib_put(g->db, g->store, CDB_NIB_KIND_COLCHUNK, ok, sizeof ok, g->chunk, clen,
+                           &r->addr);
     }
     {
         uint8_t tokey[17];
         tokey[0] = CDB_OVERFLOW_OWNER_COL_CHUNK;
         okey_of(tokey + 1, last, r->field_id);
-        return cdb_overflow_write_db(g->db, &g->db->pager, g->store, g->chunk, clen, g->page, tokey, sizeof tokey, &r->addr);
+        return cdb_overflow_write_db(g->db, &g->db->pager, g->store, g->chunk, clen, g->page, tokey,
+                                     sizeof tokey, &r->addr);
     }
 }
 
@@ -362,13 +370,15 @@ static cdb_status free_chunk(cdb_rg *g, const cdb_rg_ref *r)
 
 /* Encodes the vl bytes of present values in g->vals, with g->bitmap when
  * there are nulls, into a chunk in g->chunk. */
-static cdb_status make_chunk(cdb_rg *g, uint8_t tag, uint32_t rows, uint32_t nulls, size_t vl, size_t *clen)
+static cdb_status make_chunk(cdb_rg *g, uint8_t tag, uint32_t rows, uint32_t nulls, size_t vl,
+                             size_t *clen)
 {
     size_t bm = nulls ? bm_bytes(rows) : 0u, elen, plen;
     unsigned e;
     cdb_status s;
-    if ((s = cdb_colenc_encode(tag, g->db->pager.order, DM, g->vals, vl, (size_t)(rows - nulls), g->scratch,
-                               g->scratch_words, g->enc, g->enc_cap, &e, &elen)) != CDB_OK)
+    if ((s = cdb_colenc_encode(tag, g->db->pager.order, DM, g->vals, vl, (size_t)(rows - nulls),
+                               g->scratch, g->scratch_words, g->enc, g->enc_cap, &e, &elen))
+        != CDB_OK)
         return s;
     g->chunk[0] = (uint8_t)e;
     g->chunk[1] = (uint8_t)CDB_CODEC_NONE;
@@ -377,7 +387,8 @@ static cdb_status make_chunk(cdb_rg *g, uint8_t tag, uint32_t rows, uint32_t nul
     if (elen > 0 && cdb_codec_available(CDB_CODEC_LZMA2)
         && cdb_codec_worth_trying(elen, g->db->pager.page_size, 1)) {
         if ((s = cdb_codec_compress(&g->codec, CDB_CODEC_LZMA2, g->enc, elen, g->chunk + 2 + bm,
-                                    g->chunk_cap - 2u - bm, &plen)) != CDB_OK)
+                                    g->chunk_cap - 2u - bm, &plen))
+            != CDB_OK)
             return s;
         if (cdb_codec_keeps(elen, plen)) {
             g->chunk[1] = (uint8_t)CDB_CODEC_LZMA2;
@@ -392,8 +403,8 @@ static cdb_status make_chunk(cdb_rg *g, uint8_t tag, uint32_t rows, uint32_t nul
 
 /* Reads a chunk into g->chunk and checks its frame; *data and *dlen are its
  * encoded values (in g->chunk, or decompressed into g->enc). */
-static cdb_status load_chunk(cdb_rg *g, const cdb_rg_ref *r, uint32_t rows, unsigned *enc, const uint8_t **data,
-                             size_t *dlen)
+static cdb_status load_chunk(cdb_rg *g, const cdb_rg_ref *r, uint32_t rows, unsigned *enc,
+                             const uint8_t **data, size_t *dlen)
 {
     size_t bm = r->nulls ? bm_bytes(rows) : 0u, len, plain, i;
     uint32_t count = 0;
@@ -409,7 +420,9 @@ static cdb_status load_chunk(cdb_rg *g, const cdb_rg_ref *r, uint32_t rows, unsi
             return s == CDB_E_BUFFER_TOO_SMALL ? CDB_E_CORRUPT : s;
         if (len != r->stored)
             return CDB_E_CORRUPT;
-    } else if ((s = cdb_overflow_read_db(g->db, &g->db->pager, r->addr, g->store, g->chunk, r->stored, g->page)) != CDB_OK) {
+    } else if ((s = cdb_overflow_read_db(g->db, &g->db->pager, r->addr, g->store, g->chunk,
+                                         r->stored, g->page))
+               != CDB_OK) {
         return s;
     }
     if (g->chunk[0] > CDB_COLENC_BITPACK)
@@ -441,7 +454,8 @@ static cdb_status load_chunk(cdb_rg *g, const cdb_rg_ref *r, uint32_t rows, unsi
         return CDB_E_CORRUPT;
     if (!cdb_codec_keeps(plain, len))
         return CDB_E_NOT_CANONICAL;
-    if ((s = cdb_codec_decompress(&g->codec, CDB_CODEC_LZMA2, pl, len, g->enc, g->enc_cap, dlen)) != CDB_OK)
+    if ((s = cdb_codec_decompress(&g->codec, CDB_CODEC_LZMA2, pl, len, g->enc, g->enc_cap, dlen))
+        != CDB_OK)
         return s;
     *data = g->enc;
     return CDB_OK;
@@ -469,8 +483,8 @@ cdb_status cdb_rg_column_open(cdb_rg *g, int i, cdb_rg_column *c)
                                   (size_t)(g->hdr->rows - r->nulls), g->scratch, g->scratch_words);
 }
 
-cdb_status cdb_rg_column_next(cdb_rg_column *c, uint8_t *dst, size_t dcap, size_t *vlen, int *present,
-                              int *done)
+cdb_status cdb_rg_column_next(cdb_rg_column *c, uint8_t *dst, size_t dcap, size_t *vlen,
+                              int *present, int *done)
 {
     const uint8_t *item;
     size_t il;
@@ -574,7 +588,8 @@ static cdb_status gather_ids(cdb_rg *g, const cdb_rg_source *src, uint32_t n, si
 
 /* Reads one column's values into g->vals (present ones) and g->bitmap (the
  * nulls), with its null count and statistics in r. */
-static cdb_status gather(cdb_rg *g, const cdb_rg_source *src, uint32_t n, cdb_rg_ref *r, size_t *vl_out)
+static cdb_status gather(cdb_rg *g, const cdb_rg_source *src, uint32_t n, cdb_rg_ref *r,
+                         size_t *vl_out)
 {
     cdb_byte_order o = g->db->pager.order;
     size_t vl = 0, mino = 0, minl = 0, maxo = 0, maxl = 0;
@@ -599,7 +614,8 @@ static cdb_status gather(cdb_rg *g, const cdb_rg_source *src, uint32_t n, cdb_rg
             r->nulls++;
             continue;
         }
-        if (cdb_value_read(v, l, o, &val) != CDB_OK || val.encoded_len != l || !of_column(r->tag, &val))
+        if (cdb_value_read(v, l, o, &val) != CDB_OK || val.encoded_len != l
+            || !of_column(r->tag, &val))
             return CDB_E_INVALID_ARG;
         if (l > g->cap - vl)
             return CDB_E_OVERFLOW;
@@ -637,8 +653,8 @@ static cdb_status gather(cdb_rg *g, const cdb_rg_source *src, uint32_t n, cdb_rg
     return CDB_OK;
 }
 
-cdb_status cdb_rg_write(cdb_rg *g, const cdb_rg_source *src, uint32_t n, uint32_t schema, const cdb_rg_col *cols,
-                        unsigned ncols)
+cdb_status cdb_rg_write(cdb_rg *g, const cdb_rg_source *src, uint32_t n, uint32_t schema,
+                        const cdb_rg_col *cols, unsigned ncols)
 {
     cdb_rg_header *h = g->hdr;
     size_t vl, clen;
@@ -647,7 +663,8 @@ cdb_status cdb_rg_write(cdb_rg *g, const cdb_rg_source *src, uint32_t n, uint32_
     uint64_t first, last;
     cdb_status s;
 
-    if (src == NULL || n == 0 || n > g->rows || ncols > CDB_TABLE_MAX_COLUMNS || (ncols > 0 && cols == NULL))
+    if (src == NULL || n == 0 || n > g->rows || ncols > CDB_TABLE_MAX_COLUMNS
+        || (ncols > 0 && cols == NULL))
         return CDB_E_INVALID_ARG;
     for (i = 0; i < ncols; i++)
         if (cols[i].field_id == 0 || (i > 0 && cols[i].field_id <= cols[i - 1u].field_id)
@@ -676,7 +693,8 @@ cdb_status cdb_rg_write(cdb_rg *g, const cdb_rg_source *src, uint32_t n, uint32_
         cdb_rg_ref *r = &h->cols[i];
         r->field_id = cols[i].field_id;
         r->tag = cols[i].tag == CDB_TAG_TRUE ? (uint8_t)CDB_TAG_FALSE : cols[i].tag;
-        if ((s = gather(g, src, n, r, &vl)) != CDB_OK || (s = make_chunk(g, r->tag, n, r->nulls, vl, &clen)) != CDB_OK
+        if ((s = gather(g, src, n, r, &vl)) != CDB_OK
+            || (s = make_chunk(g, r->tag, n, r->nulls, vl, &clen)) != CDB_OK
             || (s = put_chunk(g, last, r, clen)) != CDB_OK) {
             free_built(g, 1, built);
             return s;
@@ -735,7 +753,8 @@ cdb_status cdb_rg_get_row(cdb_rg *g, uint64_t entry, void *out, size_t cap, size
         if ((s = cdb_rg_column_open(g, (int)i, &c)) != CDB_OK)
             return s;
         for (r = 0; r <= p; r++) {
-            if ((s = cdb_rg_column_next(&c, g->vals + used, g->cap - used, &l, &present, &done)) != CDB_OK)
+            if ((s = cdb_rg_column_next(&c, g->vals + used, g->cap - used, &l, &present, &done))
+                != CDB_OK)
                 return s == CDB_E_BUFFER_TOO_SMALL ? CDB_E_CORRUPT : s;
             if (done)
                 return CDB_E_CORRUPT;
@@ -783,7 +802,8 @@ cdb_status cdb_rg_drop(cdb_rg *g, uint64_t last)
     return cdb_index_delete(g->groups, k, gkey(k, last), &found);
 }
 
-cdb_status cdb_rg_nib_moved(cdb_rg *g, const uint8_t *okey, size_t oklen, uint64_t old_addr, uint64_t addr)
+cdb_status cdb_rg_nib_moved(cdb_rg *g, const uint8_t *okey, size_t oklen, uint64_t old_addr,
+                            uint64_t addr)
 {
     uint64_t last, field;
     cdb_rg_ref *r = NULL;

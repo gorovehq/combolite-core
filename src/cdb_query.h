@@ -128,11 +128,11 @@
 #define CDB_AGG_SUM 0x02u
 #define CDB_AGG_AVG 0x03u
 #define CDB_AGG_MIN 0x04u
-#define CDB_AGG_MAX 0x05u    /* the MAX aggregate (largest value), not a range bound */
+#define CDB_AGG_MAX 0x05u /* the MAX aggregate (largest value), not a range bound */
 #define CDB_AGG_FIRST 0x06u
 #define CDB_AGG_LAST 0x07u
-#define CDB_AGG_STDDEV 0x08u    /* sample standard deviation (n-1); NULL when count < 2 */
-#define CDB_AGG_VARIANCE 0x09u  /* sample variance (n-1); NULL when count < 2 */
+#define CDB_AGG_STDDEV 0x08u   /* sample standard deviation (n-1); NULL when count < 2 */
+#define CDB_AGG_VARIANCE 0x09u /* sample variance (n-1); NULL when count < 2 */
 /* Inclusive range bound for a valid aggregate opcode. Use this for range
  * checks, NOT CDB_AGG_MAX (which is the MAX aggregate's opcode, 0x05). */
 #define CDB_AGG__HIGHEST CDB_AGG_VARIANCE
@@ -434,24 +434,26 @@ cdb_status cdb_query_write_sort_key_suffix(cdb_query_writer *w, uint8_t dir, uin
 cdb_status cdb_query_write_limit(cdb_query_writer *w, uint64_t count, uint64_t offset);
 cdb_status cdb_query_write_union(cdb_query_writer *w, size_t n_branches);
 cdb_status cdb_query_write_aggregate(cdb_query_writer *w, size_t n_groups, size_t n_aggs);
-cdb_status cdb_query_write_aggregate_output(cdb_query_writer *w, const char *alias, size_t alias_len, uint8_t fn);
-cdb_status cdb_query_write_traverse(cdb_query_writer *w, const char *link_type, size_t len, uint8_t dir,
-                                    uint64_t min_hops, uint64_t max_hops);
+cdb_status cdb_query_write_aggregate_output(cdb_query_writer *w, const char *alias,
+                                            size_t alias_len, uint8_t fn);
+cdb_status cdb_query_write_traverse(cdb_query_writer *w, const char *link_type, size_t len,
+                                    uint8_t dir, uint64_t min_hops, uint64_t max_hops);
 cdb_status cdb_query_write_text_search(cdb_query_writer *w, uint8_t mode, uint64_t limit,
-                                      const char *query, size_t query_len, size_t n_fields);
+                                       const char *query, size_t query_len, size_t n_fields);
 cdb_status cdb_query_write_field_name(cdb_query_writer *w, const char *field, size_t field_len);
 cdb_status cdb_query_write_vector_search(cdb_query_writer *w, const char *field, size_t field_len,
-                                        uint64_t k, uint8_t metric);
+                                         uint64_t k, uint8_t metric);
 cdb_status cdb_query_write_hybrid_rank(cdb_query_writer *w, uint8_t fuse, size_t n_branches);
 cdb_status cdb_query_write_branch_weight(cdb_query_writer *w, uint32_t weight);
-cdb_status cdb_query_write_window(cdb_query_writer *w, uint8_t type, const char *time_field, size_t len,
-                                  uint64_t size_ns, uint64_t step_ns);
+cdb_status cdb_query_write_window(cdb_query_writer *w, uint8_t type, const char *time_field,
+                                  size_t len, uint64_t size_ns, uint64_t step_ns);
 cdb_status cdb_query_write_asof_join(cdb_query_writer *w, uint8_t kind, uint64_t tolerance_ns);
 cdb_status cdb_query_write_unnest(cdb_query_writer *w, const char *item_alias, size_t item_len,
                                   const char *index_alias, size_t idx_len);
 
 /* Writer methods for expressions. */
-cdb_status cdb_query_write_expr_literal(cdb_query_writer *w, const uint8_t *val_bytes, size_t val_len);
+cdb_status cdb_query_write_expr_literal(cdb_query_writer *w, const uint8_t *val_bytes,
+                                        size_t val_len);
 cdb_status cdb_query_write_expr_field(cdb_query_writer *w, const char *path, size_t path_len);
 cdb_status cdb_query_write_expr_param_index(cdb_query_writer *w, uint32_t index);
 cdb_status cdb_query_write_expr_param_named(cdb_query_writer *w, const char *name, size_t name_len);

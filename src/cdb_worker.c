@@ -71,8 +71,8 @@ cdb_status cdb_worker_pool_init(cdb_worker_pool *pool, const cdb_env *env, unsig
     memset(pool, 0, sizeof *pool);
     pool->env = *env;
 
-    if (nthreads == 0 || env->ops == NULL || env->ops->thread_create == NULL ||
-        env->ops->mutex_create == NULL || env->ops->cond_create == NULL) {
+    if (nthreads == 0 || env->ops == NULL || env->ops->thread_create == NULL
+        || env->ops->mutex_create == NULL || env->ops->cond_create == NULL) {
         pool->nthreads = 0;
         return CDB_OK;
     }
@@ -99,7 +99,8 @@ cdb_status cdb_worker_pool_init(cdb_worker_pool *pool, const cdb_env *env, unsig
     }
 
     for (i = 0; i < nthreads; i++) {
-        if ((s = env->ops->thread_create(env->ctx, &pool->threads[i], worker_thread_loop, pool)) != CDB_OK) {
+        if ((s = env->ops->thread_create(env->ctx, &pool->threads[i], worker_thread_loop, pool))
+            != CDB_OK) {
             unsigned j;
             pool->stop = 1;
             if (env->ops->cond_broadcast != NULL)
@@ -122,7 +123,8 @@ cdb_status cdb_worker_pool_init(cdb_worker_pool *pool, const cdb_env *env, unsig
     return CDB_OK;
 }
 
-cdb_status cdb_worker_pool_submit(cdb_worker_pool *pool, void (*fn)(void *arg), void *arg, uint64_t *task_id)
+cdb_status cdb_worker_pool_submit(cdb_worker_pool *pool, void (*fn)(void *arg), void *arg,
+                                  uint64_t *task_id)
 {
     uint64_t id;
     const cdb_env *e;

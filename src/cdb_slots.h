@@ -30,11 +30,11 @@ struct cdb_db;
 
 /* The first member of every slot. */
 typedef struct cdb_slot {
-    int in_use;          /* holds an open store; 0: free */
+    int in_use; /* holds an open store; 0: free */
     uint64_t store_id;
-    uint64_t last_use;   /* the set's clock at its last use */
-    uint64_t tx_use;     /* the transaction it was last used in; 0: none */
-    uint64_t op_use;     /* the operation scope it was last used in; 0: none */
+    uint64_t last_use; /* the set's clock at its last use */
+    uint64_t tx_use;   /* the transaction it was last used in; 0: none */
+    uint64_t op_use;   /* the operation scope it was last used in; 0: none */
 } cdb_slot;
 
 /* What a model tells the set about its slots. */
@@ -50,13 +50,13 @@ typedef struct cdb_slot_ops {
 typedef struct cdb_slot_chunk cdb_slot_chunk;
 
 typedef struct cdb_slots {
-    size_t elem;                /* bytes per slot */
+    size_t elem; /* bytes per slot */
     const cdb_slot_ops *ops;
-    cdb_slot_chunk *chunks;     /* in use */
-    cdb_slot_chunk *spare;      /* caller-memory chunks given back, kept for reuse */
-    unsigned count;             /* slots in the chunks in use */
-    uint64_t clock;             /* counts uses */
-    uint64_t floor;             /* the clock at the last reconciliation */
+    cdb_slot_chunk *chunks; /* in use */
+    cdb_slot_chunk *spare;  /* caller-memory chunks given back, kept for reuse */
+    unsigned count;         /* slots in the chunks in use */
+    uint64_t clock;         /* counts uses */
+    uint64_t floor;         /* the clock at the last reconciliation */
 } cdb_slots;
 
 /* Caller memory for slots is an array of this, so chunks are aligned. */

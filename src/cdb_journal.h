@@ -46,7 +46,8 @@
 #define CDB_RECORD_FLAG_COMPRESSED 0x02u
 #define CDB_RECORD_FLAG_CONTINUED 0x04u
 #define CDB_RECORD_FLAG_REPLICATED 0x08u
-#define CDB_RECORD_FLAG_ROLLBACKS 0x10u /* commit record: the transaction holds a rollback record (14.4.9) */
+#define CDB_RECORD_FLAG_ROLLBACKS \
+    0x10u /* commit record: the transaction holds a rollback record (14.4.9) */
 
 /* Data-change operation codes (spec 14.4.5). */
 #define CDB_OP_INSERT 1u
@@ -77,13 +78,13 @@ typedef struct cdb_journal_header {
  * store_id and entry_id are always the real ones here, and payload and
  * payload_len never include the varints. */
 typedef struct cdb_record {
-    uint8_t kind;          /* CDB_RECORD_* */
-    uint8_t flags;         /* encrypted, compressed (none used yet) */
-    uint64_t seq;          /* delta sequence number, assigned by append */
-    uint64_t tx_id;        /* owning transaction (spec 14.4.3) */
-    uint64_t store_id;     /* target store */
-    uint64_t entry_id;     /* target entry, or 0 */
-    uint64_t domain_id;    /* encryption domain of an encrypted record; 0 otherwise */
+    uint8_t kind;       /* CDB_RECORD_* */
+    uint8_t flags;      /* encrypted, compressed (none used yet) */
+    uint64_t seq;       /* delta sequence number, assigned by append */
+    uint64_t tx_id;     /* owning transaction (spec 14.4.3) */
+    uint64_t store_id;  /* target store */
+    uint64_t entry_id;  /* target entry, or 0 */
+    uint64_t domain_id; /* encryption domain of an encrypted record; 0 otherwise */
     uint32_t key_version;
     const uint8_t *payload;
     uint32_t payload_len;
@@ -109,7 +110,8 @@ typedef struct cdb_journal {
 
 /* Writes a companion header (spec 14.4.1) at offset 0 of st, without a
  * barrier. Journals and overlays both start with one. */
-cdb_status cdb_companion_write_header(const cdb_storage *st, cdb_byte_order order, const cdb_journal_header *hdr);
+cdb_status cdb_companion_write_header(const cdb_storage *st, cdb_byte_order order,
+                                      const cdb_journal_header *hdr);
 
 /* Writes a new journal's header (no barrier: the caller syncs). */
 cdb_status cdb_journal_create(cdb_journal *j, const cdb_storage *st, cdb_byte_order order,
@@ -130,15 +132,16 @@ cdb_status cdb_journal_append(cdb_journal *j, cdb_record *r, uint8_t *buf, size_
 
 /* Reads and verifies the record at offset into buf. If encrypted, decrypts payload with key. */
 cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf, size_t buf_size,
-                                   cdb_record *r, uint64_t *next,
-                                   unsigned aead_alg, const uint8_t *key);
+                                   cdb_record *r, uint64_t *next, unsigned aead_alg,
+                                   const uint8_t *key);
 
 /* Reads and verifies an unencrypted record at offset into buf. */
 cdb_status cdb_journal_read(cdb_journal *j, uint64_t offset, uint8_t *buf, size_t buf_size,
                             cdb_record *r, uint64_t *next);
 
 /* Encode and decode a commit record's payload (spec 14.4.4). */
-void cdb_commit_encode(const cdb_commit_info *c, uint8_t out[CDB_COMMIT_PAYLOAD_SIZE], cdb_byte_order order);
+void cdb_commit_encode(const cdb_commit_info *c, uint8_t out[CDB_COMMIT_PAYLOAD_SIZE],
+                       cdb_byte_order order);
 cdb_status cdb_commit_decode(const cdb_record *r, cdb_commit_info *c, cdb_byte_order order);
 
 #endif

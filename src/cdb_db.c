@@ -30,13 +30,13 @@
 #include "cdb_ts.h"
 #include "cdb_vec.h"
 
-#define DEFAULT_SYNC_EVERY 32u     /* NORMAL durability: a barrier every 32 commits (spec 14.4.6) */
-#define TX_RESERVE_BLOCK 1024u     /* transaction counters reserved per slot write (spec 14.4.3) */
+#define DEFAULT_SYNC_EVERY 32u /* NORMAL durability: a barrier every 32 commits (spec 14.4.6) */
+#define TX_RESERVE_BLOCK 1024u /* transaction counters reserved per slot write (spec 14.4.3) */
 #define TX_COUNTER_MASK 0xFFFFFFFFFFFFull /* the low 48 bits of a transaction ID */
-#define MARKS_STORE 0u             /* store ID recorded in the marks index's pages */
-#define COMPANION_PROVISIONED 0x01u /* companion slot state bits (spec 14.1.5) */
+#define MARKS_STORE 0u                    /* store ID recorded in the marks index's pages */
+#define COMPANION_PROVISIONED 0x01u       /* companion slot state bits (spec 14.1.5) */
 #define COMPANION_IN_USE 0x02u
-#define CLASS_INCOMPATIBLE 2u      /* the main journal's compatibility class (spec 14.4.6 rule 2) */
+#define CLASS_INCOMPATIBLE 2u /* the main journal's compatibility class (spec 14.4.6 rule 2) */
 
 static void db_lock(cdb_db *db);
 static void db_unlock(cdb_db *db);
@@ -189,7 +189,9 @@ static cdb_status marks_open(cdb_db *db, cdb_index *ix, int create, int *have)
     if (root == 0) {
         if (!create)
             return CDB_OK;
-        if ((s = cdb_index_create(ix, &db->pager, MARKS_STORE, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work)) != CDB_OK)
+        if ((s = cdb_index_create(ix, &db->pager, MARKS_STORE, CDB_INDEX_FLAG_UNIQUE,
+                                  &db->cfg.catalog_work))
+            != CDB_OK)
             return s;
         db->pager.hs.record.marks_root = ix->root; /* durable with the next commit */
         db->pager.dirty = 1;
@@ -320,7 +322,8 @@ static const uint8_t *domain_page_key(cdb_db *db, uint64_t domain, uint32_t *ver
 /* The page subkey of an open domain under salt (spec 12.2, 14.2.8): this
  * session's is kept, any other is derived from the domain key.
  * CDB_E_SECURITY when the domain is not open. */
-static cdb_status domain_page_key_for(cdb_db *db, uint64_t domain, const uint8_t salt[16], uint8_t key_out[32])
+static cdb_status domain_page_key_for(cdb_db *db, uint64_t domain, const uint8_t salt[16],
+                                      uint8_t key_out[32])
 {
     int i = enclave_index(db, domain);
     if (i < 0)
@@ -345,8 +348,8 @@ static cdb_salt_entry *salt_at(cdb_db *db, uint16_t index)
 /* The pager's key callback: an overlay page uses this session's salt, an
  * archive page the salt its index names. A page naming a salt the table
  * lacks is corrupt. */
-static cdb_status cdb_db_domain_key_cb(void *ctx, uint64_t domain_id, uint32_t key_version, uint16_t salt_index,
-                                       uint8_t key_out[32])
+static cdb_status cdb_db_domain_key_cb(void *ctx, uint64_t domain_id, uint32_t key_version,
+                                       uint16_t salt_index, uint8_t key_out[32])
 {
     cdb_db *db = (cdb_db *)ctx;
     const uint8_t *salt;
@@ -379,14 +382,16 @@ static cdb_status salts_index(cdb_db *db, cdb_index *ix, int create, int *have)
     cdb_status s;
     *have = 0;
     if (db->pager.catroot.salt_root != 0) {
-        if ((s = cdb_index_open(ix, &db->pager, db->pager.catroot.salt_root, &db->cfg.catalog_work)) != CDB_OK)
+        if ((s = cdb_index_open(ix, &db->pager, db->pager.catroot.salt_root, &db->cfg.catalog_work))
+            != CDB_OK)
             return s;
         *have = 1;
         return CDB_OK;
     }
     if (!create)
         return CDB_OK;
-    if ((s = cdb_index_create(ix, &db->pager, 0, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work)) != CDB_OK)
+    if ((s = cdb_index_create(ix, &db->pager, 0, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
     {
         cdb_catroot r = db->pager.catroot;
@@ -548,8 +553,8 @@ static cdb_status pager_reload(cdb_db *db)
  * CDB_E_SECURITY when its tag fails although another record follows it, so
  * it cannot be a torn tail (the wrong key). A failing last record is the
  * torn tail, CDB_E_CORRUPT, as for plain records. */
-static cdb_status read_record(cdb_db *db, cdb_journal *j, uint64_t offset,
-                              uint8_t *buf, size_t buf_size, cdb_record *r, uint64_t *next)
+static cdb_status read_record(cdb_db *db, cdb_journal *j, uint64_t offset, uint8_t *buf,
+                              size_t buf_size, cdb_record *r, uint64_t *next)
 {
     cdb_status s;
     if (buf_size < CDB_RECORD_HEADER_SIZE)
@@ -563,7 +568,8 @@ static cdb_status read_record(cdb_db *db, cdb_journal *j, uint64_t offset,
                          + CDB_RECORD_TRAILER_SIZE;
         uint8_t key[32], mark[2];
         /* Under the salt of the session that wrote the journal (14.2.8). */
-        if ((s = domain_page_key_for(db, cdb_load_u64(buf + 24, j->order), j->hdr.salt, key)) != CDB_OK) {
+        if ((s = domain_page_key_for(db, cdb_load_u64(buf + 24, j->order), j->hdr.salt, key))
+            != CDB_OK) {
             *next = after;
             return s;
         }
@@ -631,7 +637,8 @@ static void crdt_commit_pending(cdb_db *db)
     for (i = 0; i < db->n_crdt_pend; i++) {
         cdb_crdt_peer_entry pe;
         cdb_hlc h = db->crdt_pend[i].hlc;
-        if (cdb_crdt_vector_get(&db->crdt_vector, h.peer_id, &pe) != CDB_OK || cdb_hlc_compare(h, pe.hlc) > 0)
+        if (cdb_crdt_vector_get(&db->crdt_vector, h.peer_id, &pe) != CDB_OK
+            || cdb_hlc_compare(h, pe.hlc) > 0)
             cdb_crdt_vector_set(&db->crdt_vector, h.peer_id, h.physical, h);
     }
     db->n_crdt_pend = 0;
@@ -652,8 +659,8 @@ int cdb_tx_dropped(const cdb_db *db, uint64_t off)
  * collects the data-record ordinals its rollback records drop (spec 14.4.9).
  * A rollback record that does not match the data records before it, or a
  * transaction with too many ranges, is CDB_E_MALFORMED. */
-static cdb_status collect_drops(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64_t start, uint64_t end,
-                                cdb_tx_drop *d, uint32_t *n)
+static cdb_status collect_drops(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64_t start,
+                                uint64_t end, cdb_tx_drop *d, uint32_t *n)
 {
     uint64_t off = start;
     uint32_t data = 0;
@@ -661,7 +668,8 @@ static cdb_status collect_drops(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint
     while (off < end) {
         cdb_record r;
         uint64_t next;
-        cdb_status s = read_record(db, j, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next);
+        cdb_status s =
+            read_record(db, j, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next);
         if (s != CDB_OK)
             return s;
         if (r.tx_id == tx_id && r.kind == CDB_RECORD_DATA) {
@@ -689,8 +697,8 @@ static cdb_status collect_drops(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint
  * rollbacks (the commit record's flag), the records rollback records dropped
  * are skipped (spec 14.4.9). Reads into cfg.record_buf, so the delta's data
  * pointer is only valid during the apply call. */
-static cdb_status apply_range(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64_t start, uint64_t end,
-                              uint64_t commit_number, int rollbacks)
+static cdb_status apply_range(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64_t start,
+                              uint64_t end, uint64_t commit_number, int rollbacks)
 {
     cdb_tx_drop drops[CDB_TX_MAX_DROPS];
     uint32_t ndrops = 0, ord = 0;
@@ -701,7 +709,8 @@ static cdb_status apply_range(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64
     while (off < end) {
         cdb_record r;
         uint64_t next;
-        if ((s = read_record(db, j, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next)) != CDB_OK)
+        if ((s = read_record(db, j, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next))
+            != CDB_OK)
             return s;
         if (r.kind == CDB_RECORD_DATA && r.tx_id == tx_id && drops_has(drops, ndrops, ord++)) {
             off = next;
@@ -784,18 +793,18 @@ static int journal_adoptable(void *arg, unsigned slot)
  * 5.9.1, 14.4.7 rule 5). */
 struct jcursor {
     unsigned slot;
-    int dead_slot;      /* a dead peer's slot file exists and should be removed */
-    int has_journal;    /* main.<slot>.cdb exists */
-    uint64_t dead_hwm;  /* tx_hwm from a dead peer's slot file */
-    uint64_t mark;      /* the slot's transactions through this counter are in the archive */
-    uint64_t off;       /* where the scan resumes */
-    uint64_t top;       /* highest counter of a committed transaction seen */
-    uint64_t unsealed;  /* the archive state the journal was started from */
-    int have;           /* there is a next transaction to apply: */
+    int dead_slot;     /* a dead peer's slot file exists and should be removed */
+    int has_journal;   /* main.<slot>.cdb exists */
+    uint64_t dead_hwm; /* tx_hwm from a dead peer's slot file */
+    uint64_t mark;     /* the slot's transactions through this counter are in the archive */
+    uint64_t off;      /* where the scan resumes */
+    uint64_t top;      /* highest counter of a committed transaction seen */
+    uint64_t unsealed; /* the archive state the journal was started from */
+    int have;          /* there is a next transaction to apply: */
     uint64_t stamp, counter, tx_id, start, commit_at;
-    int rollbacks;      /* its commit record says it holds rollback records (14.4.9) */
-    int deferred;       /* stopped at a record this process cannot decrypt: the rest
-                           waits, pending, for a process that can (spec 5.9.5) */
+    int rollbacks;       /* its commit record says it holds rollback records (14.4.9) */
+    int deferred;        /* stopped at a record this process cannot decrypt: the rest
+                            waits, pending, for a process that can (spec 5.9.5) */
     uint64_t dropped_tx; /* with CDB_DB_DROP_UNREADABLE: the transaction given up instead */
 };
 
@@ -830,7 +839,9 @@ static cdb_status scan_next(cdb_db *db, struct jcursor *c)
     for (;;) {
         cdb_record r;
         uint64_t next;
-        if ((s = read_record(db, &db->rj, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next)) != CDB_OK) {
+        if ((s = read_record(db, &db->rj, off, db->cfg.record_buf, db->cfg.record_buf_size, &r,
+                             &next))
+            != CDB_OK) {
             /* The operator gave such records up: only the transaction that
              * holds one is dropped, and the rest merges (spec 5.9.1). */
             if (s == CDB_E_SECURITY && (db->cfg.flags & CDB_DB_DROP_UNREADABLE)) {
@@ -918,7 +929,8 @@ static cdb_status cursor_open(cdb_db *db, unsigned slot, struct jcursor *c, int 
         return set_aside(db, path); /* unreadable (spec 1.12.2) */
     if (s != CDB_OK)
         return s;
-    foreign = memcmp(db->rj.hdr.db_id, db->pager.hs.record.db_id, 16) != 0 || db->rj.hdr.slot != slot;
+    foreign =
+        memcmp(db->rj.hdr.db_id, db->pager.hs.record.db_id, 16) != 0 || db->rj.hdr.slot != slot;
     c->unsealed = db->rj.hdr.unsealed_seq;
     c->off = CDB_JOURNAL_HEADER_SIZE;
     cdb_storage_close(&db->rj_st);
@@ -1069,7 +1081,8 @@ static cdb_status release_held_blocks(cdb_db *db)
                 used_to = db->id_ranges[r].next;
                 range = (int)r;
             }
-        if ((s = cdb_catalog_get_store(&db->catalog, store, &info)) != CDB_OK && s != CDB_E_NOT_FOUND)
+        if ((s = cdb_catalog_get_store(&db->catalog, store, &info)) != CDB_OK
+            && s != CDB_E_NOT_FOUND)
             return s;
         if (s == CDB_OK && info.next_entry_id < used_to) {
             i++; /* not recorded yet: keep it */
@@ -1108,7 +1121,8 @@ static cdb_status merge_journals(cdb_db *db, int keep_in_use)
         if (slot == db->coord.me.slot) {
             srec = db->coord.me;
             svalid = 1;
-            slot_in_use = db->journal_st.ops != NULL || (!recovering && (srec.flags & CDB_COORD_JOURNAL) != 0);
+            slot_in_use = db->journal_st.ops != NULL
+                          || (!recovering && (srec.flags & CDB_COORD_JOURNAL) != 0);
         } else {
             if ((s = cdb_coord_read_slot(&db->coord, slot, &srec, &svalid)) != CDB_OK)
                 return s;
@@ -1144,7 +1158,8 @@ static cdb_status merge_journals(cdb_db *db, int keep_in_use)
             break;
         if ((s = open_journal(db, best->slot)) != CDB_OK)
             return s;
-        s = apply_range(db, &db->rj, best->tx_id, best->start, best->commit_at, db->applied + 1u, best->rollbacks);
+        s = apply_range(db, &db->rj, best->tx_id, best->start, best->commit_at, db->applied + 1u,
+                        best->rollbacks);
         cdb_storage_close(&db->rj_st);
         if (s != CDB_OK)
             return s;
@@ -1166,7 +1181,8 @@ static cdb_status merge_journals(cdb_db *db, int keep_in_use)
     }
     if (db->last_tx > db->my_mark)
         marks_moved = 1;
-    if (db->applied != base_wm || in_use != keep_in_use || marks_moved || has_blocks || db->pager.dirty) {
+    if (db->applied != base_wm || in_use != keep_in_use || marks_moved || has_blocks
+        || db->pager.dirty) {
         if ((s = cdb_doc_flush_pools(db)) != CDB_OK || (s = raise_block_counters(db)) != CDB_OK)
             return s;
         for (i = 0; i < n; i++)
@@ -1297,7 +1313,8 @@ cdb_pager *cdb_db_pager(cdb_db *db)
 
 size_t cdb_db_slot_mem_size(unsigned n)
 {
-    unsigned chunks = (n + CDB_SLOTS_CHUNK - 1u) / CDB_SLOTS_CHUNK, last = n - (chunks - 1u) * CDB_SLOTS_CHUNK;
+    unsigned chunks = (n + CDB_SLOTS_CHUNK - 1u) / CDB_SLOTS_CHUNK,
+             last = n - (chunks - 1u) * CDB_SLOTS_CHUNK;
     size_t total = 0;
     if (n == 0)
         return 0;
@@ -1376,7 +1393,9 @@ static cdb_status rebase_pages(cdb_db *db)
     if ((s = pin_archive(db)) != CDB_OK || (s = enter_overlay(db)) != CDB_OK)
         return s;
     release_slots(db);
-    if ((s = cdb_catalog_open(&db->catalog, &db->pager, &db->cfg.catalog_work, db->cfg.catalog_page)) != CDB_OK)
+    if ((s = cdb_catalog_open(&db->catalog, &db->pager, &db->cfg.catalog_work,
+                              db->cfg.catalog_page))
+        != CDB_OK)
         return s;
     if ((s = prune_held_blocks(db)) != CDB_OK)
         return s;
@@ -1422,34 +1441,42 @@ static cdb_status rebase_pages(cdb_db *db)
                 return s;
             /* The copy leaves out rollback records and what they dropped,
              * and its commit record loses the flag (14.4.7 rule 2). */
-            if (c.rollbacks && (s = collect_drops(db, &db->rj, c.tx_id, c.start, c.commit_at, drops, &ndrops)) != CDB_OK) {
+            if (c.rollbacks
+                && (s = collect_drops(db, &db->rj, c.tx_id, c.start, c.commit_at, drops, &ndrops))
+                       != CDB_OK) {
                 cdb_storage_close(&db->rj_st);
                 return s;
             }
             while (off < c.off) {
                 cdb_record r;
                 uint64_t next;
-                if ((s = read_record(db, &db->rj, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next))
+                if ((s = read_record(db, &db->rj, off, db->cfg.record_buf, db->cfg.record_buf_size,
+                                     &r, &next))
                     != CDB_OK)
                     break;
-                if (r.kind == CDB_RECORD_DATA && r.tx_id == c.tx_id && drops_has(drops, ndrops, ord++)) {
+                if (r.kind == CDB_RECORD_DATA && r.tx_id == c.tx_id
+                    && drops_has(drops, ndrops, ord++)) {
                     off = next;
                     continue;
                 }
                 if (r.kind == CDB_RECORD_COMMIT)
                     r.flags = (uint8_t)(r.flags & ~CDB_RECORD_FLAG_ROLLBACKS);
-                if ((r.kind == CDB_RECORD_DATA || r.kind == CDB_RECORD_WRITE_KEY || r.kind == CDB_RECORD_COMMIT)
+                if ((r.kind == CDB_RECORD_DATA || r.kind == CDB_RECORD_WRITE_KEY
+                     || r.kind == CDB_RECORD_COMMIT)
                     && r.tx_id == c.tx_id) {
                     if (r.flags & CDB_RECORD_FLAG_ENCRYPTED) {
                         const uint8_t *enc_key = domain_page_key(db, r.domain_id, NULL);
                         if (enc_key != NULL && db->aead_alg != CDB_AEAD_NONE) {
-                            s = cdb_journal_append_crypto(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size,
-                                                          db->aead_alg, enc_key);
+                            s = cdb_journal_append_crypto(&db->journal, &r, db->cfg.record_buf,
+                                                          db->cfg.record_buf_size, db->aead_alg,
+                                                          enc_key);
                         } else {
-                            s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size);
+                            s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf,
+                                                   db->cfg.record_buf_size);
                         }
                     } else {
-                        s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size);
+                        s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf,
+                                               db->cfg.record_buf_size);
                     }
                     if (s != CDB_OK)
                         break;
@@ -1536,7 +1563,8 @@ static cdb_status finish_baton(cdb_db *db)
     return enter_overlay(db);
 }
 
-static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg, const cdb_header *create);
+static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg,
+                          const cdb_header *create);
 
 cdb_status cdb_db_open(cdb_db *db, const cdb_env *env, const char *base, const cdb_db_config *cfg,
                        const cdb_header *create)
@@ -1544,9 +1572,10 @@ cdb_status cdb_db_open(cdb_db *db, const cdb_env *env, const char *base, const c
     cdb_status s;
 
     if (db == NULL || env == NULL || base == NULL || cfg == NULL
-        || (cfg->apply == NULL && cfg->doc_buffers == NULL)
-        || cfg->catalog_page == NULL || cfg->catalog_work.bytes == NULL /* the marks index needs it too */
-        || cfg->record_buf == NULL || cfg->record_buf_size < CDB_JOURNAL_HEADER_SIZE + CDB_COMMIT_PAYLOAD_SIZE)
+        || (cfg->apply == NULL && cfg->doc_buffers == NULL) || cfg->catalog_page == NULL
+        || cfg->catalog_work.bytes == NULL /* the marks index needs it too */
+        || cfg->record_buf == NULL
+        || cfg->record_buf_size < CDB_JOURNAL_HEADER_SIZE + CDB_COMMIT_PAYLOAD_SIZE)
         return CDB_E_INVALID_ARG;
     memset(db, 0, sizeof *db);
     memset(db->stage_buckets, 0xFF, sizeof db->stage_buckets);
@@ -1608,7 +1637,8 @@ cdb_status cdb_db_open(cdb_db *db, const cdb_env *env, const char *base, const c
  * sets are set up: open or create the archive, join the coordinators, and
  * either recover and take a standing baton (when alone) or start in private
  * overlay mode (when other processes are already live). */
-static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg, const cdb_header *create)
+static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg,
+                          const cdb_header *create)
 {
     int exists, alone;
     cdb_status s;
@@ -1617,8 +1647,8 @@ static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg
         return s;
 
     if (cfg->master_key_uri != NULL || cfg->key_provider != NULL) {
-        s = cdb_crypto_resolve_key(cfg->master_key_uri, cfg->is_production,
-                                   cfg->key_provider, cfg->key_provider_ctx, db->master_key);
+        s = cdb_crypto_resolve_key(cfg->master_key_uri, cfg->is_production, cfg->key_provider,
+                                   cfg->key_provider_ctx, db->master_key);
         if (s != CDB_OK)
             return s;
         db->has_master_key = 1;
@@ -1631,7 +1661,8 @@ static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg
          * build can't do yet. */
         if (db->env.ops->random == NULL)
             return CDB_E_READ_ONLY;
-        if ((s = db->env.ops->random(db->env.ctx, db->session_salt, sizeof db->session_salt)) != CDB_OK)
+        if ((s = db->env.ops->random(db->env.ctx, db->session_salt, sizeof db->session_salt))
+            != CDB_OK)
             return s;
         db->has_salt = 1;
     }
@@ -1639,14 +1670,13 @@ static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg
     if (create != NULL && (create->layout_flags & CDB_LAYOUT_GOVERNANCE) && !db->has_master_key)
         return CDB_E_SECURITY;
 
-    if (db->rotation_interval_days > 0 && db->rotation_expired &&
-        db->rotation_policy == CDB_ROTATION_REFUSE_OPEN)
+    if (db->rotation_interval_days > 0 && db->rotation_expired
+        && db->rotation_policy == CDB_ROTATION_REFUSE_OPEN)
         return CDB_E_SECURITY;
 
-    cdb_pager_set_crypto(&db->pager, db->aead_alg,
-                         db->has_master_key ? db->master_key : NULL,
-                         db->has_integrity_key ? db->integrity_key : NULL,
-                         cdb_db_domain_key_cb, db);
+    cdb_pager_set_crypto(&db->pager, db->aead_alg, db->has_master_key ? db->master_key : NULL,
+                         db->has_integrity_key ? db->integrity_key : NULL, cdb_db_domain_key_cb,
+                         db);
 
     /* Open the archive, or create it (syncing the parent directory so the
      * new file's name is durable). */
@@ -1679,15 +1709,18 @@ static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg
         return s;
     if ((s = env_sync_dir(db, db->parent)) != CDB_OK)
         return s;
-    if ((s = cdb_coord_join_with(&db->coord, &db->env, db->coorddir, db->pager.hs.record.db_id, db->pager.order,
-                                 &cfg->coord, journal_adoptable, db)) != CDB_OK)
+    if ((s = cdb_coord_join_with(&db->coord, &db->env, db->coorddir, db->pager.hs.record.db_id,
+                                 db->pager.order, &cfg->coord, journal_adoptable, db))
+        != CDB_OK)
         return s;
     journal_paths(db, db->coord.me.slot, db->journal_path, db->journal_tmp);
     overlay_path_of(db, db->coord.me.slot, db->overlay_path);
-    cdb_pager_set_session(&db->pager, (uint16_t)db->coord.me.slot, salts_assign, salts_precommit, db);
+    cdb_pager_set_session(&db->pager, (uint16_t)db->coord.me.slot, salts_assign, salts_precommit,
+                          db);
     if ((s = pin_archive(db)) != CDB_OK || (s = load_salts(db)) != CDB_OK)
         return s;
-    if ((s = cdb_catalog_open(&db->catalog, &db->pager, &cfg->catalog_work, cfg->catalog_page)) != CDB_OK)
+    if ((s = cdb_catalog_open(&db->catalog, &db->pager, &cfg->catalog_work, cfg->catalog_page))
+        != CDB_OK)
         return s;
     db->has_catalog = 1;
 
@@ -1808,9 +1841,11 @@ static void db_unlock(cdb_db *db)
  * lock here. */
 static void respond_handover(cdb_db *db)
 {
-    if (db->env.ops->mutex_trylock == NULL || db->env.ops->mutex_trylock(db->env.ctx, db->mutex) != CDB_OK)
+    if (db->env.ops->mutex_trylock == NULL
+        || db->env.ops->mutex_trylock(db->env.ctx, db->mutex) != CDB_OK)
         return;
-    if (!db->failed && !db->closing && !db->in_tx && db->op_depth == 0 && cdb_coord_baton_held(&db->coord))
+    if (!db->failed && !db->closing && !db->in_tx && db->op_depth == 0
+        && cdb_coord_baton_held(&db->coord))
         (void)cdb_db_reconcile(db);
     db_unlock(db);
 }
@@ -1854,8 +1889,8 @@ static void destroy_mutex(cdb_db *db, cdb_mutex **m)
  * thread hook there is none, and heartbeats stay cooperative (5.9.6). */
 static void start_heartbeat(cdb_db *db)
 {
-    if (db->env.ops == NULL || db->env.ops->mutex_create == NULL ||
-        db->env.ops->cond_create == NULL || db->env.ops->thread_create == NULL)
+    if (db->env.ops == NULL || db->env.ops->mutex_create == NULL || db->env.ops->cond_create == NULL
+        || db->env.ops->thread_create == NULL)
         return;
     if (db->env.ops->mutex_create(db->env.ctx, &db->mutex) != CDB_OK)
         return;
@@ -1971,8 +2006,8 @@ static cdb_status tx_begin_locked(cdb_db *db, cdb_durability durability)
     cdb_status s;
     if (usable(db) != CDB_OK || db->in_tx)
         return CDB_E_STATE;
-    if (db->rotation_interval_days > 0 && db->rotation_expired &&
-        db->rotation_policy == CDB_ROTATION_REFUSE_WRITES)
+    if (db->rotation_interval_days > 0 && db->rotation_expired
+        && db->rotation_policy == CDB_ROTATION_REFUSE_WRITES)
         return CDB_E_SECURITY;
     if ((s = heartbeat(db)) != CDB_OK)
         return s;
@@ -2020,7 +2055,8 @@ cdb_status cdb_tx_begin(cdb_db *db, cdb_durability durability)
 
 #define STAGE_IDX_HDR 24u
 
-static inline unsigned stage_idx_bucket(uint64_t store, uint8_t idx_no, const uint8_t *key, size_t klen)
+static inline unsigned stage_idx_bucket(uint64_t store, uint8_t idx_no, const uint8_t *key,
+                                        size_t klen)
 {
     uint64_t h = (store * 0x517cc1b727220a95ULL) ^ ((uint64_t)idx_no * 0x9e3779b97f4a7c15ULL);
     size_t i;
@@ -2031,8 +2067,8 @@ static inline unsigned stage_idx_bucket(uint64_t store, uint8_t idx_no, const ui
     return (unsigned)(((h ^ (h >> 32)) & (uint64_t)(CDB_STAGE_IDX_BUCKETS - 1u)));
 }
 
-cdb_status cdb_stage_idx_put(cdb_db *db, uint64_t store, uint8_t idx_no, const uint8_t *key, size_t klen,
-                             uint64_t entry, int live)
+cdb_status cdb_stage_idx_put(cdb_db *db, uint64_t store, uint8_t idx_no, const uint8_t *key,
+                             size_t klen, uint64_t entry, int live)
 {
     unsigned b;
     size_t need, rec_off;
@@ -2068,8 +2104,8 @@ cdb_status cdb_stage_idx_put(cdb_db *db, uint64_t store, uint8_t idx_no, const u
     return CDB_OK;
 }
 
-cdb_status cdb_stage_idx_get(const cdb_db *db, uint64_t store, uint8_t idx_no, const uint8_t *key, size_t klen,
-                             uint64_t *entry, int *live, int *found)
+cdb_status cdb_stage_idx_get(const cdb_db *db, uint64_t store, uint8_t idx_no, const uint8_t *key,
+                             size_t klen, uint64_t *entry, int *live, int *found)
 {
     unsigned b;
     uint32_t off;
@@ -2133,8 +2169,8 @@ static cdb_status tx_put_in(cdb_db *db, uint64_t store_id, uint64_t entry_id, ui
 
     if (usable(db) != CDB_OK || !db->in_tx)
         return CDB_E_STATE;
-    if (db->rotation_interval_days > 0 && db->rotation_expired &&
-        db->rotation_policy == CDB_ROTATION_REFUSE_WRITES)
+    if (db->rotation_interval_days > 0 && db->rotation_expired
+        && db->rotation_policy == CDB_ROTATION_REFUSE_WRITES)
         return CDB_E_SECURITY;
     /* The whole record (header, op byte, data, trailer) must fit record_buf. */
     if (len > db->cfg.record_buf_size - CDB_RECORD_HEADER_SIZE - CDB_RECORD_TRAILER_SIZE - 1u
@@ -2175,9 +2211,11 @@ static cdb_status tx_put_in(cdb_db *db, uint64_t store_id, uint64_t entry_id, ui
 /* Journals a write-set key record (kind 4, spec 5.9.4, 14.4.7 rule 3):
  * target store = table, target entry = 0, payload = 4-byte index number +
  * 4-byte CRC32C of the encoded key. Counts only for collision detection. */
-static cdb_status tx_put_key_in(cdb_db *db, uint64_t store_id, uint32_t index_num, const void *key, size_t key_len);
+static cdb_status tx_put_key_in(cdb_db *db, uint64_t store_id, uint32_t index_num, const void *key,
+                                size_t key_len);
 
-cdb_status cdb_tx_put_key(cdb_db *db, uint64_t store_id, uint32_t index_num, const void *key, size_t key_len)
+cdb_status cdb_tx_put_key(cdb_db *db, uint64_t store_id, uint32_t index_num, const void *key,
+                          size_t key_len)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -2186,7 +2224,8 @@ cdb_status cdb_tx_put_key(cdb_db *db, uint64_t store_id, uint32_t index_num, con
     return r;
 }
 
-static cdb_status tx_put_key_in(cdb_db *db, uint64_t store_id, uint32_t index_num, const void *key, size_t key_len)
+static cdb_status tx_put_key_in(cdb_db *db, uint64_t store_id, uint32_t index_num, const void *key,
+                                size_t key_len)
 {
     uint8_t payload[CDB_WRITE_KEY_PAYLOAD_SIZE];
     cdb_record r;
@@ -2207,7 +2246,8 @@ static cdb_status tx_put_key_in(cdb_db *db, uint64_t store_id, uint32_t index_nu
 
 /* Ensures a 1024-ID block is claimed for store and returns its next ID
  * without consuming it yet (spec 5.9.3). */
-static cdb_status db_peek_entry_in(cdb_db *db, uint64_t store, const uint64_t *next_entry, uint64_t *id);
+static cdb_status db_peek_entry_in(cdb_db *db, uint64_t store, const uint64_t *next_entry,
+                                   uint64_t *id);
 
 cdb_status cdb_db_peek_entry(cdb_db *db, uint64_t store, const uint64_t *next_entry, uint64_t *id)
 {
@@ -2218,7 +2258,8 @@ cdb_status cdb_db_peek_entry(cdb_db *db, uint64_t store, const uint64_t *next_en
     return r;
 }
 
-static cdb_status db_peek_entry_in(cdb_db *db, uint64_t store, const uint64_t *next_entry, uint64_t *id)
+static cdb_status db_peek_entry_in(cdb_db *db, uint64_t store, const uint64_t *next_entry,
+                                   uint64_t *id)
 {
     uint64_t floor, first;
     unsigned i;
@@ -2376,14 +2417,16 @@ static int ws_from_record(const cdb_record *r, struct ws_item *out)
     return 0;
 }
 
-static cdb_status own_has_item(cdb_db *db, const struct ws_item *own, unsigned nown, uint64_t more_at,
-                               uint64_t own_end, const struct ws_item *needle, int *match)
+static cdb_status own_has_item(cdb_db *db, const struct ws_item *own, unsigned nown,
+                               uint64_t more_at, uint64_t own_end, const struct ws_item *needle,
+                               int *match)
 {
     uint64_t off;
     unsigned i;
     *match = 0;
     for (i = 0; i < nown; i++) {
-        if (own[i].store == needle->store && own[i].entry == needle->entry && own[i].key_tag == needle->key_tag) {
+        if (own[i].store == needle->store && own[i].entry == needle->entry
+            && own[i].key_tag == needle->key_tag) {
             *match = 1;
             return CDB_OK;
         }
@@ -2393,12 +2436,14 @@ static cdb_status own_has_item(cdb_db *db, const struct ws_item *own, unsigned n
         struct ws_item it;
         uint64_t next;
         uint64_t at = off;
-        cdb_status s = read_record(db, &db->journal, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next);
+        cdb_status s = read_record(db, &db->journal, off, db->cfg.record_buf,
+                                   db->cfg.record_buf_size, &r, &next);
         if (s != CDB_OK)
             return s;
         off = next;
         if (r.tx_id == db->tx_id && !cdb_tx_dropped(db, at) && ws_from_record(&r, &it)
-            && it.store == needle->store && it.entry == needle->entry && it.key_tag == needle->key_tag) {
+            && it.store == needle->store && it.entry == needle->entry
+            && it.key_tag == needle->key_tag) {
             *match = 1;
             return CDB_OK;
         }
@@ -2412,8 +2457,8 @@ static cdb_status own_has_item(cdb_db *db, const struct ws_item *own, unsigned n
  * transaction with CDB_E_COLLISION; an overlapping later prepare is waited
  * out until it commits, aborts, or its coordinator dies. */
 static cdb_status check_slot_collisions(cdb_db *db, unsigned slot, uint64_t my_stamp,
-                                        const struct ws_item *own, unsigned nown,
-                                        uint64_t more_at, uint64_t own_end)
+                                        const struct ws_item *own, unsigned nown, uint64_t more_at,
+                                        uint64_t own_end)
 {
     char path[CDB_DB_PATH_MAX];
     uint64_t mark = 0;
@@ -2435,11 +2480,13 @@ static cdb_status check_slot_collisions(cdb_db *db, unsigned slot, uint64_t my_s
         if ((s = env_exists(db, path, &exists)) != CDB_OK || !exists)
             return s;
         s = open_journal(db, slot);
-        if (s == CDB_E_NOT_FOUND || s == CDB_E_CORRUPT || s == CDB_E_MALFORMED || s == CDB_E_UNSUPPORTED)
+        if (s == CDB_E_NOT_FOUND || s == CDB_E_CORRUPT || s == CDB_E_MALFORMED
+            || s == CDB_E_UNSUPPORTED)
             return CDB_OK;
         if (s != CDB_OK)
             return s;
-        if (memcmp(db->rj.hdr.db_id, db->pager.hs.record.db_id, 16) != 0 || db->rj.hdr.slot != slot) {
+        if (memcmp(db->rj.hdr.db_id, db->pager.hs.record.db_id, 16) != 0
+            || db->rj.hdr.slot != slot) {
             cdb_storage_close(&db->rj_st);
             return CDB_OK;
         }
@@ -2449,8 +2496,10 @@ static cdb_status check_slot_collisions(cdb_db *db, unsigned slot, uint64_t my_s
             cdb_record r;
             struct ws_item it;
             uint64_t next, counter;
-            cdb_status rs = read_record(db, &db->rj, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next);
-            if (rs == CDB_E_SECURITY && enclave_index(db, cdb_load_u64(db->cfg.record_buf + 24, db->rj.order)) < 0) {
+            cdb_status rs = read_record(db, &db->rj, off, db->cfg.record_buf,
+                                        db->cfg.record_buf_size, &r, &next);
+            if (rs == CDB_E_SECURITY
+                && enclave_index(db, cdb_load_u64(db->cfg.record_buf + 24, db->rj.order)) < 0) {
                 off = next; /* a domain this process cannot write: no collision with it */
                 continue;
             }
@@ -2477,7 +2526,8 @@ static cdb_status check_slot_collisions(cdb_db *db, unsigned slot, uint64_t my_s
                 }
                 /* Write-set keys are never dropped (rule 7), so one is
                  * still looked at after a data record overlapped. */
-                if (counter > mark && !key_overlap && (r.kind == CDB_RECORD_WRITE_KEY || first_ov == UINT32_MAX)
+                if (counter > mark && !key_overlap
+                    && (r.kind == CDB_RECORD_WRITE_KEY || first_ov == UINT32_MAX)
                     && ws_from_record(&r, &it)) {
                     if ((s = own_has_item(db, own, nown, more_at, own_end, &it, &hit)) != CDB_OK) {
                         cdb_storage_close(&db->rj_st);
@@ -2509,7 +2559,8 @@ static cdb_status check_slot_collisions(cdb_db *db, unsigned slot, uint64_t my_s
                 cur_prepared = 0;
             } else if (r.kind == CDB_RECORD_COMMIT && r.tx_id == cur_tx) {
                 cdb_commit_info ci;
-                if (cdb_commit_decode(&r, &ci, db->pager.order) == CDB_OK && counter > mark && cur_overlap) {
+                if (cdb_commit_decode(&r, &ci, db->pager.order) == CDB_OK && counter > mark
+                    && cur_overlap) {
                     cdb_storage_close(&db->rj_st);
                     return CDB_E_COLLISION;
                 }
@@ -2549,7 +2600,9 @@ static cdb_status check_collisions(cdb_db *db, uint64_t own_end, uint64_t my_sta
         cdb_record r;
         struct ws_item it;
         uint64_t next;
-        if ((s = read_record(db, &db->journal, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next)) != CDB_OK)
+        if ((s = read_record(db, &db->journal, off, db->cfg.record_buf, db->cfg.record_buf_size, &r,
+                             &next))
+            != CDB_OK)
             return s;
         if (r.tx_id == db->tx_id && !cdb_tx_dropped(db, off) && ws_from_record(&r, &it)) {
             if (nown < WS_CACHE_CAP) {
@@ -2619,7 +2672,8 @@ static cdb_status coordinate_commit(cdb_db *db, uint64_t *stamp)
         r.payload = prep;
         r.payload_len = CDB_PREPARE_PAYLOAD_SIZE;
         prep_at = db->journal.end;
-        if ((s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size)) != CDB_OK)
+        if ((s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size))
+            != CDB_OK)
             return s;
     }
     /* Other processes read this journal while it is unsynced: the page
@@ -2678,7 +2732,8 @@ static cdb_status tx_commit_locked(cdb_db *db)
     if (db->has_identity && db->signing_policy != CDB_SIGN_NONE) {
         uint8_t h[32];
         cdb_crypto_sha256(info, 32, h);
-        if (cdb_identity_sign(&db->active_identity, h, 32, info + CDB_COMMIT_PAYLOAD_SIZE) == CDB_OK) {
+        if (cdb_identity_sign(&db->active_identity, h, 32, info + CDB_COMMIT_PAYLOAD_SIZE)
+            == CDB_OK) {
             sig_len = CDB_SIGNATURE_SIZE;
             cdb_store_u16(info + 32, (uint16_t)sig_len, db->pager.order);
         }
@@ -2691,7 +2746,8 @@ static cdb_status tx_commit_locked(cdb_db *db)
     r.payload = info;
     r.payload_len = (uint32_t)(CDB_COMMIT_PAYLOAD_SIZE + sig_len);
     record_at = db->journal.end;
-    if ((s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size)) != CDB_OK)
+    if ((s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size))
+        != CDB_OK)
         return s;
 
     /* Durability (spec 3.1): FULL syncs the journal now, so the commit
@@ -2711,17 +2767,15 @@ static cdb_status tx_commit_locked(cdb_db *db)
             db->unsynced = 0;
         }
         break;
-    default:
-        db->unsynced++;
-        break;
+    default: db->unsynced++; break;
     }
 
     counter = db->tx_id & TX_COUNTER_MASK;
     /* The transaction is committed; make it visible through the pager. Its
      * commit number is the one reconciliation will give it while this
      * session is the only one contributing, and 0 on an overlay (spec 5.9.2). */
-    s = apply_range(db, &db->journal, db->tx_id, db->tx_start, record_at, db->fresh ? db->applied + 1u : 0u,
-                    db->tx_ndrops > 0);
+    s = apply_range(db, &db->journal, db->tx_id, db->tx_start, record_at,
+                    db->fresh ? db->applied + 1u : 0u, db->tx_ndrops > 0);
     if (s == CDB_E_BUSY && cdb_coord_baton_held(&db->coord)) {
         /* A standing baton expired while applying: give it up and replay
          * onto the overlay instead (spec 5.9.8). */
@@ -2773,8 +2827,8 @@ cdb_status cdb_tx_commit(cdb_db *db)
      * blocks held; a later commit tries again, a claim past the limit is
      * CDB_E_OUT_OF_BUDGET, and a failure that breaks the database marks it
      * failed, which the next call reports. */
-    if (s == CDB_OK && !db->in_tx && db->op_depth == 0 && db->coord.me.nblocks > CDB_COORD_MAX_BLOCKS / 2
-        && cdb_db_reconcile(db) == CDB_OK) {
+    if (s == CDB_OK && !db->in_tx && db->op_depth == 0
+        && db->coord.me.nblocks > CDB_COORD_MAX_BLOCKS / 2 && cdb_db_reconcile(db) == CDB_OK) {
         db_lock(db);
         (void)release_held_blocks(db);
         db_unlock(db);
@@ -2837,7 +2891,8 @@ static void stage_idx_rewind(cdb_db *db, size_t used, int overflow)
     while (off + STAGE_IDX_HDR <= used) {
         uint8_t *r = db->idx_stage + off;
         size_t klen = cdb_load_u16(r + 20, CDB_ORDER_BIG);
-        unsigned b = stage_idx_bucket(cdb_load_u64(r, CDB_ORDER_BIG), r[22], r + STAGE_IDX_HDR, klen);
+        unsigned b =
+            stage_idx_bucket(cdb_load_u64(r, CDB_ORDER_BIG), r[22], r + STAGE_IDX_HDR, klen);
         cdb_store_u32(r + 16, db->stage_idx_buckets[b], CDB_ORDER_BIG);
         db->stage_idx_buckets[b] = (uint32_t)off;
         off += STAGE_IDX_HDR + klen;
@@ -2856,8 +2911,8 @@ cdb_status cdb_tx_rollback_to(cdb_db *db, const cdb_tx_mark *mark)
     if (mark == NULL)
         return CDB_E_INVALID_ARG;
     db_lock(db);
-    if (usable(db) != CDB_OK || !db->in_tx || mark->tx_id != db->tx_id || mark->off > db->journal.end
-        || mark->data > db->tx_data) {
+    if (usable(db) != CDB_OK || !db->in_tx || mark->tx_id != db->tx_id
+        || mark->off > db->journal.end || mark->data > db->tx_data) {
         db_unlock(db);
         return CDB_E_STATE;
     }
@@ -2868,7 +2923,8 @@ cdb_status cdb_tx_rollback_to(cdb_db *db, const cdb_tx_mark *mark)
         cdb_record r;
         memcpy(drops, db->tx_drops, sizeof drops);
         ndrops = db->tx_ndrops;
-        if ((s = drops_add(drops, &ndrops, mark->data, db->tx_data, mark->off, db->journal.end)) != CDB_OK) {
+        if ((s = drops_add(drops, &ndrops, mark->data, db->tx_data, mark->off, db->journal.end))
+            != CDB_OK) {
             db_unlock(db);
             return s;
         }
@@ -2879,7 +2935,8 @@ cdb_status cdb_tx_rollback_to(cdb_db *db, const cdb_tx_mark *mark)
         r.tx_id = db->tx_id;
         r.payload = payload;
         r.payload_len = CDB_ROLLBACK_PAYLOAD_SIZE;
-        if ((s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size)) != CDB_OK) {
+        if ((s = cdb_journal_append(&db->journal, &r, db->cfg.record_buf, db->cfg.record_buf_size))
+            != CDB_OK) {
             db_unlock(db);
             return s;
         }
@@ -3009,7 +3066,9 @@ static cdb_status reconcile_hold_body(cdb_db *db, int closing)
     cdb_pager_set_guard(&db->pager, pager_coord_guard, &db->coord);
     cdb_pager_set_reuse_below(&db->pager, db->coord.min_pin);
     release_slots(db);
-    if ((s = cdb_catalog_open(&db->catalog, &db->pager, &db->cfg.catalog_work, db->cfg.catalog_page)) != CDB_OK)
+    if ((s = cdb_catalog_open(&db->catalog, &db->pager, &db->cfg.catalog_work,
+                              db->cfg.catalog_page))
+        != CDB_OK)
         return s;
     if ((s = merge_journals(db, keep_in_use)) != CDB_OK)
         return on_baton_err(db, s);
@@ -3075,7 +3134,8 @@ static cdb_status finish_archive_op(cdb_db *db, cdb_status op_status)
     cdb_status s;
     if (op_status != CDB_OK) {
         if (cdb_coord_baton_held(&db->coord)
-            && (op_status == CDB_E_BUSY || db->coord.live_others > 0 || cdb_coord_baton_wanted(&db->coord)))
+            && (op_status == CDB_E_BUSY || db->coord.live_others > 0
+                || cdb_coord_baton_wanted(&db->coord)))
             (void)cdb_coord_baton_release(&db->coord);
         if (db->pager.dirty || !cdb_coord_baton_held(&db->coord))
             (void)rebase(db);
@@ -3086,9 +3146,11 @@ static cdb_status finish_archive_op(cdb_db *db, cdb_status op_status)
     return finish_baton(db);
 }
 
-static cdb_status db_create_store_in(cdb_db *db, const char *name, size_t len, uint32_t model, uint64_t *id);
+static cdb_status db_create_store_in(cdb_db *db, const char *name, size_t len, uint32_t model,
+                                     uint64_t *id);
 
-cdb_status cdb_db_create_store(cdb_db *db, const char *name, size_t len, uint32_t model, uint64_t *id)
+cdb_status cdb_db_create_store(cdb_db *db, const char *name, size_t len, uint32_t model,
+                               uint64_t *id)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -3097,7 +3159,8 @@ cdb_status cdb_db_create_store(cdb_db *db, const char *name, size_t len, uint32_
     return r;
 }
 
-static cdb_status db_create_store_in(cdb_db *db, const char *name, size_t len, uint32_t model, uint64_t *id)
+static cdb_status db_create_store_in(cdb_db *db, const char *name, size_t len, uint32_t model,
+                                     uint64_t *id)
 {
     cdb_status s = catalog_ready(db);
     if (s != CDB_OK)
@@ -3107,7 +3170,8 @@ static cdb_status db_create_store_in(cdb_db *db, const char *name, size_t len, u
 
 /* A read: no reconcile and no rotation needed, but rebases if the archive
  * has moved. */
-static cdb_status db_find_store_in(cdb_db *db, const char *name, size_t len, uint64_t *id, int *found);
+static cdb_status db_find_store_in(cdb_db *db, const char *name, size_t len, uint64_t *id,
+                                   int *found);
 
 cdb_status cdb_db_find_store(cdb_db *db, const char *name, size_t len, uint64_t *id, int *found)
 {
@@ -3118,7 +3182,8 @@ cdb_status cdb_db_find_store(cdb_db *db, const char *name, size_t len, uint64_t 
     return r;
 }
 
-static cdb_status db_find_store_in(cdb_db *db, const char *name, size_t len, uint64_t *id, int *found)
+static cdb_status db_find_store_in(cdb_db *db, const char *name, size_t len, uint64_t *id,
+                                   int *found)
 {
     cdb_status s;
     if (usable(db) != CDB_OK)
@@ -3184,9 +3249,11 @@ cdb_status cdb_db_catalog_end(cdb_db *db, cdb_status s)
     return finish_archive_op(db, s);
 }
 
-static cdb_status db_add_schema_in(cdb_db *db, uint64_t store_id, const void *schema, size_t len, uint32_t *version);
+static cdb_status db_add_schema_in(cdb_db *db, uint64_t store_id, const void *schema, size_t len,
+                                   uint32_t *version);
 
-cdb_status cdb_db_add_schema(cdb_db *db, uint64_t store_id, const void *schema, size_t len, uint32_t *version)
+cdb_status cdb_db_add_schema(cdb_db *db, uint64_t store_id, const void *schema, size_t len,
+                             uint32_t *version)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -3195,15 +3262,18 @@ cdb_status cdb_db_add_schema(cdb_db *db, uint64_t store_id, const void *schema, 
     return r;
 }
 
-static cdb_status db_add_schema_in(cdb_db *db, uint64_t store_id, const void *schema, size_t len, uint32_t *version)
+static cdb_status db_add_schema_in(cdb_db *db, uint64_t store_id, const void *schema, size_t len,
+                                   uint32_t *version)
 {
     cdb_status s = catalog_ready(db);
     if (s != CDB_OK)
         return s;
-    return finish_archive_op(db, cdb_catalog_add_schema(&db->catalog, store_id, schema, len, version));
+    return finish_archive_op(db,
+                             cdb_catalog_add_schema(&db->catalog, store_id, schema, len, version));
 }
 
-static cdb_status reclaim_dropped_under_baton(cdb_db *db, uint64_t *pages_freed, uint64_t *nibblets_freed)
+static cdb_status reclaim_dropped_under_baton(cdb_db *db, uint64_t *pages_freed,
+                                              uint64_t *nibblets_freed)
 {
     uint64_t p_freed = 0, n_freed = 0;
     uint64_t lid;
@@ -3234,8 +3304,8 @@ static cdb_status reclaim_dropped_under_baton(cdb_db *db, uint64_t *pages_freed,
             continue;
 
         cdb_store_info sinfo;
-        if (cdb_catalog_get_store(&db->catalog, h.store_id, &sinfo) == CDB_OK &&
-            (sinfo.flags & CDB_STORE_DROPPED)) {
+        if (cdb_catalog_get_store(&db->catalog, h.store_id, &sinfo) == CDB_OK
+            && (sinfo.flags & CDB_STORE_DROPPED)) {
             if (cdb_pager_free(&db->pager, lid) == CDB_OK)
                 p_freed++;
         }
@@ -3353,8 +3423,10 @@ static cdb_status db_scrub_in(cdb_db *db, uint64_t budget, int *pass_done)
         }
         if ((h.flags & CDB_PAGE_FLAG_TAMPER_EVIDENT) && !db->has_integrity_key)
             return CDB_E_SECURITY;
-        if ((s = cdb_page_open_crypto(page, p->page_size, p->fmt, p->order, p->checksum_alg, CDB_AEAD_NONE,
-                                      db->has_integrity_key ? db->integrity_key : NULL, 0, &h)) != CDB_OK)
+        if ((s = cdb_page_open_crypto(page, p->page_size, p->fmt, p->order, p->checksum_alg,
+                                      CDB_AEAD_NONE,
+                                      db->has_integrity_key ? db->integrity_key : NULL, 0, &h))
+            != CDB_OK)
             return s;
         if (h.logical_id != db->scrub_lid)
             return CDB_E_CORRUPT;
@@ -3363,7 +3435,8 @@ static cdb_status db_scrub_in(cdb_db *db, uint64_t budget, int *pass_done)
         return CDB_OK;
     for (i = 0; i < db->salt_count; i++) {
         cdb_salt_entry *e = &db->salts[i];
-        if (!db->scrub_hidden && !e->seen && e->last_commit != 0 && e->last_commit <= db->scrub_start)
+        if (!db->scrub_hidden && !e->seen && e->last_commit != 0
+            && e->last_commit <= db->scrub_start)
             e->prune_before = db->scrub_start;
         e->seen = 0;
     }
@@ -3375,7 +3448,8 @@ static cdb_status db_scrub_in(cdb_db *db, uint64_t budget, int *pass_done)
 /* Compaction requires a clean pager, hence the reconcile first. It makes
  * its own archive commits under the same baton, so the journal is rotated
  * afterwards to match the new committed sequence. */
-static cdb_status db_compact_in(cdb_db *db, uint64_t max_moves, uint64_t *moved, uint64_t *reclaimed);
+static cdb_status db_compact_in(cdb_db *db, uint64_t max_moves, uint64_t *moved,
+                                uint64_t *reclaimed);
 
 cdb_status cdb_db_compact(cdb_db *db, uint64_t max_moves, uint64_t *moved, uint64_t *reclaimed)
 {
@@ -3389,7 +3463,8 @@ cdb_status cdb_db_compact(cdb_db *db, uint64_t max_moves, uint64_t *moved, uint6
     return r;
 }
 
-static cdb_status db_compact_in(cdb_db *db, uint64_t max_moves, uint64_t *moved, uint64_t *reclaimed)
+static cdb_status db_compact_in(cdb_db *db, uint64_t max_moves, uint64_t *moved,
+                                uint64_t *reclaimed)
 {
     cdb_status s;
     uint64_t dp = 0, dn = 0;
@@ -3459,7 +3534,8 @@ static cdb_status close_pending(cdb_db *db)
     if ((s = cdb_coord_set_journal(&db->coord, 0)) != CDB_OK)
         return s;
     cdb_storage_close(&db->journal_st);
-    if ((s = env_remove(db, db->journal_path)) != CDB_OK || (s = env_sync_dir(db, db->workdir)) != CDB_OK)
+    if ((s = env_remove(db, db->journal_path)) != CDB_OK
+        || (s = env_sync_dir(db, db->workdir)) != CDB_OK)
         return s;
     return cdb_coord_leave(&db->coord);
 }
@@ -3484,7 +3560,7 @@ cdb_status cdb_db_close(cdb_db *db)
             cdb_storage_close(&db->journal_st);
         if (db->archive_st.ops != NULL)
             cdb_storage_close(&db->archive_st);
-        release_slots(db); /* their state is lost with the session anyway */
+        release_slots(db);                 /* their state is lost with the session anyway */
         (void)cdb_coord_leave(&db->coord); /* the journal stays for the next open */
         db_wipe_crypto(db);
         return CDB_E_STATE;
@@ -3567,7 +3643,8 @@ cdb_status cdb_db_close(cdb_db *db)
             if (s == CDB_OK || s == CDB_E_STATE)
                 s = env_sync_dir(db, db->parent);
         }
-        cdb_coord_release_all(&db->coord); /* only now, so a joiner never meets half-removed folders */
+        cdb_coord_release_all(
+            &db->coord); /* only now, so a joiner never meets half-removed folders */
         if (s != CDB_OK) {
             db_unlock(db);
             return s;
@@ -3589,9 +3666,11 @@ static cdb_status enclave_set_key(cdb_db *db, int idx, const uint8_t raw_key[32]
 {
     cdb_status s;
     memcpy(db->enclaves[idx].enclave_key, raw_key, 32);
-    s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_PAGE, db->session_salt, db->enclaves[idx].page_key);
+    s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_PAGE, db->session_salt,
+                                 db->enclaves[idx].page_key);
     if (s == CDB_OK)
-        s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_CONTENT_HASH, NULL, db->enclaves[idx].hash_key);
+        s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_CONTENT_HASH, NULL,
+                                     db->enclaves[idx].hash_key);
     if (s == CDB_OK)
         s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_INDEX, NULL, db->enclaves[idx].index_key);
     return s;
@@ -3631,7 +3710,8 @@ static cdb_status db_create_enclave_in(cdb_db *db, uint64_t enclave_id, const ch
         return CDB_E_OVERFLOW;
 
     if (key_ref != NULL) {
-        s = cdb_crypto_resolve_key(key_ref, db->is_production, db->key_provider, db->key_provider_ctx, raw_key);
+        s = cdb_crypto_resolve_key(key_ref, db->is_production, db->key_provider,
+                                   db->key_provider_ctx, raw_key);
         if (s != CDB_OK)
             return s;
     } else {
@@ -3688,7 +3768,8 @@ static cdb_status db_open_enclave_in(cdb_db *db, uint64_t enclave_id, const char
     if (idx == -1)
         return CDB_E_OVERFLOW;
 
-    s = cdb_crypto_resolve_key(key_ref, db->is_production, db->key_provider, db->key_provider_ctx, raw_key);
+    s = cdb_crypto_resolve_key(key_ref, db->is_production, db->key_provider, db->key_provider_ctx,
+                               raw_key);
     if (s != CDB_OK)
         return s;
 
@@ -3727,7 +3808,8 @@ static cdb_status db_rotate_master_key_in(cdb_db *db, const char *new_master_key
     if (db == NULL || new_master_key_uri == NULL)
         return CDB_E_INVALID_ARG;
 
-    s = cdb_crypto_resolve_key(new_master_key_uri, db->is_production, db->key_provider, db->key_provider_ctx, new_mk);
+    s = cdb_crypto_resolve_key(new_master_key_uri, db->is_production, db->key_provider,
+                               db->key_provider_ctx, new_mk);
     if (s != CDB_OK)
         return s;
 
@@ -3763,9 +3845,11 @@ static cdb_status db_rotate_master_key_in(cdb_db *db, const char *new_master_key
     return CDB_OK;
 }
 
-static cdb_status db_rotate_enclave_key_in(cdb_db *db, uint64_t enclave_id, const char *new_enclave_key_uri);
+static cdb_status db_rotate_enclave_key_in(cdb_db *db, uint64_t enclave_id,
+                                           const char *new_enclave_key_uri);
 
-cdb_status cdb_db_rotate_enclave_key(cdb_db *db, uint64_t enclave_id, const char *new_enclave_key_uri)
+cdb_status cdb_db_rotate_enclave_key(cdb_db *db, uint64_t enclave_id,
+                                     const char *new_enclave_key_uri)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -3774,7 +3858,8 @@ cdb_status cdb_db_rotate_enclave_key(cdb_db *db, uint64_t enclave_id, const char
     return r;
 }
 
-static cdb_status db_rotate_enclave_key_in(cdb_db *db, uint64_t enclave_id, const char *new_enclave_key_uri)
+static cdb_status db_rotate_enclave_key_in(cdb_db *db, uint64_t enclave_id,
+                                           const char *new_enclave_key_uri)
 {
     unsigned i;
     int idx = -1;
@@ -3794,7 +3879,8 @@ static cdb_status db_rotate_enclave_key_in(cdb_db *db, uint64_t enclave_id, cons
         return CDB_E_NOT_FOUND;
 
     if (new_enclave_key_uri != NULL) {
-        s = cdb_crypto_resolve_key(new_enclave_key_uri, db->is_production, db->key_provider, db->key_provider_ctx, raw_key);
+        s = cdb_crypto_resolve_key(new_enclave_key_uri, db->is_production, db->key_provider,
+                                   db->key_provider_ctx, raw_key);
         if (s != CDB_OK)
             return s;
     } else {
@@ -3830,8 +3916,8 @@ static cdb_status db_check_key_rotation_in(cdb_db *db)
     if (db->rotation_interval_days == 0)
         return CDB_OK;
 
-    if (db->rotation_policy == CDB_ROTATION_REFUSE_OPEN ||
-        db->rotation_policy == CDB_ROTATION_REFUSE_WRITES) {
+    if (db->rotation_policy == CDB_ROTATION_REFUSE_OPEN
+        || db->rotation_policy == CDB_ROTATION_REFUSE_WRITES) {
         if (db->rotation_expired)
             return CDB_E_SECURITY;
     }
@@ -3914,8 +4000,8 @@ static cdb_status db_grant_role_in(cdb_db *db, uint64_t principal_id, uint32_t r
 
     for (i = 0; i < sizeof(db->rbac_grants) / sizeof(db->rbac_grants[0]); i++) {
         if (db->rbac_grants[i].in_use) {
-            if (db->rbac_grants[i].principal_id == principal_id &&
-                db->rbac_grants[i].scope == scope_store_or_enclave) {
+            if (db->rbac_grants[i].principal_id == principal_id
+                && db->rbac_grants[i].scope == scope_store_or_enclave) {
                 db->rbac_grants[i].perms |= perm_mask;
                 return CDB_OK;
             }
@@ -3935,8 +4021,8 @@ static cdb_status db_grant_role_in(cdb_db *db, uint64_t principal_id, uint32_t r
     return CDB_OK;
 }
 
-static cdb_status db_check_perm_in(cdb_db *db, uint64_t principal_id, uint64_t scope_store_or_enclave,
-                                   uint8_t required_perm);
+static cdb_status db_check_perm_in(cdb_db *db, uint64_t principal_id,
+                                   uint64_t scope_store_or_enclave, uint8_t required_perm);
 
 cdb_status cdb_db_check_perm(cdb_db *db, uint64_t principal_id, uint64_t scope_store_or_enclave,
                              uint8_t required_perm)
@@ -3948,8 +4034,8 @@ cdb_status cdb_db_check_perm(cdb_db *db, uint64_t principal_id, uint64_t scope_s
     return r;
 }
 
-static cdb_status db_check_perm_in(cdb_db *db, uint64_t principal_id, uint64_t scope_store_or_enclave,
-                                   uint8_t required_perm)
+static cdb_status db_check_perm_in(cdb_db *db, uint64_t principal_id,
+                                   uint64_t scope_store_or_enclave, uint8_t required_perm)
 {
     unsigned i;
 
@@ -3968,7 +4054,8 @@ static cdb_status db_check_perm_in(cdb_db *db, uint64_t principal_id, uint64_t s
         if (db->rbac_grants[i].principal_id == principal_id) {
             if (db->rbac_grants[i].perms & CDB_PERM_ADMIN)
                 return CDB_OK;
-            if (db->rbac_grants[i].scope == 0 || db->rbac_grants[i].scope == scope_store_or_enclave) {
+            if (db->rbac_grants[i].scope == 0
+                || db->rbac_grants[i].scope == scope_store_or_enclave) {
                 if ((db->rbac_grants[i].perms & required_perm) == required_perm)
                     return CDB_OK;
             }
@@ -3979,30 +4066,29 @@ static cdb_status db_check_perm_in(cdb_db *db, uint64_t principal_id, uint64_t s
 }
 
 static cdb_status db_trigger_register_in(cdb_db *db, const char *name, size_t name_len,
-                                         uint64_t store_id, uint8_t events,
-                                         const char *proc_name, size_t proc_len,
-                                         uint8_t max_depth);
+                                         uint64_t store_id, uint8_t events, const char *proc_name,
+                                         size_t proc_len, uint8_t max_depth);
 
-cdb_status cdb_db_trigger_register(cdb_db *db, const char *name, size_t name_len,
-                                   uint64_t store_id, uint8_t events,
-                                   const char *proc_name, size_t proc_len,
+cdb_status cdb_db_trigger_register(cdb_db *db, const char *name, size_t name_len, uint64_t store_id,
+                                   uint8_t events, const char *proc_name, size_t proc_len,
                                    uint8_t max_depth)
 {
     cdb_status r;
     cdb_db_lock(db);
-    r = db_trigger_register_in(db, name, name_len, store_id, events, proc_name, proc_len, max_depth);
+    r = db_trigger_register_in(db, name, name_len, store_id, events, proc_name, proc_len,
+                               max_depth);
     cdb_db_unlock(db);
     return r;
 }
 
 static cdb_status db_trigger_register_in(cdb_db *db, const char *name, size_t name_len,
-                                         uint64_t store_id, uint8_t events,
-                                         const char *proc_name, size_t proc_len,
-                                         uint8_t max_depth)
+                                         uint64_t store_id, uint8_t events, const char *proc_name,
+                                         size_t proc_len, uint8_t max_depth)
 {
     if (db == NULL)
         return CDB_E_INVALID_ARG;
-    return cdb_trigger_register(&db->triggers, name, name_len, store_id, events, proc_name, proc_len, max_depth);
+    return cdb_trigger_register(&db->triggers, name, name_len, store_id, events, proc_name,
+                                proc_len, max_depth);
 }
 
 static cdb_status db_trigger_unregister_in(cdb_db *db, const char *name, size_t name_len);
@@ -4031,9 +4117,11 @@ static const uint8_t *get_enclave_hash_key(cdb_db *db, uint64_t store_id)
     return i < 0 ? NULL : db->enclaves[i].hash_key;
 }
 
-static cdb_status db_blob_write_begin_in(cdb_db *db, uint64_t store_id, uint8_t *scratch, cdb_blob_writer *w);
+static cdb_status db_blob_write_begin_in(cdb_db *db, uint64_t store_id, uint8_t *scratch,
+                                         cdb_blob_writer *w);
 
-cdb_status cdb_db_blob_write_begin(cdb_db *db, uint64_t store_id, uint8_t *scratch, cdb_blob_writer *w)
+cdb_status cdb_db_blob_write_begin(cdb_db *db, uint64_t store_id, uint8_t *scratch,
+                                   cdb_blob_writer *w)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -4044,7 +4132,8 @@ cdb_status cdb_db_blob_write_begin(cdb_db *db, uint64_t store_id, uint8_t *scrat
     return r;
 }
 
-static cdb_status db_blob_write_begin_in(cdb_db *db, uint64_t store_id, uint8_t *scratch, cdb_blob_writer *w)
+static cdb_status db_blob_write_begin_in(cdb_db *db, uint64_t store_id, uint8_t *scratch,
+                                         cdb_blob_writer *w)
 {
     const uint8_t *hkey;
     if (db == NULL)
@@ -4129,9 +4218,11 @@ cdb_status cdb_db_blob_read_end(cdb_blob_reader *r)
     return s;
 }
 
-static cdb_status db_blob_free_in(cdb_db *db, uint64_t store_id, const cdb_blob_ref *ref, uint8_t *page_buf);
+static cdb_status db_blob_free_in(cdb_db *db, uint64_t store_id, const cdb_blob_ref *ref,
+                                  uint8_t *page_buf);
 
-cdb_status cdb_db_blob_free(cdb_db *db, uint64_t store_id, const cdb_blob_ref *ref, uint8_t *page_buf)
+cdb_status cdb_db_blob_free(cdb_db *db, uint64_t store_id, const cdb_blob_ref *ref,
+                            uint8_t *page_buf)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -4140,7 +4231,8 @@ cdb_status cdb_db_blob_free(cdb_db *db, uint64_t store_id, const cdb_blob_ref *r
     return r;
 }
 
-static cdb_status db_blob_free_in(cdb_db *db, uint64_t store_id, const cdb_blob_ref *ref, uint8_t *page_buf)
+static cdb_status db_blob_free_in(cdb_db *db, uint64_t store_id, const cdb_blob_ref *ref,
+                                  uint8_t *page_buf)
 {
     if (db == NULL)
         return CDB_E_INVALID_ARG;
@@ -4220,7 +4312,8 @@ static cdb_status db_get_crdt_vector_in(const cdb_db *db, cdb_crdt_vector *vecto
 
 /* One exported delta: measured into *off when out is NULL, written at
  * out + *off otherwise. */
-static void crdt_emit(const cdb_db *db, const cdb_record *r, uint8_t *out, size_t *off, uint32_t *count)
+static void crdt_emit(const cdb_db *db, const cdb_record *r, uint8_t *out, size_t *off,
+                      uint32_t *count)
 {
     size_t dlen = r->payload_len > 0 ? (size_t)(r->payload_len - 1u) : 0u;
     if (out != NULL) {
@@ -4242,14 +4335,17 @@ static void crdt_emit(const cdb_db *db, const cdb_record *r, uint8_t *out, size_
  * counters in (since, last_tx], as the replay scan finds them (scan_next):
  * aborted transactions and records a rollback dropped are left out (spec
  * 14.4.9 rule 6), and so are records that were themselves replicated in. */
-static cdb_status crdt_walk(cdb_db *db, uint64_t since, uint8_t *out, size_t *out_off, uint32_t *count)
+static cdb_status crdt_walk(cdb_db *db, uint64_t since, uint8_t *out, size_t *out_off,
+                            uint32_t *count)
 {
     uint64_t off = CDB_JOURNAL_HEADER_SIZE, start = 0, cur = 0;
     cdb_status s;
     while (off < db->journal.end) {
         cdb_record r;
         uint64_t next, counter;
-        if ((s = read_record(db, &db->journal, off, db->cfg.record_buf, db->cfg.record_buf_size, &r, &next)) != CDB_OK) {
+        if ((s = read_record(db, &db->journal, off, db->cfg.record_buf, db->cfg.record_buf_size, &r,
+                             &next))
+            != CDB_OK) {
             if (s == CDB_E_SECURITY)
                 return s;
             break;
@@ -4260,7 +4356,8 @@ static cdb_status crdt_walk(cdb_db *db, uint64_t since, uint8_t *out, size_t *ou
             start = off;
         } else if (r.kind == CDB_RECORD_ABORT) {
             cur = 0;
-        } else if (r.kind == CDB_RECORD_COMMIT && r.tx_id == cur && counter > since && counter <= db->last_tx) {
+        } else if (r.kind == CDB_RECORD_COMMIT && r.tx_id == cur && counter > since
+                   && counter <= db->last_tx) {
             cdb_tx_drop drops[CDB_TX_MAX_DROPS];
             uint32_t ndrops = 0, ord = 0;
             uint64_t tx = cur, at = start;
@@ -4270,7 +4367,8 @@ static cdb_status crdt_walk(cdb_db *db, uint64_t since, uint8_t *out, size_t *ou
             while (at < off) {
                 cdb_record d;
                 uint64_t dnext;
-                if ((s = read_record(db, &db->journal, at, db->cfg.record_buf, db->cfg.record_buf_size, &d, &dnext))
+                if ((s = read_record(db, &db->journal, at, db->cfg.record_buf,
+                                     db->cfg.record_buf_size, &d, &dnext))
                     != CDB_OK)
                     return s;
                 if (d.kind == CDB_RECORD_DATA && d.tx_id == tx && !drops_has(drops, ndrops, ord++)
@@ -4339,8 +4437,8 @@ cdb_status cdb_db_crdt_export_slice(cdb_db *db, const cdb_crdt_vector *since_vec
 typedef struct crdt_import {
     int own_tx;
     cdb_tx_mark mark;
-    uint32_t ord0;                                /* data ordinal of the call's first record */
-    cdb_crdt_peer_entry adv[CDB_CRDT_MAX_PEERS];  /* per origin, the latest change applied */
+    uint32_t ord0;                               /* data ordinal of the call's first record */
+    cdb_crdt_peer_entry adv[CDB_CRDT_MAX_PEERS]; /* per origin, the latest change applied */
     uint32_t nadv;
     size_t applied;
 } crdt_import;
@@ -4367,7 +4465,8 @@ static int crdt_seen(const cdb_db *db, const crdt_import *im, cdb_hlc h)
 {
     cdb_crdt_peer_entry pe;
     uint32_t i;
-    if (cdb_crdt_vector_get(&db->crdt_vector, h.peer_id, &pe) == CDB_OK && cdb_hlc_compare(h, pe.hlc) <= 0)
+    if (cdb_crdt_vector_get(&db->crdt_vector, h.peer_id, &pe) == CDB_OK
+        && cdb_hlc_compare(h, pe.hlc) <= 0)
         return 1;
     for (i = 0; i < db->n_crdt_pend; i++)
         if (db->crdt_pend[i].peer_id == h.peer_id && cdb_hlc_compare(h, db->crdt_pend[i].hlc) <= 0)
