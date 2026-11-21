@@ -1,0 +1,27 @@
+# combolite-core — normalize line endings + mark generated/binary + vendored. See workflow-git.
+* text=auto eol=lf
+
+# Explicit text
+*.c      text eol=lf
+*.h      text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.cmake  text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.cff    text eol=lf
+CMakeLists.txt text eol=lf
+
+# Binary (never normalize / diff as text)
+*.png    binary
+*.jpg    binary
+*.bin    binary
+*.xz     binary
+*.gz     binary
+
+# Vendored submodules: leave to upstream, exclude from language stats
+third-party/** linguist-vendored
+
+# Generated API docs (HTML) — mark as docs, not source, for language stats
+docs/*.html linguist-documentation

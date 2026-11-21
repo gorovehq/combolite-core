@@ -222,6 +222,27 @@ The following features, interfaces, or operators are provisioned in headers, spe
 
 ---
 
+## Community & Contributing
+
+- **Contributing:** see [`CONTRIBUTING.md`](CONTRIBUTING.md) (build, test, style, branch & PR
+  workflow) — the authoritative ruleset is the umbrella `db-combolite/CLAUDE.md`.
+- **Code of Conduct:** [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+- **Getting help:** [`SUPPORT.md`](SUPPORT.md), [`docs/FAQ.md`](docs/FAQ.md).
+- **Architecture decisions:** [`docs/adr/`](docs/adr/).
+
+## Security
+
+To report a security vulnerability, please **do not** open a public issue. Use the private GitHub
+Security Advisory flow (repository **Security** tab → **Report a vulnerability**). See
+[`SECURITY.md`](SECURITY.md) for scope, response expectations, and the coordinated-disclosure process.
+
+## Citing
+
+If you use combolite-core in research or software, cite it via [`CITATION.cff`](CITATION.cff).
+
+---
+
 ## License
 
-MIT: See [`LICENSE`](LICENSE) for complete license text. Third-party components (Mbed TLS, xz) are documented in [`ATTRIBUTIONS.md`](../ATTRIBUTIONS.md).
+MIT: See [`LICENSE`](LICENSE) for complete license text. Third-party components (Mbed TLS, xz, Unity)
+are documented in [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md).
