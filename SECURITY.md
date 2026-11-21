@@ -40,8 +40,8 @@ Out of scope:
 - Build tooling, examples, and documentation, except where a flaw in them directly
   compromises a built library.
 - Issues already recorded under **Known Issues** in the [README](README.md) (e.g. the
-  tracked key-wrap nonce item scheduled for remediation); these are known and need no new
-  report.
+  concurrent-create archive race or the transaction ID-block ceiling); these are known and
+  need no new report.
 
 ---
 
