@@ -23,7 +23,7 @@ static void store_lid(const cdb_pager *p, uint8_t *b, uint64_t lid)
 }
 
 cdb_status cdb_blob_write_begin(cdb_pager *p, uint64_t store_id, uint8_t *scratch,
-                               const uint8_t *enclave_key, cdb_blob_writer *w)
+                                const uint8_t *enclave_key, cdb_blob_writer *w)
 {
     cdb_status s;
     if (p == NULL || scratch == NULL || w == NULL)
@@ -181,8 +181,8 @@ cdb_status cdb_blob_write_abort(cdb_blob_writer *w)
 }
 
 cdb_status cdb_blob_read_begin(cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref,
-                              uint8_t *page_buf, int verify_hash, const uint8_t *enclave_key,
-                              cdb_blob_reader *r)
+                               uint8_t *page_buf, int verify_hash, const uint8_t *enclave_key,
+                               cdb_blob_reader *r)
 {
     cdb_status s;
     if (p == NULL || ref == NULL || page_buf == NULL || r == NULL)
@@ -227,7 +227,8 @@ cdb_status cdb_blob_read_begin(cdb_pager *p, uint64_t store_id, const cdb_blob_r
     s = cdb_pager_read(p, r->curr_page, page_buf, &h);
     if (s != CDB_OK)
         return s == CDB_E_NOT_FOUND ? CDB_E_CORRUPT : s;
-    if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW) || h.store_id != store_id)
+    if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW)
+        || h.store_id != store_id)
         return CDB_E_CORRUPT;
     if (h.payload_len < p->addr_width)
         return CDB_E_CORRUPT;
@@ -273,7 +274,8 @@ cdb_status cdb_blob_read_chunk(cdb_blob_reader *r, void *dest, size_t cap, size_
             s = cdb_pager_read(r->pager, r->curr_page, r->page_buf, &h);
             if (s != CDB_OK)
                 return s == CDB_E_NOT_FOUND ? CDB_E_CORRUPT : s;
-            if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW) || h.store_id != r->store_id)
+            if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW)
+                || h.store_id != r->store_id)
                 return CDB_E_CORRUPT;
             if (h.payload_len < r->pager->addr_width)
                 return CDB_E_CORRUPT;
@@ -289,7 +291,8 @@ cdb_status cdb_blob_read_chunk(cdb_blob_reader *r, void *dest, size_t cap, size_
         if ((uint64_t)take > r->bytes_remaining)
             take = (size_t)r->bytes_remaining;
 
-        const uint8_t *pl = r->page_buf + cdb_page_payload_offset(r->pager->fmt) + r->pager->addr_width;
+        const uint8_t *pl =
+            r->page_buf + cdb_page_payload_offset(r->pager->fmt) + r->pager->addr_width;
         memcpy(dst, pl + r->curr_offset_in_page, take);
 
         if (r->verify_hash) {
@@ -326,7 +329,8 @@ cdb_status cdb_blob_read_end(cdb_blob_reader *r)
     return CDB_OK;
 }
 
-cdb_status cdb_blob_free(cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref, uint8_t *page_buf)
+cdb_status cdb_blob_free(cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref,
+                         uint8_t *page_buf)
 {
     if (p == NULL || ref == NULL || page_buf == NULL)
         return CDB_E_INVALID_ARG;

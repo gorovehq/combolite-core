@@ -41,8 +41,9 @@ uint64_t cdb_overflow_pages(const cdb_pager *p, size_t len)
     return ((uint64_t)len + room - 1u) / room;
 }
 
-cdb_status cdb_overflow_write_db(cdb_db *db, cdb_pager *p, uint64_t store, const void *data, size_t len,
-                                 uint8_t *scratch, const uint8_t *okey, size_t oklen, uint64_t *first)
+cdb_status cdb_overflow_write_db(cdb_db *db, cdb_pager *p, uint64_t store, const void *data,
+                                 size_t len, uint8_t *scratch, const uint8_t *okey, size_t oklen,
+                                 uint64_t *first)
 {
     const uint8_t *src = (const uint8_t *)data;
     size_t room;
@@ -84,7 +85,8 @@ cdb_status cdb_overflow_write_db(cdb_db *db, cdb_pager *p, uint64_t store, const
                 uint64_t tail_addr = 0;
                 tokey[0] = CDB_OVERFLOW_OWNER_PREV_PAGE;
                 cdb_store_u64(tokey + 1, lid, CDB_ORDER_BIG);
-                s = cdb_nib_put(db, store, CDB_NIB_KIND_OVERFLOW_TAIL, tokey, sizeof tokey, src + part, tail, &tail_addr);
+                s = cdb_nib_put(db, store, CDB_NIB_KIND_OVERFLOW_TAIL, tokey, sizeof tokey,
+                                src + part, tail, &tail_addr);
                 if (s != CDB_OK)
                     return s;
                 next = tail_addr;
@@ -105,8 +107,8 @@ cdb_status cdb_overflow_write_db(cdb_db *db, cdb_pager *p, uint64_t store, const
     return CDB_OK;
 }
 
-cdb_status cdb_overflow_write(cdb_pager *p, uint64_t store, const void *data, size_t len, uint8_t *scratch,
-                              uint64_t *first)
+cdb_status cdb_overflow_write(cdb_pager *p, uint64_t store, const void *data, size_t len,
+                              uint8_t *scratch, uint64_t *first)
 {
     return cdb_overflow_write_db(NULL, p, store, data, len, scratch, NULL, 0, first);
 }
@@ -115,16 +117,16 @@ cdb_status cdb_overflow_write(cdb_pager *p, uint64_t store, const void *data, si
  * part is the number of value bytes this page must hold; last says whether
  * it must end the chain (next ID 0) or continue it (next ID not 0). Any
  * mismatch in type, flag, store, length or link is CDB_E_CORRUPT. */
-static cdb_status chain_page(cdb_pager *p, uint64_t lid, uint64_t store, size_t part, int last, uint8_t *page,
-                             uint64_t *next, const uint8_t **body)
+static cdb_status chain_page(cdb_pager *p, uint64_t lid, uint64_t store, size_t part, int last,
+                             uint8_t *page, uint64_t *next, const uint8_t **body)
 {
     cdb_page_header h;
     const uint8_t *pl;
     cdb_status s = cdb_pager_read(p, lid, page, &h);
     if (s != CDB_OK)
         return s == CDB_E_NOT_FOUND ? CDB_E_CORRUPT : s;
-    if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW) || h.store_id != store
-        || h.payload_len != p->addr_width + part)
+    if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW)
+        || h.store_id != store || h.payload_len != p->addr_width + part)
         return CDB_E_CORRUPT;
     pl = page + cdb_page_payload_offset(p->fmt);
     *next = load_lid(p, pl);
@@ -134,8 +136,8 @@ static cdb_status chain_page(cdb_pager *p, uint64_t lid, uint64_t store, size_t 
     return CDB_OK;
 }
 
-cdb_status cdb_overflow_read_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64_t store, void *out, size_t len,
-                                uint8_t *page)
+cdb_status cdb_overflow_read_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64_t store, void *out,
+                                size_t len, uint8_t *page)
 {
     uint8_t *dst = (uint8_t *)out;
     size_t room;
@@ -175,13 +177,14 @@ cdb_status cdb_overflow_read_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64
     return CDB_OK;
 }
 
-cdb_status cdb_overflow_read(cdb_pager *p, uint64_t first, uint64_t store, void *out, size_t len, uint8_t *page)
+cdb_status cdb_overflow_read(cdb_pager *p, uint64_t first, uint64_t store, void *out, size_t len,
+                             uint8_t *page)
 {
     return cdb_overflow_read_db(NULL, p, first, store, out, len, page);
 }
 
-cdb_status cdb_overflow_free_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64_t store, size_t len,
-                                uint8_t *page)
+cdb_status cdb_overflow_free_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64_t store,
+                                size_t len, uint8_t *page)
 {
     size_t room;
     uint64_t lid = first;
@@ -214,7 +217,8 @@ cdb_status cdb_overflow_free_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64
     return CDB_OK;
 }
 
-cdb_status cdb_overflow_free(cdb_pager *p, uint64_t first, uint64_t store, size_t len, uint8_t *page)
+cdb_status cdb_overflow_free(cdb_pager *p, uint64_t first, uint64_t store, size_t len,
+                             uint8_t *page)
 {
     return cdb_overflow_free_db(NULL, p, first, store, len, page);
 }
@@ -237,7 +241,8 @@ cdb_status cdb_overflow_nib_moved(cdb_db *db, uint64_t store, const uint8_t *oke
         prev_lid = cdb_load_u64(okey + 1, CDB_ORDER_BIG);
         if ((s = cdb_pager_read(&db->pager, prev_lid, pbuf, &h)) != CDB_OK)
             return s == CDB_E_NOT_FOUND ? CDB_E_NOT_FOUND : s;
-        if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW) || h.store_id != store)
+        if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW)
+            || h.store_id != store)
             return CDB_E_NOT_FOUND;
         pl = pbuf + cdb_page_payload_offset(db->pager.fmt);
         if (h.payload_len < db->pager.addr_width)
@@ -251,7 +256,6 @@ cdb_status cdb_overflow_nib_moved(cdb_db *db, uint64_t store, const uint8_t *oke
         return cdb_doc_overflow_tail_moved(db, store, okey + 1, oklen - 1, old_addr, addr);
     case CDB_OVERFLOW_OWNER_COL_CHUNK:
         return cdb_table_nib_moved(db, store, okey + 1, oklen - 1, old_addr, addr);
-    default:
-        return CDB_E_CORRUPT;
+    default: return CDB_E_CORRUPT;
     }
 }

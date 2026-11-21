@@ -52,12 +52,14 @@ typedef struct cdb_storage {
 /* Convenience wrappers that call through the table. truncate reports
  * CDB_E_UNSUPPORTED when the backend has none; close does nothing on an
  * unbound handle. */
-static inline cdb_status cdb_storage_read(const cdb_storage *s, uint64_t offset, void *buf, size_t len)
+static inline cdb_status cdb_storage_read(const cdb_storage *s, uint64_t offset, void *buf,
+                                          size_t len)
 {
     return s->ops->read(s->ctx, offset, buf, len);
 }
 
-static inline cdb_status cdb_storage_program(const cdb_storage *s, uint64_t offset, const void *buf, size_t len)
+static inline cdb_status cdb_storage_program(const cdb_storage *s, uint64_t offset, const void *buf,
+                                             size_t len)
 {
     return s->ops->program(s->ctx, offset, buf, len);
 }

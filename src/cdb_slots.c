@@ -16,12 +16,14 @@
 
 struct cdb_slot_chunk {
     cdb_slot_chunk *next;
-    unsigned n;     /* slots in it */
-    int owned;      /* from the environment's allocator, rather than caller memory */
+    unsigned n; /* slots in it */
+    int owned;  /* from the environment's allocator, rather than caller memory */
 };
 
 /* The header rounded up, so the slots after it are aligned. */
-#define HDR ((sizeof(cdb_slot_chunk) + sizeof(cdb_slot_align) - 1u) / sizeof(cdb_slot_align) * sizeof(cdb_slot_align))
+#define HDR                                                                          \
+    ((sizeof(cdb_slot_chunk) + sizeof(cdb_slot_align) - 1u) / sizeof(cdb_slot_align) \
+     * sizeof(cdb_slot_align))
 
 /* Slot i of chunk c. */
 static cdb_slot *slot_at(cdb_slot_chunk *c, size_t elem, unsigned i)
@@ -109,7 +111,9 @@ static cdb_slot_chunk *grow(cdb_db *db, cdb_slots *s, unsigned n)
         }
     }
     if (c == NULL && db->env.ops->alloc != NULL && db->env.ops->free != NULL
-        && (c = (cdb_slot_chunk *)db->env.ops->alloc(db->env.ctx, cdb_slots_chunk_bytes(s->elem, n))) != NULL) {
+        && (c = (cdb_slot_chunk *)db->env.ops->alloc(db->env.ctx,
+                                                     cdb_slots_chunk_bytes(s->elem, n)))
+               != NULL) {
         c->n = n;
         c->owned = 1;
     }
@@ -145,7 +149,8 @@ cdb_status cdb_slots_claim(cdb_db *db, cdb_slots *s, void **out)
         }
     /* Room to grow. */
     if (cap == 0 || s->count < cap) {
-        unsigned n = cap != 0 && cap - s->count < CDB_SLOTS_CHUNK ? cap - s->count : CDB_SLOTS_CHUNK;
+        unsigned n =
+            cap != 0 && cap - s->count < CDB_SLOTS_CHUNK ? cap - s->count : CDB_SLOTS_CHUNK;
         if ((c = grow(db, s, n)) != NULL) {
             *out = slot_at(c, s->elem, 0);
             return CDB_OK;
@@ -221,7 +226,9 @@ void cdb_slots_shrink(cdb_db *db, cdb_slots *s)
         int idle = 1;
         for (i = 0; i < c->n && idle; i++) {
             cdb_slot *t = slot_at(c, s->elem, i);
-            if (t->in_use && (t->last_use > s->floor || busy(db, t) || (s->ops->pinned != NULL && s->ops->pinned(t))))
+            if (t->in_use
+                && (t->last_use > s->floor || busy(db, t)
+                    || (s->ops->pinned != NULL && s->ops->pinned(t))))
                 idle = 0;
         }
         if (idle) {

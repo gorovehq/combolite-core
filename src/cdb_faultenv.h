@@ -15,7 +15,8 @@
 #include "combolite/cdb_env.h"
 #include "cdb_faultdev.h"
 
-#define CDB_FAULTENV_MAX_FILES 16  /* three processes' journals, overlays and slots, coord/lock, a rotation */
+#define CDB_FAULTENV_MAX_FILES \
+    16 /* three processes' journals, overlays and slots, coord/lock, a rotation */
 #define CDB_FAULTENV_MAX_DIRS 4
 #define CDB_FAULTENV_NAME 160
 #define CDB_FAULTENV_MAX_ALLOCS 256
@@ -26,7 +27,7 @@ typedef struct cdb_faultenv_file {
     char durable_name[CDB_FAULTENV_NAME];
     int exists;
     int durable_exists;
-    uint64_t gen;      /* which file this is: new at each create, kept by renames */
+    uint64_t gen; /* which file this is: new at each create, kept by renames */
     cdb_faultdev dev;
 } cdb_faultenv_file;
 
@@ -36,7 +37,7 @@ typedef struct cdb_faultenv_file {
 struct cdb_lock {
     int used;
     int exclusive;
-    int file;          /* index into files */
+    int file; /* index into files */
     uint64_t gen;
 };
 
@@ -47,7 +48,7 @@ typedef struct cdb_faultenv_dir {
 } cdb_faultenv_dir;
 
 typedef struct cdb_faultenv_config {
-    uint8_t *arena;            /* 3 * file_capacity bytes per file slot */
+    uint8_t *arena; /* 3 * file_capacity bytes per file slot */
     size_t file_capacity;
     cdb_fault_record *records; /* records_per_file per file slot */
     size_t records_per_file;
@@ -58,16 +59,16 @@ typedef struct cdb_faultenv {
     cdb_fault_clock clock;
     cdb_faultenv_file files[CDB_FAULTENV_MAX_FILES];
     cdb_faultenv_dir dirs[CDB_FAULTENV_MAX_DIRS];
-    int has_time;     /* the clock: off after init */
+    int has_time; /* the clock: off after init */
     int64_t time_ns;
-    int64_t mono_ns;  /* the monotonic clock: moves only by sleep and cdb_faultenv_advance */
-    uint64_t rng;     /* the random source: xorshift64*, the same sequence on every run */
+    int64_t mono_ns; /* the monotonic clock: moves only by sleep and cdb_faultenv_advance */
+    uint64_t rng;    /* the random source: xorshift64*, the same sequence on every run */
     void (*on_sleep)(void *arg); /* runs after each sleep, not nested */
     void *on_sleep_arg;
     int in_sleep_hook;
-    int no_alloc;     /* the allocator refuses: on after init is off */
+    int no_alloc;                          /* the allocator refuses: on after init is off */
     void *allocs[CDB_FAULTENV_MAX_ALLOCS]; /* live blocks */
-    unsigned live;    /* how many */
+    unsigned live;                         /* how many */
     uint64_t next_gen;
     cdb_lock locks[CDB_FAULTENV_MAX_LOCKS];
 } cdb_faultenv;
@@ -108,11 +109,11 @@ void cdb_faultenv_without_locks(cdb_env *env);
 
 /* Arms a crash at mutating operation number op, counted from now, across
  * every file and directory operation. */
-void cdb_faultenv_arm(cdb_faultenv *fe, uint64_t op, cdb_crash_mode mode,
-                      size_t keep_writes, size_t torn_bytes);
+void cdb_faultenv_arm(cdb_faultenv *fe, uint64_t op, cdb_crash_mode mode, size_t keep_writes,
+                      size_t torn_bytes);
 
-void cdb_faultenv_crash_now(cdb_faultenv *fe, cdb_crash_mode mode,
-                            size_t keep_writes, size_t torn_bytes);
+void cdb_faultenv_crash_now(cdb_faultenv *fe, cdb_crash_mode mode, size_t keep_writes,
+                            size_t torn_bytes);
 
 /* Ends an armed crash as a killed process, not a power cut: the operation
  * it struck did not happen, every earlier one stays as it is, durable or

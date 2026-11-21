@@ -41,7 +41,7 @@ cdb_status cdb_schema_check(const uint8_t *schema, size_t len, cdb_byte_order or
 
 /* Validates an encoded object against a schema that passed cdb_schema_check.
  * CDB_E_SCHEMA if it does not conform. */
-cdb_status cdb_schema_validate(const uint8_t *schema, size_t schema_len, const uint8_t *doc, size_t doc_len,
-                               cdb_byte_order order);
+cdb_status cdb_schema_validate(const uint8_t *schema, size_t schema_len, const uint8_t *doc,
+                               size_t doc_len, cdb_byte_order order);
 
 #endif

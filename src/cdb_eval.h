@@ -35,24 +35,21 @@ typedef enum cdb_tristate {
 
 /* One query parameter binding. */
 typedef struct cdb_eval_param {
-    const char *name;      /* NULL if index-only */
+    const char *name; /* NULL if index-only */
     size_t name_len;
-    uint32_t index;        /* 0-based index */
+    uint32_t index; /* 0-based index */
     cdb_value val;
 } cdb_eval_param;
 
 /* Custom field resolver hook for non-standard record shapes. */
-typedef cdb_status (*cdb_field_resolver_fn)(void *user_data,
-                                            const char *path,
-                                            size_t path_len,
-                                            cdb_value *out_val,
-                                            int *found);
+typedef cdb_status (*cdb_field_resolver_fn)(void *user_data, const char *path, size_t path_len,
+                                            cdb_value *out_val, int *found);
 
 /* Evaluation context for expressions. */
 typedef struct cdb_eval_ctx {
     cdb_byte_order order;
-    cdb_catalog *cat;      /* catalog for field dictionary lookup; optional */
-    uint64_t store_id;     /* catalog store ID for field lookup */
+    cdb_catalog *cat;  /* catalog for field dictionary lookup; optional */
+    uint64_t store_id; /* catalog store ID for field lookup */
 
     /* Active entry attributes */
     uint64_t entry_id;
@@ -96,7 +93,8 @@ typedef struct cdb_eval_ctx {
 } cdb_eval_ctx;
 
 /* Initializes an evaluation context with default limits. */
-void cdb_eval_ctx_init(cdb_eval_ctx *ctx, cdb_byte_order order, cdb_catalog *cat, uint64_t store_id);
+void cdb_eval_ctx_init(cdb_eval_ctx *ctx, cdb_byte_order order, cdb_catalog *cat,
+                       uint64_t store_id);
 
 /* Sets caller scratch buffer for dynamic allocations (e.g. string concatenation). */
 void cdb_eval_ctx_set_scratch(cdb_eval_ctx *ctx, uint8_t *buf, size_t cap);
@@ -131,7 +129,7 @@ cdb_status cdb_eval_resolve_field(cdb_eval_ctx *ctx, const char *path, size_t pa
 /* Evaluates an expression directly from wire format bytes.
  * *consumed receives the number of bytes read from wire. */
 cdb_status cdb_eval_expr_wire(cdb_eval_ctx *ctx, const uint8_t *wire, size_t len,
-                             cdb_value *out_val, size_t *consumed);
+                              cdb_value *out_val, size_t *consumed);
 
 /* Evaluates a decoded cdb_query_expr structure. */
 cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_value *out_val);
@@ -142,7 +140,8 @@ cdb_status cdb_eval_predicate(cdb_eval_ctx *ctx, const uint8_t *wire, size_t len
 
 /* Compares two values with cross-model type coercion.
  * If either value is NULL, *is_null is set to 1 and *cmp is 0.
- * Otherwise *is_null is 0, and *cmp is negative if left < right, 0 if equal, positive if left > right. */
+ * Otherwise *is_null is 0, and *cmp is negative if left < right, 0 if equal, positive if left >
+ * right. */
 cdb_status cdb_eval_compare(const cdb_value *left, const cdb_value *right, int *cmp, int *is_null);
 
 /* Value constructor and helper utilities. */

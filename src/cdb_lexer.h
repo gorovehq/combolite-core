@@ -20,41 +20,41 @@ typedef enum cdb_token_kind {
     CDB_TOK_ERROR,
 
     /* Literals & Identifiers */
-    CDB_TOK_IDENT,        /* e.g. title, passages, my_var */
-    CDB_TOK_PARAM,        /* $q, $0, $ebook_id */
-    CDB_TOK_INT,          /* 42, 0xFF */
-    CDB_TOK_FLOAT,        /* 3.14159, 1e-4 */
-    CDB_TOK_STRING,       /* "hello", 'world', `field.with.dot` */
+    CDB_TOK_IDENT,  /* e.g. title, passages, my_var */
+    CDB_TOK_PARAM,  /* $q, $0, $ebook_id */
+    CDB_TOK_INT,    /* 42, 0xFF */
+    CDB_TOK_FLOAT,  /* 3.14159, 1e-4 */
+    CDB_TOK_STRING, /* "hello", 'world', `field.with.dot` */
 
     /* Punctuation & Delimiters */
-    CDB_TOK_LPAREN,       /* ( */
-    CDB_TOK_RPAREN,       /* ) */
-    CDB_TOK_LBRACKET,     /* [ */
-    CDB_TOK_RBRACKET,     /* ] */
-    CDB_TOK_LBRACE,       /* { */
-    CDB_TOK_RBRACE,       /* } */
-    CDB_TOK_COMMA,        /* , */
-    CDB_TOK_SEMICOLON,    /* ; */
-    CDB_TOK_COLON,        /* : */
-    CDB_TOK_DOT,          /* . */
-    CDB_TOK_PIPE,         /* | */
-    CDB_TOK_PIPE_FWD,     /* |> */
+    CDB_TOK_LPAREN,    /* ( */
+    CDB_TOK_RPAREN,    /* ) */
+    CDB_TOK_LBRACKET,  /* [ */
+    CDB_TOK_RBRACKET,  /* ] */
+    CDB_TOK_LBRACE,    /* { */
+    CDB_TOK_RBRACE,    /* } */
+    CDB_TOK_COMMA,     /* , */
+    CDB_TOK_SEMICOLON, /* ; */
+    CDB_TOK_COLON,     /* : */
+    CDB_TOK_DOT,       /* . */
+    CDB_TOK_PIPE,      /* | */
+    CDB_TOK_PIPE_FWD,  /* |> */
 
     /* Operators */
-    CDB_TOK_EQ,           /* = (assignment / set) */
-    CDB_TOK_EQ_EQ,        /* == */
-    CDB_TOK_NE,           /* != or <> */
-    CDB_TOK_LT,           /* < */
-    CDB_TOK_LE,           /* <= */
-    CDB_TOK_GT,           /* > */
-    CDB_TOK_GE,           /* >= */
-    CDB_TOK_PLUS,         /* + */
-    CDB_TOK_MINUS,        /* - */
-    CDB_TOK_STAR,         /* * */
-    CDB_TOK_SLASH,        /* / */
-    CDB_TOK_PERCENT,      /* % */
-    CDB_TOK_TILDE,        /* ~ */
-    CDB_TOK_BANG,         /* ! */
+    CDB_TOK_EQ,      /* = (assignment / set) */
+    CDB_TOK_EQ_EQ,   /* == */
+    CDB_TOK_NE,      /* != or <> */
+    CDB_TOK_LT,      /* < */
+    CDB_TOK_LE,      /* <= */
+    CDB_TOK_GT,      /* > */
+    CDB_TOK_GE,      /* >= */
+    CDB_TOK_PLUS,    /* + */
+    CDB_TOK_MINUS,   /* - */
+    CDB_TOK_STAR,    /* * */
+    CDB_TOK_SLASH,   /* / */
+    CDB_TOK_PERCENT, /* % */
+    CDB_TOK_TILDE,   /* ~ */
+    CDB_TOK_BANG,    /* ! */
 
     /* Keywords - Query & Clauses */
     CDB_TOK_KW_QUERY,
@@ -209,12 +209,12 @@ typedef enum cdb_token_kind {
 
 typedef struct cdb_token {
     cdb_token_kind kind;
-    const char *start;    /* Pointer into source text */
-    uint32_t len;         /* Byte length of token */
-    uint32_t line;        /* 1-based source line */
-    uint32_t col;         /* 1-based source column */
-    int is_quoted;        /* Non-zero if string or quoted identifier */
-    char quote_char;      /* '"', '\'', or '`' */
+    const char *start; /* Pointer into source text */
+    uint32_t len;      /* Byte length of token */
+    uint32_t line;     /* 1-based source line */
+    uint32_t col;      /* 1-based source column */
+    int is_quoted;     /* Non-zero if string or quoted identifier */
+    char quote_char;   /* '"', '\'', or '`' */
     union {
         int64_t i64;
         double f64;
@@ -242,7 +242,8 @@ cdb_status cdb_lexer_peek(cdb_lexer *lex, cdb_token *out_tok);
 
 /* Unescapes a string token's content (stripping quotes and processing \ escapes).
  * Writes up to dst_cap bytes into dst. Out_len is set to the byte length written. */
-cdb_status cdb_token_unescape_string(const cdb_token *tok, char *dst, size_t dst_cap, size_t *out_len);
+cdb_status cdb_token_unescape_string(const cdb_token *tok, char *dst, size_t dst_cap,
+                                     size_t *out_len);
 
 /* Compares a token's text with a given C string (case-sensitive or insensitive). */
 int cdb_token_equals(const cdb_token *tok, const char *str);

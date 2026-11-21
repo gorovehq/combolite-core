@@ -30,8 +30,10 @@
 #define CDB_LAYOUT_KNOWN 0x0Fu
 
 /* Assigned feature flags (spec 14.1.10). */
-#define CDB_FEATURE_RO_VEC_CHANGES (UINT64_C(1) << 0) /* read-only compatible: vector change logs (14.12.5) */
-#define CDB_FEATURE_IN_STORE_SLOT (UINT64_C(1) << 0)  /* incompatible: every page's store ID slot (14.2.7) */
+#define CDB_FEATURE_RO_VEC_CHANGES \
+    (UINT64_C(1) << 0) /* read-only compatible: vector change logs (14.12.5) */
+#define CDB_FEATURE_IN_STORE_SLOT \
+    (UINT64_C(1) << 0) /* incompatible: every page's store ID slot (14.2.7) */
 
 /* Feature flags this build understands, per class (spec 1.2). Each feature
  * adds its bit here as it is implemented. */
@@ -88,7 +90,7 @@ typedef struct cdb_header {
     uint64_t commit_hwm;
     uint64_t anchor_mirror_root;
     uint8_t content_hash_alg;
-    uint64_t marks_root;     /* reconciliation-marks index (spec 14.4.8); 0 = none yet */
+    uint64_t marks_root; /* reconciliation-marks index (spec 14.4.8); 0 = none yet */
     uint8_t tamper_tag[16];
 } cdb_header;
 
@@ -100,8 +102,8 @@ cdb_status cdb_header_encode(const cdb_header *h, uint8_t out[CDB_HEADER_SLOT_SI
 cdb_status cdb_header_decode(const uint8_t in[CDB_HEADER_SLOT_SIZE], cdb_header *h);
 
 /* Checks feature flags against this build (spec 1.2): an unknown
- * incompatible flag, or a missing required one, refuses the file; an unknown read-only-compatible flag
- * sets *read_only. Unknown compatible flags are ignored. */
+ * incompatible flag, or a missing required one, refuses the file; an unknown read-only-compatible
+ * flag sets *read_only. Unknown compatible flags are ignored. */
 cdb_status cdb_header_check_features(const cdb_header *h, int *read_only);
 
 /* Header state of an open file. */
@@ -132,7 +134,7 @@ cdb_status cdb_header_commit(const cdb_storage *st, cdb_header_state *hs, const 
 
 /* Checkpoint: rewrites the committed record unchanged except for the
  * reservation high-water marks, which must be durable before use (spec 12.1). */
-cdb_status cdb_header_checkpoint(const cdb_storage *st, cdb_header_state *hs,
-                                 uint64_t page_seq_hwm, uint64_t commit_hwm);
+cdb_status cdb_header_checkpoint(const cdb_storage *st, cdb_header_state *hs, uint64_t page_seq_hwm,
+                                 uint64_t commit_hwm);
 
 #endif

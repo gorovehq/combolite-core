@@ -29,8 +29,8 @@ typedef struct cdb_worker_task {
 typedef struct cdb_worker_pool {
     cdb_env env;
     cdb_mutex *mutex;
-    cdb_cond *cond_work;  /* signaled when a new task is available */
-    cdb_cond *cond_done;  /* signaled when a task completes */
+    cdb_cond *cond_work; /* signaled when a new task is available */
+    cdb_cond *cond_done; /* signaled when a task completes */
     cdb_thread *threads[CDB_WORKER_MAX_THREADS];
     unsigned nthreads;
     int stop;
@@ -50,7 +50,8 @@ cdb_status cdb_worker_pool_init(cdb_worker_pool *pool, const cdb_env *env, unsig
  * If asynchronous, enqueues the task and signals worker threads. If task_id is non-NULL,
  * receives a stable handle to wait for completion with cdb_worker_pool_wait.
  * Returns CDB_E_BUFFER_TOO_SMALL if task queue is full. */
-cdb_status cdb_worker_pool_submit(cdb_worker_pool *pool, void (*fn)(void *arg), void *arg, uint64_t *task_id);
+cdb_status cdb_worker_pool_submit(cdb_worker_pool *pool, void (*fn)(void *arg), void *arg,
+                                  uint64_t *task_id);
 
 /* Waits until the specified task completes. If task_id is 0, waits until all
  * currently queued tasks complete. */

@@ -8,14 +8,10 @@
 static int64_t ts_to_nanos(cdb_ts_precision p, int64_t ticks)
 {
     switch (p) {
-    case CDB_TS_SECONDS:
-        return ticks * 1000000000LL;
-    case CDB_TS_MILLIS:
-        return ticks * 1000000LL;
-    case CDB_TS_MICROS:
-        return ticks * 1000LL;
-    case CDB_TS_NANOS:
-        return ticks;
+    case CDB_TS_SECONDS: return ticks * 1000000000LL;
+    case CDB_TS_MILLIS: return ticks * 1000000LL;
+    case CDB_TS_MICROS: return ticks * 1000LL;
+    case CDB_TS_NANOS: return ticks;
     }
     return ticks;
 }
@@ -37,16 +33,11 @@ static double to_double(const cdb_value *v)
     if (v == NULL)
         return 0.0;
     switch (v->type) {
-    case CDB_TYPE_INT:
-        return (double)v->as.i64;
-    case CDB_TYPE_F64:
-        return v->as.f64;
-    case CDB_TYPE_F32:
-        return (double)v->as.f32;
-    case CDB_TYPE_BOOL:
-        return (double)v->as.boolean;
-    default:
-        return 0.0;
+    case CDB_TYPE_INT: return (double)v->as.i64;
+    case CDB_TYPE_F64: return v->as.f64;
+    case CDB_TYPE_F32: return (double)v->as.f32;
+    case CDB_TYPE_BOOL: return (double)v->as.boolean;
+    default: return 0.0;
     }
 }
 
@@ -209,19 +200,13 @@ int cdb_eval_is_truthy(const cdb_value *v)
     if (v == NULL)
         return 0;
     switch (v->type) {
-    case CDB_TYPE_BOOL:
-        return v->as.boolean != 0;
-    case CDB_TYPE_INT:
-        return v->as.i64 != 0;
-    case CDB_TYPE_F64:
-        return v->as.f64 != 0.0;
-    case CDB_TYPE_F32:
-        return v->as.f32 != 0.0f;
+    case CDB_TYPE_BOOL: return v->as.boolean != 0;
+    case CDB_TYPE_INT: return v->as.i64 != 0;
+    case CDB_TYPE_F64: return v->as.f64 != 0.0;
+    case CDB_TYPE_F32: return v->as.f32 != 0.0f;
     case CDB_TYPE_STRING:
-    case CDB_TYPE_BINARY:
-        return v->payload_len > 0;
-    default:
-        return 0;
+    case CDB_TYPE_BINARY: return v->payload_len > 0;
+    default: return 0;
     }
 }
 
@@ -257,7 +242,8 @@ cdb_status cdb_eval_resolve_field(cdb_eval_ctx *ctx, const char *path, size_t pa
     /* The custom resolver overlays the record: a name it does not know is
      * looked up as a pseudo-field or in the record as usual. */
     if (ctx->custom_resolver != NULL) {
-        if ((s = ctx->custom_resolver(ctx->custom_data, path, path_len, out_val, found)) != CDB_OK || *found)
+        if ((s = ctx->custom_resolver(ctx->custom_data, path, path_len, out_val, found)) != CDB_OK
+            || *found)
             return s;
     }
 
@@ -323,7 +309,9 @@ cdb_status cdb_eval_resolve_field(cdb_eval_ctx *ctx, const char *path, size_t pa
         seg_len = (size_t)(next_sep - seg);
 
         if (ctx->cat != NULL) {
-            if ((s = cdb_catalog_field_lookup(ctx->cat, ctx->store_id, seg, seg_len, &field_id, &fid_found)) != CDB_OK)
+            if ((s = cdb_catalog_field_lookup(ctx->cat, ctx->store_id, seg, seg_len, &field_id,
+                                              &fid_found))
+                != CDB_OK)
                 return s;
         } else {
             /* Support direct numeric IDs when catalog is absent (e.g. testing) */
@@ -371,7 +359,8 @@ cdb_status cdb_eval_compare(const cdb_value *left, const cdb_value *right, int *
 
     /* Numbers: INT, F64, F32 */
     if ((left->type == CDB_TYPE_INT || left->type == CDB_TYPE_F64 || left->type == CDB_TYPE_F32)
-        && (right->type == CDB_TYPE_INT || right->type == CDB_TYPE_F64 || right->type == CDB_TYPE_F32)) {
+        && (right->type == CDB_TYPE_INT || right->type == CDB_TYPE_F64
+            || right->type == CDB_TYPE_F32)) {
         if (left->type == CDB_TYPE_INT && right->type == CDB_TYPE_INT) {
             if (left->as.i64 < right->as.i64)
                 *cmp = -1;
@@ -383,10 +372,13 @@ cdb_status cdb_eval_compare(const cdb_value *left, const cdb_value *right, int *
         }
         /* At least one float/double: convert to double */
         {
-            double l = (left->type == CDB_TYPE_INT) ? (double)left->as.i64
-                     : ((left->type == CDB_TYPE_F64) ? left->as.f64 : (double)left->as.f32);
-            double r = (right->type == CDB_TYPE_INT) ? (double)right->as.i64
-                     : ((right->type == CDB_TYPE_F64) ? right->as.f64 : (double)right->as.f32);
+            double l = (left->type == CDB_TYPE_INT)
+                           ? (double)left->as.i64
+                           : ((left->type == CDB_TYPE_F64) ? left->as.f64 : (double)left->as.f32);
+            double r =
+                (right->type == CDB_TYPE_INT)
+                    ? (double)right->as.i64
+                    : ((right->type == CDB_TYPE_F64) ? right->as.f64 : (double)right->as.f32);
             if (l < r)
                 *cmp = -1;
             else if (l > r)
@@ -407,7 +399,8 @@ cdb_status cdb_eval_compare(const cdb_value *left, const cdb_value *right, int *
 
     /* Strings */
     if (left->type == CDB_TYPE_STRING && right->type == CDB_TYPE_STRING) {
-        size_t min_len = left->payload_len < right->payload_len ? left->payload_len : right->payload_len;
+        size_t min_len =
+            left->payload_len < right->payload_len ? left->payload_len : right->payload_len;
         int res = min_len > 0 ? memcmp(left->payload, right->payload, min_len) : 0;
         if (res != 0)
             *cmp = res < 0 ? -1 : 1;
@@ -422,7 +415,8 @@ cdb_status cdb_eval_compare(const cdb_value *left, const cdb_value *right, int *
 
     /* Binary */
     if (left->type == CDB_TYPE_BINARY && right->type == CDB_TYPE_BINARY) {
-        size_t min_len = left->payload_len < right->payload_len ? left->payload_len : right->payload_len;
+        size_t min_len =
+            left->payload_len < right->payload_len ? left->payload_len : right->payload_len;
         int res = min_len > 0 ? memcmp(left->payload, right->payload, min_len) : 0;
         if (res != 0)
             *cmp = res < 0 ? -1 : 1;
@@ -561,7 +555,8 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
         cdb_value op_val;
         size_t consumed = 0;
         size_t rem = (ctx->wire_end != NULL && ctx->wire_end > expr->as.unary.operand_wire)
-                     ? (size_t)(ctx->wire_end - expr->as.unary.operand_wire) : 0;
+                         ? (size_t)(ctx->wire_end - expr->as.unary.operand_wire)
+                         : 0;
         s = cdb_eval_expr_wire(ctx, expr->as.unary.operand_wire, rem, &op_val, &consumed);
         if (s != CDB_OK)
             break;
@@ -603,9 +598,7 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
             }
             break;
 
-        default:
-            s = CDB_E_INVALID_ARG;
-            break;
+        default: s = CDB_E_INVALID_ARG; break;
         }
         break;
     }
@@ -615,9 +608,11 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
         cdb_value l_val, r_val;
         size_t l_cons = 0, r_cons = 0;
         size_t l_rem = (ctx->wire_end != NULL && ctx->wire_end > expr->as.binary.left_wire)
-                       ? (size_t)(ctx->wire_end - expr->as.binary.left_wire) : 0;
+                           ? (size_t)(ctx->wire_end - expr->as.binary.left_wire)
+                           : 0;
         size_t r_rem = (ctx->wire_end != NULL && ctx->wire_end > expr->as.binary.right_wire)
-                       ? (size_t)(ctx->wire_end - expr->as.binary.right_wire) : 0;
+                           ? (size_t)(ctx->wire_end - expr->as.binary.right_wire)
+                           : 0;
 
         /* Short-circuit evaluation for AND / OR */
         if (op == CDB_BIN_AND) {
@@ -708,7 +703,8 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
             }
 
             /* String concatenation */
-            if (op == CDB_BIN_ADD && l_val.type == CDB_TYPE_STRING && r_val.type == CDB_TYPE_STRING) {
+            if (op == CDB_BIN_ADD && l_val.type == CDB_TYPE_STRING
+                && r_val.type == CDB_TYPE_STRING) {
                 size_t total_len = l_val.payload_len + r_val.payload_len;
                 uint8_t *buf = (uint8_t *)eval_scratch_alloc(ctx, total_len);
                 if (buf == NULL && total_len > 0) {
@@ -757,10 +753,14 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
 
             /* Float operations */
             {
-                double a = (l_val.type == CDB_TYPE_INT) ? (double)l_val.as.i64
-                         : ((l_val.type == CDB_TYPE_F64) ? l_val.as.f64 : (double)l_val.as.f32);
-                double b = (r_val.type == CDB_TYPE_INT) ? (double)r_val.as.i64
-                         : ((r_val.type == CDB_TYPE_F64) ? r_val.as.f64 : (double)r_val.as.f32);
+                double a =
+                    (l_val.type == CDB_TYPE_INT)
+                        ? (double)l_val.as.i64
+                        : ((l_val.type == CDB_TYPE_F64) ? l_val.as.f64 : (double)l_val.as.f32);
+                double b =
+                    (r_val.type == CDB_TYPE_INT)
+                        ? (double)r_val.as.i64
+                        : ((r_val.type == CDB_TYPE_F64) ? r_val.as.f64 : (double)r_val.as.f32);
                 switch (op) {
                 case CDB_BIN_ADD: cdb_eval_make_f64(out_val, a + b); break;
                 case CDB_BIN_SUB: cdb_eval_make_f64(out_val, a - b); break;
@@ -771,9 +771,7 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
                     else
                         cdb_eval_make_f64(out_val, a / b);
                     break;
-                case CDB_BIN_MOD:
-                    cdb_eval_make_null(out_val);
-                    break;
+                case CDB_BIN_MOD: cdb_eval_make_null(out_val); break;
                 default: break;
                 }
                 s = CDB_OK;
@@ -786,7 +784,8 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
             if (cdb_eval_is_null(&l_val) || cdb_eval_is_null(&r_val)) {
                 cdb_eval_make_null(out_val);
             } else if (l_val.type == CDB_TYPE_STRING && r_val.type == CDB_TYPE_STRING) {
-                int matched = str_like(l_val.payload, l_val.payload_len, r_val.payload, r_val.payload_len);
+                int matched =
+                    str_like(l_val.payload, l_val.payload_len, r_val.payload, r_val.payload_len);
                 cdb_eval_make_bool(out_val, matched);
             } else {
                 cdb_eval_make_bool(out_val, 0);
@@ -799,7 +798,8 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
             if (cdb_eval_is_null(&l_val) || cdb_eval_is_null(&r_val)) {
                 cdb_eval_make_null(out_val);
             } else if (l_val.type == CDB_TYPE_STRING && r_val.type == CDB_TYPE_STRING) {
-                int matched = str_contains(l_val.payload, l_val.payload_len, r_val.payload, r_val.payload_len);
+                int matched = str_contains(l_val.payload, l_val.payload_len, r_val.payload,
+                                           r_val.payload_len);
                 cdb_eval_make_bool(out_val, matched);
             } else {
                 cdb_eval_make_bool(out_val, 0);
@@ -824,8 +824,8 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
             return CDB_E_UNSUPPORTED;
 
         for (i = 0; i < n_args; i++) {
-            size_t a_rem = (ctx->wire_end != NULL && ctx->wire_end > ap)
-                           ? (size_t)(ctx->wire_end - ap) : 0;
+            size_t a_rem =
+                (ctx->wire_end != NULL && ctx->wire_end > ap) ? (size_t)(ctx->wire_end - ap) : 0;
             size_t a_cons = 0;
             s = cdb_eval_expr_wire(ctx, ap, a_rem, &args[i], &a_cons);
             if (s != CDB_OK)
@@ -851,46 +851,91 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
         case CDB_FN_ASIN: cdb_eval_make_f64(out_val, cdb_math_asin(to_double(&args[0]))); break;
         case CDB_FN_ACOS: cdb_eval_make_f64(out_val, cdb_math_acos(to_double(&args[0]))); break;
         case CDB_FN_ATAN: cdb_eval_make_f64(out_val, cdb_math_atan(to_double(&args[0]))); break;
-        case CDB_FN_ATAN2: cdb_eval_make_f64(out_val, cdb_math_atan2(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_ATAN2:
+            cdb_eval_make_f64(out_val, cdb_math_atan2(to_double(&args[0]), to_double(&args[1])));
+            break;
         case CDB_FN_SINH: cdb_eval_make_f64(out_val, cdb_math_sinh(to_double(&args[0]))); break;
         case CDB_FN_COSH: cdb_eval_make_f64(out_val, cdb_math_cosh(to_double(&args[0]))); break;
         case CDB_FN_TANH: cdb_eval_make_f64(out_val, cdb_math_tanh(to_double(&args[0]))); break;
-        case CDB_FN_DEGREES: cdb_eval_make_f64(out_val, cdb_math_degrees(to_double(&args[0]))); break;
-        case CDB_FN_RADIANS: cdb_eval_make_f64(out_val, cdb_math_radians(to_double(&args[0]))); break;
+        case CDB_FN_DEGREES:
+            cdb_eval_make_f64(out_val, cdb_math_degrees(to_double(&args[0])));
+            break;
+        case CDB_FN_RADIANS:
+            cdb_eval_make_f64(out_val, cdb_math_radians(to_double(&args[0])));
+            break;
 
         /* Geometry & Navigation */
-        case CDB_FN_HYPOT: cdb_eval_make_f64(out_val, cdb_math_hypot(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_HYPOT3: cdb_eval_make_f64(out_val, cdb_math_hypot3(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]))); break;
+        case CDB_FN_HYPOT:
+            cdb_eval_make_f64(out_val, cdb_math_hypot(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_HYPOT3:
+            cdb_eval_make_f64(out_val, cdb_math_hypot3(to_double(&args[0]), to_double(&args[1]),
+                                                       to_double(&args[2])));
+            break;
         case CDB_FN_HAVERSINE:
-            cdb_eval_make_f64(out_val, cdb_math_haversine(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_haversine(to_double(&args[0]), to_double(&args[1]),
+                                                 to_double(&args[2]), to_double(&args[3])));
             break;
         case CDB_FN_BBOX_CONTAINS:
-            cdb_eval_make_bool(out_val, cdb_math_bbox_contains(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), to_double(&args[4]), to_double(&args[5])));
+            cdb_eval_make_bool(out_val,
+                               cdb_math_bbox_contains(to_double(&args[0]), to_double(&args[1]),
+                                                      to_double(&args[2]), to_double(&args[3]),
+                                                      to_double(&args[4]), to_double(&args[5])));
             break;
         case CDB_FN_BEARING:
-            cdb_eval_make_f64(out_val, cdb_math_bearing(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3])));
+            cdb_eval_make_f64(out_val, cdb_math_bearing(to_double(&args[0]), to_double(&args[1]),
+                                                        to_double(&args[2]), to_double(&args[3])));
             break;
         case CDB_FN_POINT_IN_CIRCLE:
-            cdb_eval_make_bool(out_val, cdb_math_point_in_circle(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), to_double(&args[4])));
+            cdb_eval_make_bool(out_val,
+                               cdb_math_point_in_circle(to_double(&args[0]), to_double(&args[1]),
+                                                        to_double(&args[2]), to_double(&args[3]),
+                                                        to_double(&args[4])));
             break;
         case CDB_FN_CROSS_TRACK_DISTANCE:
-            cdb_eval_make_f64(out_val, cdb_math_cross_track_distance(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), to_double(&args[4]), to_double(&args[5])));
+            cdb_eval_make_f64(
+                out_val, cdb_math_cross_track_distance(to_double(&args[0]), to_double(&args[1]),
+                                                       to_double(&args[2]), to_double(&args[3]),
+                                                       to_double(&args[4]), to_double(&args[5])));
             break;
         case CDB_FN_ALONG_TRACK_DISTANCE:
-            cdb_eval_make_f64(out_val, cdb_math_along_track_distance(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), to_double(&args[4]), to_double(&args[5])));
+            cdb_eval_make_f64(
+                out_val, cdb_math_along_track_distance(to_double(&args[0]), to_double(&args[1]),
+                                                       to_double(&args[2]), to_double(&args[3]),
+                                                       to_double(&args[4]), to_double(&args[5])));
             break;
-        case CDB_FN_WGS84_TO_MERCATOR_X: cdb_eval_make_f64(out_val, cdb_math_wgs84_to_mercator_x(to_double(&args[0]))); break;
-        case CDB_FN_WGS84_TO_MERCATOR_Y: cdb_eval_make_f64(out_val, cdb_math_wgs84_to_mercator_y(to_double(&args[0]))); break;
-        case CDB_FN_MERCATOR_TO_WGS84_LON: cdb_eval_make_f64(out_val, cdb_math_mercator_to_wgs84_lon(to_double(&args[0]))); break;
-        case CDB_FN_MERCATOR_TO_WGS84_LAT: cdb_eval_make_f64(out_val, cdb_math_mercator_to_wgs84_lat(to_double(&args[0]))); break;
-        case CDB_FN_TILE_X: cdb_eval_make_int(out_val, cdb_math_lon_to_tile_x(to_double(&args[0]), (int)to_double(&args[1]))); break;
-        case CDB_FN_TILE_Y: cdb_eval_make_int(out_val, cdb_math_lat_to_tile_y(to_double(&args[0]), (int)to_double(&args[1]))); break;
-        case CDB_FN_MORTON2D: cdb_eval_make_int(out_val, (int64_t)cdb_math_morton2d(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_WGS84_TO_MERCATOR_X:
+            cdb_eval_make_f64(out_val, cdb_math_wgs84_to_mercator_x(to_double(&args[0])));
+            break;
+        case CDB_FN_WGS84_TO_MERCATOR_Y:
+            cdb_eval_make_f64(out_val, cdb_math_wgs84_to_mercator_y(to_double(&args[0])));
+            break;
+        case CDB_FN_MERCATOR_TO_WGS84_LON:
+            cdb_eval_make_f64(out_val, cdb_math_mercator_to_wgs84_lon(to_double(&args[0])));
+            break;
+        case CDB_FN_MERCATOR_TO_WGS84_LAT:
+            cdb_eval_make_f64(out_val, cdb_math_mercator_to_wgs84_lat(to_double(&args[0])));
+            break;
+        case CDB_FN_TILE_X:
+            cdb_eval_make_int(
+                out_val, cdb_math_lon_to_tile_x(to_double(&args[0]), (int)to_double(&args[1])));
+            break;
+        case CDB_FN_TILE_Y:
+            cdb_eval_make_int(
+                out_val, cdb_math_lat_to_tile_y(to_double(&args[0]), (int)to_double(&args[1])));
+            break;
+        case CDB_FN_MORTON2D:
+            cdb_eval_make_int(out_val,
+                              (int64_t)cdb_math_morton2d(to_double(&args[0]), to_double(&args[1])));
+            break;
 
         /* Algebra & ML */
         case CDB_FN_SQRT: cdb_eval_make_f64(out_val, cdb_math_sqrt(to_double(&args[0]))); break;
         case CDB_FN_CBRT: cdb_eval_make_f64(out_val, cdb_math_cbrt(to_double(&args[0]))); break;
-        case CDB_FN_POW: cdb_eval_make_f64(out_val, cdb_math_pow(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_POW:
+            cdb_eval_make_f64(out_val, cdb_math_pow(to_double(&args[0]), to_double(&args[1])));
+            break;
         case CDB_FN_EXP: cdb_eval_make_f64(out_val, cdb_math_exp(to_double(&args[0]))); break;
         case CDB_FN_EXPM1: cdb_eval_make_f64(out_val, cdb_math_expm1(to_double(&args[0]))); break;
         case CDB_FN_LN: cdb_eval_make_f64(out_val, cdb_math_ln(to_double(&args[0]))); break;
@@ -899,155 +944,256 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
         case CDB_FN_LOG1P: cdb_eval_make_f64(out_val, cdb_math_log1p(to_double(&args[0]))); break;
         case CDB_FN_ABS: cdb_eval_make_f64(out_val, cdb_math_abs(to_double(&args[0]))); break;
         case CDB_FN_SIGN: cdb_eval_make_f64(out_val, cdb_math_sign(to_double(&args[0]))); break;
-        case CDB_FN_ROUND: cdb_eval_make_f64(out_val, cdb_math_round(to_double(&args[0]), n_args > 1 ? (int)to_double(&args[1]) : 0)); break;
+        case CDB_FN_ROUND:
+            cdb_eval_make_f64(out_val, cdb_math_round(to_double(&args[0]),
+                                                      n_args > 1 ? (int)to_double(&args[1]) : 0));
+            break;
         case CDB_FN_FLOOR: cdb_eval_make_f64(out_val, cdb_math_floor(to_double(&args[0]))); break;
         case CDB_FN_CEIL: cdb_eval_make_f64(out_val, cdb_math_ceil(to_double(&args[0]))); break;
-        case CDB_FN_CLAMP: cdb_eval_make_f64(out_val, cdb_math_clamp(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]))); break;
-        case CDB_FN_LERP: cdb_eval_make_f64(out_val, cdb_math_lerp(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]))); break;
-        case CDB_FN_SIGMOID: cdb_eval_make_f64(out_val, cdb_math_sigmoid(to_double(&args[0]))); break;
+        case CDB_FN_CLAMP:
+            cdb_eval_make_f64(out_val, cdb_math_clamp(to_double(&args[0]), to_double(&args[1]),
+                                                      to_double(&args[2])));
+            break;
+        case CDB_FN_LERP:
+            cdb_eval_make_f64(out_val, cdb_math_lerp(to_double(&args[0]), to_double(&args[1]),
+                                                     to_double(&args[2])));
+            break;
+        case CDB_FN_SIGMOID:
+            cdb_eval_make_f64(out_val, cdb_math_sigmoid(to_double(&args[0])));
+            break;
         case CDB_FN_RELU: cdb_eval_make_f64(out_val, cdb_math_relu(to_double(&args[0]))); break;
         case CDB_FN_GELU: cdb_eval_make_f64(out_val, cdb_math_gelu(to_double(&args[0]))); break;
         case CDB_FN_ERF: cdb_eval_make_f64(out_val, cdb_math_erf(to_double(&args[0]))); break;
 
         /* Calculus */
-        case CDB_FN_DIFF: cdb_eval_make_f64(out_val, cdb_math_diff(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_DERIVATIVE: cdb_eval_make_f64(out_val, cdb_math_derivative(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_TRAPEZOID: cdb_eval_make_f64(out_val, cdb_math_trapezoid(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]))); break;
+        case CDB_FN_DIFF:
+            cdb_eval_make_f64(out_val, cdb_math_diff(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_DERIVATIVE:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_derivative(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_TRAPEZOID:
+            cdb_eval_make_f64(out_val, cdb_math_trapezoid(to_double(&args[0]), to_double(&args[1]),
+                                                          to_double(&args[2])));
+            break;
 
         /* SDR & DSP */
-        case CDB_FN_IQ_MAGNITUDE: cdb_eval_make_f64(out_val, cdb_math_iq_magnitude(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_IQ_PHASE: cdb_eval_make_f64(out_val, cdb_math_iq_phase(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_IQ_MAGNITUDE:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_iq_magnitude(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_IQ_PHASE:
+            cdb_eval_make_f64(out_val, cdb_math_iq_phase(to_double(&args[0]), to_double(&args[1])));
+            break;
         case CDB_FN_IQ_DEMOD_FM:
-            cdb_eval_make_f64(out_val, cdb_math_iq_demod_fm(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_iq_demod_fm(to_double(&args[0]), to_double(&args[1]),
+                                                   to_double(&args[2]), to_double(&args[3])));
             break;
         case CDB_FN_DBFS: cdb_eval_make_f64(out_val, cdb_math_dbfs(to_double(&args[0]))); break;
 
         /* Astronomy, Telescope Mount & Satellite Tracking */
         case CDB_FN_ASTRO_ALT: {
             double az, alt, r;
-            cdb_math_astro_topocentric(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]),
-                                       to_double(&args[3]), to_double(&args[4]), to_double(&args[5]),
-                                       &az, &alt, &r);
+            cdb_math_astro_topocentric(to_double(&args[0]), to_double(&args[1]),
+                                       to_double(&args[2]), to_double(&args[3]),
+                                       to_double(&args[4]), to_double(&args[5]), &az, &alt, &r);
             cdb_eval_make_f64(out_val, alt);
             break;
         }
         case CDB_FN_ASTRO_AZ: {
             double az, alt, r;
-            cdb_math_astro_topocentric(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]),
-                                       to_double(&args[3]), to_double(&args[4]), to_double(&args[5]),
-                                       &az, &alt, &r);
+            cdb_math_astro_topocentric(to_double(&args[0]), to_double(&args[1]),
+                                       to_double(&args[2]), to_double(&args[3]),
+                                       to_double(&args[4]), to_double(&args[5]), &az, &alt, &r);
             cdb_eval_make_f64(out_val, az);
             break;
         }
         case CDB_FN_ASTRO_RANGE: {
             double az, alt, r;
-            cdb_math_astro_topocentric(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]),
-                                       to_double(&args[3]), to_double(&args[4]), to_double(&args[5]),
-                                       &az, &alt, &r);
+            cdb_math_astro_topocentric(to_double(&args[0]), to_double(&args[1]),
+                                       to_double(&args[2]), to_double(&args[3]),
+                                       to_double(&args[4]), to_double(&args[5]), &az, &alt, &r);
             cdb_eval_make_f64(out_val, r);
             break;
         }
         case CDB_FN_ASTRO_ALTAZ_TO_RA: {
             double ra, dec;
-            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP) ? args[4].as.ts.ticks : (int64_t)to_double(&args[4]);
-            cdb_math_astro_altaz_to_radec(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), ts, &ra, &dec);
+            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP)
+                             ? args[4].as.ts.ticks
+                             : (int64_t)to_double(&args[4]);
+            cdb_math_astro_altaz_to_radec(to_double(&args[0]), to_double(&args[1]),
+                                          to_double(&args[2]), to_double(&args[3]), ts, &ra, &dec);
             cdb_eval_make_f64(out_val, ra);
             break;
         }
         case CDB_FN_ASTRO_ALTAZ_TO_DEC: {
             double ra, dec;
-            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP) ? args[4].as.ts.ticks : (int64_t)to_double(&args[4]);
-            cdb_math_astro_altaz_to_radec(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), ts, &ra, &dec);
+            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP)
+                             ? args[4].as.ts.ticks
+                             : (int64_t)to_double(&args[4]);
+            cdb_math_astro_altaz_to_radec(to_double(&args[0]), to_double(&args[1]),
+                                          to_double(&args[2]), to_double(&args[3]), ts, &ra, &dec);
             cdb_eval_make_f64(out_val, dec);
             break;
         }
         case CDB_FN_ASTRO_RADEC_TO_ALT: {
             double alt, az;
-            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP) ? args[4].as.ts.ticks : (int64_t)to_double(&args[4]);
-            cdb_math_astro_radec_to_altaz(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), ts, &alt, &az);
+            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP)
+                             ? args[4].as.ts.ticks
+                             : (int64_t)to_double(&args[4]);
+            cdb_math_astro_radec_to_altaz(to_double(&args[0]), to_double(&args[1]),
+                                          to_double(&args[2]), to_double(&args[3]), ts, &alt, &az);
             cdb_eval_make_f64(out_val, alt);
             break;
         }
         case CDB_FN_ASTRO_RADEC_TO_AZ: {
             double alt, az;
-            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP) ? args[4].as.ts.ticks : (int64_t)to_double(&args[4]);
-            cdb_math_astro_radec_to_altaz(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), ts, &alt, &az);
+            int64_t ts = (n_args > 4 && args[4].type == CDB_TYPE_TIMESTAMP)
+                             ? args[4].as.ts.ticks
+                             : (int64_t)to_double(&args[4]);
+            cdb_math_astro_radec_to_altaz(to_double(&args[0]), to_double(&args[1]),
+                                          to_double(&args[2]), to_double(&args[3]), ts, &alt, &az);
             cdb_eval_make_f64(out_val, az);
             break;
         }
-        case CDB_FN_ASTRO_REFRACTION: cdb_eval_make_f64(out_val, cdb_math_astro_refraction(to_double(&args[0]))); break;
+        case CDB_FN_ASTRO_REFRACTION:
+            cdb_eval_make_f64(out_val, cdb_math_astro_refraction(to_double(&args[0])));
+            break;
         case CDB_FN_ASTRO_ANGULAR_SEP:
-            cdb_eval_make_f64(out_val, cdb_math_astro_angular_sep(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_astro_angular_sep(to_double(&args[0]), to_double(&args[1]),
+                                                         to_double(&args[2]), to_double(&args[3])));
             break;
 
         /* Electronics & Circuits */
         case CDB_FN_ELEC_THERMISTOR_NTC:
-            cdb_eval_make_f64(out_val, cdb_math_elec_thermistor_ntc(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3])));
+            cdb_eval_make_f64(
+                out_val, cdb_math_elec_thermistor_ntc(to_double(&args[0]), to_double(&args[1]),
+                                                      to_double(&args[2]), to_double(&args[3])));
             break;
         case CDB_FN_ELEC_STEINHART_HART:
-            cdb_eval_make_f64(out_val, cdb_math_elec_steinhart_hart(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3])));
+            cdb_eval_make_f64(
+                out_val, cdb_math_elec_steinhart_hart(to_double(&args[0]), to_double(&args[1]),
+                                                      to_double(&args[2]), to_double(&args[3])));
             break;
         case CDB_FN_ELEC_ADC_VOLTS:
-            cdb_eval_make_f64(out_val, cdb_math_elec_adc_volts(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_elec_adc_volts(to_double(&args[0]), to_double(&args[1]),
+                                                      to_double(&args[2])));
             break;
         case CDB_FN_ELEC_VOLTAGE_DIVIDER:
-            cdb_eval_make_f64(out_val, cdb_math_elec_voltage_divider(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+            cdb_eval_make_f64(out_val, cdb_math_elec_voltage_divider(to_double(&args[0]),
+                                                                     to_double(&args[1]),
+                                                                     to_double(&args[2])));
             break;
         case CDB_FN_ELEC_PARALLEL_R:
-            cdb_eval_make_f64(out_val, cdb_math_elec_parallel_r(to_double(&args[0]), to_double(&args[1])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_elec_parallel_r(to_double(&args[0]), to_double(&args[1])));
             break;
-        case CDB_FN_ELEC_DBM_TO_WATTS: cdb_eval_make_f64(out_val, cdb_math_elec_dbm_to_watts(to_double(&args[0]))); break;
-        case CDB_FN_ELEC_WATTS_TO_DBM: cdb_eval_make_f64(out_val, cdb_math_elec_watts_to_dbm(to_double(&args[0]))); break;
-        case CDB_FN_ELEC_RC_CUTOFF: cdb_eval_make_f64(out_val, cdb_math_elec_rc_cutoff(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_ELEC_LC_RESONANCE: cdb_eval_make_f64(out_val, cdb_math_elec_lc_resonance(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_ELEC_REACTANCE_C: cdb_eval_make_f64(out_val, cdb_math_elec_reactance_c(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_ELEC_REACTANCE_L: cdb_eval_make_f64(out_val, cdb_math_elec_reactance_l(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_ELEC_DBM_TO_WATTS:
+            cdb_eval_make_f64(out_val, cdb_math_elec_dbm_to_watts(to_double(&args[0])));
+            break;
+        case CDB_FN_ELEC_WATTS_TO_DBM:
+            cdb_eval_make_f64(out_val, cdb_math_elec_watts_to_dbm(to_double(&args[0])));
+            break;
+        case CDB_FN_ELEC_RC_CUTOFF:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_elec_rc_cutoff(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_ELEC_LC_RESONANCE:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_elec_lc_resonance(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_ELEC_REACTANCE_C:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_elec_reactance_c(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_ELEC_REACTANCE_L:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_elec_reactance_l(to_double(&args[0]), to_double(&args[1])));
+            break;
 
         /* Atmospheric Science & Gas Body Modeling */
-        case CDB_FN_ATMO_PRESSURE_TO_ALT: cdb_eval_make_f64(out_val, cdb_math_atmo_pressure_to_alt(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_ATMO_ALT_TO_SEALEVEL_P:
-            cdb_eval_make_f64(out_val, cdb_math_atmo_alt_to_sealevel_p(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+        case CDB_FN_ATMO_PRESSURE_TO_ALT:
+            cdb_eval_make_f64(
+                out_val, cdb_math_atmo_pressure_to_alt(to_double(&args[0]), to_double(&args[1])));
             break;
-        case CDB_FN_ATMO_DEW_POINT: cdb_eval_make_f64(out_val, cdb_math_atmo_dew_point(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_ATMO_VAPOR_PRESSURE: cdb_eval_make_f64(out_val, cdb_math_atmo_vapor_pressure(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_ATMO_HEAT_INDEX: cdb_eval_make_f64(out_val, cdb_math_atmo_heat_index(to_double(&args[0]), to_double(&args[1]))); break;
-        case CDB_FN_ATMO_WIND_CHILL: cdb_eval_make_f64(out_val, cdb_math_atmo_wind_chill(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_ATMO_ALT_TO_SEALEVEL_P:
+            cdb_eval_make_f64(out_val, cdb_math_atmo_alt_to_sealevel_p(to_double(&args[0]),
+                                                                       to_double(&args[1]),
+                                                                       to_double(&args[2])));
+            break;
+        case CDB_FN_ATMO_DEW_POINT:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_atmo_dew_point(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_ATMO_VAPOR_PRESSURE:
+            cdb_eval_make_f64(
+                out_val, cdb_math_atmo_vapor_pressure(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_ATMO_HEAT_INDEX:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_atmo_heat_index(to_double(&args[0]), to_double(&args[1])));
+            break;
+        case CDB_FN_ATMO_WIND_CHILL:
+            cdb_eval_make_f64(out_val,
+                              cdb_math_atmo_wind_chill(to_double(&args[0]), to_double(&args[1])));
+            break;
         case CDB_FN_ATMO_AIR_DENSITY:
-            cdb_eval_make_f64(out_val, cdb_math_atmo_air_density(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_atmo_air_density(to_double(&args[0]), to_double(&args[1]),
+                                                        to_double(&args[2])));
             break;
         case CDB_FN_GAS_IDEAL_PRESSURE:
-            cdb_eval_make_f64(out_val, cdb_math_gas_ideal_pressure(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_gas_ideal_pressure(to_double(&args[0]), to_double(&args[1]),
+                                                          to_double(&args[2])));
             break;
 
         /* Fluid Dynamics & Thermal Flow */
-        case CDB_FN_FLUID_DYNAMIC_PRESSURE: cdb_eval_make_f64(out_val, cdb_math_fluid_dynamic_pressure(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_FLUID_DYNAMIC_PRESSURE:
+            cdb_eval_make_f64(
+                out_val, cdb_math_fluid_dynamic_pressure(to_double(&args[0]), to_double(&args[1])));
+            break;
         case CDB_FN_FLUID_PITOT_AIRSPEED:
-            cdb_eval_make_f64(out_val, cdb_math_fluid_pitot_airspeed(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+            cdb_eval_make_f64(out_val, cdb_math_fluid_pitot_airspeed(to_double(&args[0]),
+                                                                     to_double(&args[1]),
+                                                                     to_double(&args[2])));
             break;
         case CDB_FN_FLUID_REYNOLDS:
-            cdb_eval_make_f64(out_val, cdb_math_fluid_reynolds(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_fluid_reynolds(to_double(&args[0]), to_double(&args[1]),
+                                                      to_double(&args[2]), to_double(&args[3])));
             break;
-        case CDB_FN_FLUID_HYDROSTATIC_PRESSURE: cdb_eval_make_f64(out_val, cdb_math_fluid_hydrostatic_pressure(to_double(&args[0]), to_double(&args[1]))); break;
+        case CDB_FN_FLUID_HYDROSTATIC_PRESSURE:
+            cdb_eval_make_f64(out_val, cdb_math_fluid_hydrostatic_pressure(to_double(&args[0]),
+                                                                           to_double(&args[1])));
+            break;
         case CDB_FN_FLUID_VENTURI_FLOW:
-            cdb_eval_make_f64(out_val, cdb_math_fluid_venturi_flow(to_double(&args[0]), to_double(&args[1]), to_double(&args[2]), to_double(&args[3]), to_double(&args[4])));
+            cdb_eval_make_f64(out_val,
+                              cdb_math_fluid_venturi_flow(to_double(&args[0]), to_double(&args[1]),
+                                                          to_double(&args[2]), to_double(&args[3]),
+                                                          to_double(&args[4])));
             break;
         case CDB_FN_THERMAL_JUNCTION_TEMP:
-            cdb_eval_make_f64(out_val, cdb_math_thermal_junction_temp(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+            cdb_eval_make_f64(out_val, cdb_math_thermal_junction_temp(to_double(&args[0]),
+                                                                      to_double(&args[1]),
+                                                                      to_double(&args[2])));
             break;
         case CDB_FN_THERMAL_RADIATION_POWER:
-            cdb_eval_make_f64(out_val, cdb_math_thermal_radiation_power(to_double(&args[0]), to_double(&args[1]), to_double(&args[2])));
+            cdb_eval_make_f64(out_val, cdb_math_thermal_radiation_power(to_double(&args[0]),
+                                                                        to_double(&args[1]),
+                                                                        to_double(&args[2])));
             break;
 
-        default:
-            s = CDB_E_UNSUPPORTED;
-            break;
+        default: s = CDB_E_UNSUPPORTED; break;
         }
         break;
     }
 
-    default:
-        s = CDB_E_UNSUPPORTED;
-        break;
+    default: s = CDB_E_UNSUPPORTED; break;
     }
 
     ctx->depth--;
@@ -1055,7 +1201,7 @@ cdb_status cdb_eval_expr(cdb_eval_ctx *ctx, const cdb_query_expr *expr, cdb_valu
 }
 
 cdb_status cdb_eval_expr_wire(cdb_eval_ctx *ctx, const uint8_t *wire, size_t len,
-                             cdb_value *out_val, size_t *consumed)
+                              cdb_value *out_val, size_t *consumed)
 {
     const uint8_t *p;
     const uint8_t *end;

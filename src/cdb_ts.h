@@ -50,9 +50,9 @@ typedef struct cdb_ts_tag {
 } cdb_ts_tag;
 
 typedef struct cdb_ts_def {
-    uint8_t precision;       /* CDB_TS_SECONDS .. CDB_TS_NANOS */
-    int64_t window;          /* ticks of the precision; 0: one hour */
-    int change_of_value;     /* fold a point equal to the previous one */
+    uint8_t precision;   /* CDB_TS_SECONDS .. CDB_TS_NANOS */
+    int64_t window;      /* ticks of the precision; 0: one hour */
+    int change_of_value; /* fold a point equal to the previous one */
     uint16_t nfields;
     cdb_ts_field fields[CDB_TS_MAX_FIELDS]; /* IDs strictly increasing */
 } cdb_ts_def;
@@ -78,22 +78,24 @@ size_t cdb_ts_work_size(void);
 
 /* Creates a store; commits immediately, like other catalog changes.
  * lateness is in nanoseconds, for CDB_TS_LATE_WITHIN. */
-cdb_status cdb_ts_create(cdb_db *db, const char *name, size_t len, unsigned late_mode, int64_t lateness,
-                         uint64_t *store);
+cdb_status cdb_ts_create(cdb_db *db, const char *name, size_t len, unsigned late_mode,
+                         int64_t lateness, uint64_t *store);
 
 /* Finds a series by key, as the open transaction (if any) sees it. With def,
  * inside a transaction, creates it when missing; an existing series is
  * returned as is, whatever def says. *created says which. CDB_E_NOT_FOUND
  * without def when it is missing. */
-cdb_status cdb_ts_series(cdb_db *db, uint64_t store, const char *name, size_t len, const cdb_ts_tag *tags,
-                         size_t ntags, const cdb_ts_def *def, uint64_t *series, int *created);
+cdb_status cdb_ts_series(cdb_db *db, uint64_t store, const char *name, size_t len,
+                         const cdb_ts_tag *tags, size_t ntags, const cdb_ts_def *def,
+                         uint64_t *series, int *created);
 cdb_status cdb_ts_describe(cdb_db *db, uint64_t store, uint64_t series, cdb_ts_def *def);
 
 /* Inside a transaction: appends points (any order). A point that is late
  * under the store's mode is refused with CDB_E_STATE; a value of the wrong
  * type or an unknown field is CDB_E_INVALID_ARG. Nothing is journaled when
  * any point is refused. */
-cdb_status cdb_ts_append(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points, size_t n);
+cdb_status cdb_ts_append(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points,
+                         size_t n);
 
 /* Inside a transaction: removes every point older than ts (held ones too).
  * Refused with CDB_E_SECURITY on the protected audit series. */
@@ -106,52 +108,56 @@ cdb_status cdb_ts_drop_before(cdb_db *db, uint64_t store, uint64_t series, int64
 cdb_status cdb_ts_set_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t max_age_ticks);
 
 /* Retrieves the configured retention for a series in ticks (0 = keep everything). */
-cdb_status cdb_ts_get_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t *max_age_ticks);
+cdb_status cdb_ts_get_retention(cdb_db *db, uint64_t store, uint64_t series,
+                                int64_t *max_age_ticks);
 
 /* Applies retention policy inside an open transaction: purges points older than
  * now_ts - retention_ticks via cdb_ts_drop_before.
  * If dropped_before is non-NULL, writes the cutoff timestamp used (or INT64_MIN if none).
  * Fails with CDB_E_SECURITY on the protected audit series. */
-cdb_status cdb_ts_apply_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts, int64_t *dropped_before);
+cdb_status cdb_ts_apply_retention(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts,
+                                  int64_t *dropped_before);
 
 /* Downsampling recipes (spec 10.4). */
-#define CDB_TS_AGG_AVG   1u
-#define CDB_TS_AGG_MIN   2u
-#define CDB_TS_AGG_MAX   3u
+#define CDB_TS_AGG_AVG 1u
+#define CDB_TS_AGG_MIN 2u
+#define CDB_TS_AGG_MAX 3u
 #define CDB_TS_AGG_COUNT 4u
-#define CDB_TS_AGG_SUM   5u
+#define CDB_TS_AGG_SUM 5u
 #define CDB_TS_AGG_FIRST 6u
-#define CDB_TS_AGG_LAST  7u
+#define CDB_TS_AGG_LAST 7u
 
 typedef struct cdb_ts_downsample_spec {
     uint64_t src_store;
     uint64_t src_series;
     uint64_t dst_store;
     uint64_t dst_series;
-    int64_t  bucket_step;       /* Duration per summary bucket in series time units */
+    int64_t bucket_step;                    /* Duration per summary bucket in series time units */
     uint16_t field_aggs[CDB_TS_MAX_FIELDS]; /* CDB_TS_AGG_* per field */
 } cdb_ts_downsample_spec;
 
 /* Runs a downsampling recipe over [from_ts, to_ts), appending summary points
  * to dst_series. If db is not already in a transaction, opens and commits one.
  * Fails with CDB_E_SECURITY on the protected audit series. */
-cdb_status cdb_ts_downsample_run(cdb_db *db, const cdb_ts_downsample_spec *spec,
-                                 int64_t from_ts, int64_t to_ts, size_t *points_generated);
+cdb_status cdb_ts_downsample_run(cdb_db *db, const cdb_ts_downsample_spec *spec, int64_t from_ts,
+                                 int64_t to_ts, size_t *points_generated);
 
 /* Committed points with from <= ts < to, oldest first: at most max rows,
  * values encoded into buf. *next is where to continue (to when done). */
-cdb_status cdb_ts_range(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to, uint8_t *buf,
-                        size_t cap, cdb_ts_row *rows, size_t max, size_t *n, int64_t *next);
+cdb_status cdb_ts_range(cdb_db *db, uint64_t store, uint64_t series, int64_t from, int64_t to,
+                        uint8_t *buf, size_t cap, cdb_ts_row *rows, size_t max, size_t *n,
+                        int64_t *next);
 
 /* Engine hooks. */
 cdb_status cdb_ts_live_in_tx(cdb_db *db, uint64_t store, uint64_t series, int *live);
-cdb_status cdb_ts_point_live_in_tx(cdb_db *db, uint64_t store, uint64_t series, int64_t ts, int *live);
+cdb_status cdb_ts_point_live_in_tx(cdb_db *db, uint64_t store, uint64_t series, int64_t ts,
+                                   int *live);
 int cdb_ts_is_open(cdb_db *db, uint64_t store);
 cdb_status cdb_ts_apply(cdb_db *db, const cdb_delta *d, int *handled);
-cdb_status cdb_ts_flush(cdb_db *db); /* at reconciliation: held points, entry counters */
+cdb_status cdb_ts_flush(cdb_db *db);       /* at reconciliation: held points, entry counters */
 extern const cdb_slot_ops cdb_ts_slot_ops; /* open stores (cdb_slots.h) */
 /* Nibblet merging moved a block (cdb_nib.h); CDB_E_NOT_FOUND if gone. */
-cdb_status cdb_ts_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen, uint64_t old_addr,
-                            uint64_t addr);
+cdb_status cdb_ts_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
+                            uint64_t old_addr, uint64_t addr);
 
 #endif

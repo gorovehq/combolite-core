@@ -87,7 +87,7 @@ int cdb_nib_fits(const cdb_db *db, size_t len)
 static uint8_t *page_buf(cdb_db *db, unsigned i)
 {
     return db->cfg.doc_buffers + 3u * cdb_doc_buffer_size(db->pager.page_size, db->cfg.doc_max)
-         + (size_t)(3u + i) * db->pager.page_size;
+           + (size_t)(3u + i) * db->pager.page_size;
 }
 
 static uint8_t *payload(cdb_db *db, unsigned i)
@@ -267,14 +267,16 @@ static cdb_status open_index(cdb_db *db, cdb_index *ix, int create, int *have)
     cdb_status s;
     *have = 0;
     if (db->pager.catroot.nib_root != 0) {
-        if ((s = cdb_index_open(ix, &db->pager, db->pager.catroot.nib_root, &db->cfg.catalog_work)) != CDB_OK)
+        if ((s = cdb_index_open(ix, &db->pager, db->pager.catroot.nib_root, &db->cfg.catalog_work))
+            != CDB_OK)
             return s;
         *have = 1;
         return CDB_OK;
     }
     if (!create)
         return CDB_OK;
-    if ((s = cdb_index_create(ix, &db->pager, 0, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work)) != CDB_OK)
+    if ((s = cdb_index_create(ix, &db->pager, 0, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
     {
         cdb_catroot r = db->pager.catroot;
@@ -287,7 +289,8 @@ static cdb_status open_index(cdb_db *db, cdb_index *ix, int create, int *have)
 
 /* Moves page's key from free bytes `old` (none if old_present is 0) to
  * `now` (none if the page is gone). */
-static cdb_status rekey(cdb_index *ix, uint64_t page, int old_present, unsigned old, int now_present, unsigned now)
+static cdb_status rekey(cdb_index *ix, uint64_t page, int old_present, unsigned old,
+                        int now_present, unsigned now)
 {
     uint8_t k[18];
     int found;
@@ -485,7 +488,8 @@ cdb_status cdb_nib_get(cdb_db *db, uint64_t addr, void *out, size_t cap, size_t 
     if (!cdb_nib_is(addr))
         return CDB_E_INVALID_ARG;
     if ((s = read_page(db, cdb_nib_page(addr), 0)) != CDB_OK
-        || (s = record_at(db, 0, cdb_nib_slot(addr), &store, &kind, &okey, &oklen, &data, len)) != CDB_OK)
+        || (s = record_at(db, 0, cdb_nib_slot(addr), &store, &kind, &okey, &oklen, &data, len))
+               != CDB_OK)
         return s;
     if (*len > cap)
         return CDB_E_BUFFER_TOO_SMALL;
@@ -510,7 +514,8 @@ cdb_status cdb_nib_free(cdb_db *db, uint64_t addr)
         size_t oklen, len;
         uint64_t store;
         unsigned kind;
-        if ((s = record_at(db, 0, cdb_nib_slot(addr), &store, &kind, &okey, &oklen, &data, &len)) != CDB_OK)
+        if ((s = record_at(db, 0, cdb_nib_slot(addr), &store, &kind, &okey, &oklen, &data, &len))
+            != CDB_OK)
             return s;
     }
     old_free = get16(payload(db, 0), P_FREE, o);
@@ -534,27 +539,23 @@ cdb_status cdb_nib_free(cdb_db *db, uint64_t addr)
 /* Tells a record's owner it moved. CDB_E_NOT_FOUND: the owner no longer
  * refers to it (a dropped store or a record since replaced), so the record
  * is not kept. */
-static cdb_status moved(cdb_db *db, uint64_t store, unsigned kind, const uint8_t *okey, size_t oklen,
-                        uint64_t old_addr, uint64_t addr)
+static cdb_status moved(cdb_db *db, uint64_t store, unsigned kind, const uint8_t *okey,
+                        size_t oklen, uint64_t old_addr, uint64_t addr)
 {
     switch (kind) {
-    case CDB_NIB_KIND_REVISION:
-        return cdb_doc_nib_moved(db, store, okey, oklen, old_addr, addr);
-    case CDB_NIB_KIND_TS_BLOCK:
-        return cdb_ts_nib_moved(db, store, okey, oklen, old_addr, addr);
-    case CDB_NIB_KIND_COLCHUNK:
-        return cdb_table_nib_moved(db, store, okey, oklen, old_addr, addr);
+    case CDB_NIB_KIND_REVISION: return cdb_doc_nib_moved(db, store, okey, oklen, old_addr, addr);
+    case CDB_NIB_KIND_TS_BLOCK: return cdb_ts_nib_moved(db, store, okey, oklen, old_addr, addr);
+    case CDB_NIB_KIND_COLCHUNK: return cdb_table_nib_moved(db, store, okey, oklen, old_addr, addr);
     case CDB_NIB_KIND_OVERFLOW_TAIL:
         return cdb_overflow_nib_moved(db, store, okey, oklen, old_addr, addr);
-    default:
-        return CDB_E_CORRUPT;
+    default: return CDB_E_CORRUPT;
     }
 }
 
 /* Moves every record of `src` (buffer 1) into `dst` (buffer 0), which the
  * caller has checked has room, then frees src. */
-static cdb_status move_page(cdb_db *db, cdb_index *ix, uint64_t src, unsigned src_free, uint64_t dst,
-                            unsigned dst_free)
+static cdb_status move_page(cdb_db *db, cdb_index *ix, uint64_t src, unsigned src_free,
+                            uint64_t dst, unsigned dst_free)
 {
     cdb_byte_order o = db->pager.order;
     uint8_t *sp, *dp;
@@ -676,7 +677,8 @@ cdb_status cdb_nib_sweep_page(cdb_db *db, uint64_t page, uint64_t *nibblets_free
             cdb_store_info sinfo;
             if ((s = record_at(db, 0, i, &store, &kind, &okey, &oklen, &data, &rlen)) != CDB_OK)
                 continue;
-            if (cdb_catalog_get_store(&db->catalog, store, &sinfo) == CDB_OK && (sinfo.flags & CDB_STORE_DROPPED)) {
+            if (cdb_catalog_get_store(&db->catalog, store, &sinfo) == CDB_OK
+                && (sinfo.flags & CDB_STORE_DROPPED)) {
                 live = unplace(db, p, i);
                 if (nibblets_freed != NULL)
                     (*nibblets_freed)++;

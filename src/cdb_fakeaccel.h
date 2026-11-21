@@ -11,14 +11,14 @@
 
 typedef struct cdb_fakeaccel {
     /* Behaviour, set by the test. */
-    double noise;            /* each distance is off by up to this; 0: the CPU's own */
-    unsigned decline_elems;  /* bit per cdb_vector_elem: mirror_open declines it */
-    uint64_t fail_put_at;    /* the n-th mirror_put fails (0: none) */
-    uint64_t fail_del_at;    /* the n-th mirror_del fails */
-    uint64_t fail_nearest_at;/* the n-th nearest fails */
+    double noise;             /* each distance is off by up to this; 0: the CPU's own */
+    unsigned decline_elems;   /* bit per cdb_vector_elem: mirror_open declines it */
+    uint64_t fail_put_at;     /* the n-th mirror_put fails (0: none) */
+    uint64_t fail_del_at;     /* the n-th mirror_del fails */
+    uint64_t fail_nearest_at; /* the n-th nearest fails */
     /* What happened. */
     uint64_t opens, closes, puts, dels, nearests;
-    unsigned live;           /* mirrors open now */
+    unsigned live;                 /* mirrors open now */
     struct cdb_accel_mirror *head; /* the open mirrors */
 } cdb_fakeaccel;
 

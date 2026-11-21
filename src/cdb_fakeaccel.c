@@ -53,19 +53,11 @@ static cdb_status f_open(void *ctx, uint64_t store, unsigned elem, uint32_t dims
     m->measure = measure;
     m->order = order;
     switch (elem) { /* bytes per stored vector (spec 14.6) */
-    case CDB_VEC_F32:
-        m->vec_bytes = (size_t)dims * 4u;
-        break;
+    case CDB_VEC_F32: m->vec_bytes = (size_t)dims * 4u; break;
     case CDB_VEC_F16:
-    case CDB_VEC_BF16:
-        m->vec_bytes = (size_t)dims * 2u;
-        break;
-    case CDB_VEC_I8:
-        m->vec_bytes = dims;
-        break;
-    default:
-        m->vec_bytes = ((size_t)dims + 7u) / 8u;
-        break;
+    case CDB_VEC_BF16: m->vec_bytes = (size_t)dims * 2u; break;
+    case CDB_VEC_I8: m->vec_bytes = dims; break;
+    default: m->vec_bytes = ((size_t)dims + 7u) / 8u; break;
     }
     m->next = fa->head;
     if (fa->head != NULL)
@@ -77,8 +69,8 @@ static cdb_status f_open(void *ctx, uint64_t store, unsigned elem, uint32_t dims
     return CDB_OK;
 }
 
-static cdb_status f_put(void *ctx, cdb_accel_mirror *m, const uint64_t *ids, const void *vecs, size_t vec_bytes,
-                        size_t n)
+static cdb_status f_put(void *ctx, cdb_accel_mirror *m, const uint64_t *ids, const void *vecs,
+                        size_t vec_bytes, size_t n)
 {
     cdb_fakeaccel *fa = (cdb_fakeaccel *)ctx;
     size_t i;
@@ -145,8 +137,9 @@ static void f_close(void *ctx, cdb_accel_mirror *m)
 /* Each query against every vector: the CPU's distance plus a fixed offset
  * of up to `noise`, rounded to float; the bound covers both. Hamming
  * without noise is exact, so its bound is 0 and ties go to the lower ID. */
-static cdb_status f_nearest(void *ctx, cdb_accel_mirror *m, const void *queries, size_t nq, size_t want,
-                            uint64_t *ids, float *dists, size_t *counts, double *bounds)
+static cdb_status f_nearest(void *ctx, cdb_accel_mirror *m, const void *queries, size_t nq,
+                            size_t want, uint64_t *ids, float *dists, size_t *counts,
+                            double *bounds)
 {
     cdb_fakeaccel *fa = (cdb_fakeaccel *)ctx;
     size_t qi;
@@ -159,7 +152,8 @@ static cdb_status f_nearest(void *ctx, cdb_accel_mirror *m, const void *queries,
         double top = 0.0;
         size_t i, have = 0;
         for (i = 0; i < m->n; i++) {
-            double d = cdb_vec_cpu_distance(m->elem, m->dims, m->measure, q, m->vecs + i * m->vec_bytes, m->order);
+            double d = cdb_vec_cpu_distance(m->elem, m->dims, m->measure, q,
+                                            m->vecs + i * m->vec_bytes, m->order);
             float f;
             size_t pos;
             if (fabs(d) > top)
@@ -187,7 +181,7 @@ static cdb_status f_nearest(void *ctx, cdb_accel_mirror *m, const void *queries,
     return CDB_OK;
 }
 
-static const cdb_accel_ops fake_ops = { f_open, f_put, f_del, f_close, f_nearest };
+static const cdb_accel_ops fake_ops = {f_open, f_put, f_del, f_close, f_nearest};
 
 void cdb_fakeaccel_init(cdb_fakeaccel *fa, cdb_env *env)
 {

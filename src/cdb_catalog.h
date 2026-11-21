@@ -26,35 +26,37 @@
 #define CDB_MODEL_DOCUMENT 2u
 #define CDB_MODEL_VECTOR 3u
 #define CDB_MODEL_TIME_SERIES 4u
-#define CDB_MODEL_LINK 5u /* the one link store (cdb_link.h): a reserved name, starting with '$' */
+#define CDB_MODEL_LINK 5u /* the one link store (cdb_link.h): a reserved name, starting with '$' \
+                           */
 
 /* Store flags. */
 #define CDB_STORE_DROPPED 0x1u
 
-#define CDB_CATALOG_NAME_MAX 64u        /* longest object name, in bytes of UTF-8 */
-#define CDB_CATALOG_FULL_TEXT_MAX 512u  /* largest encoded full-text settings object */
-#define CDB_CATALOG_SETTINGS_MAX 512u   /* largest encoded vector settings object */
+#define CDB_CATALOG_NAME_MAX 64u       /* longest object name, in bytes of UTF-8 */
+#define CDB_CATALOG_FULL_TEXT_MAX 512u /* largest encoded full-text settings object */
+#define CDB_CATALOG_SETTINGS_MAX 512u  /* largest encoded vector settings object */
 
 /* A store's catalog record, decoded (spec 14.3.3). */
 typedef struct cdb_store_info {
-    uint64_t id;              /* object ID; never reused */
+    uint64_t id;                         /* object ID; never reused */
     char name[CDB_CATALOG_NAME_MAX + 1]; /* not zero-terminated: use name_len */
     size_t name_len;
-    uint32_t model;           /* CDB_MODEL_* */
-    uint64_t domain_id;       /* 0 = public, until enclaves exist */
-    uint32_t page_log2;       /* page size of the store's pages */
+    uint32_t model;     /* CDB_MODEL_* */
+    uint64_t domain_id; /* 0 = public, until enclaves exist */
+    uint32_t page_log2; /* page size of the store's pages */
     uint32_t compression;
-    uint32_t schema_version;  /* current version; 0 = no schema */
-    uint64_t next_field_id;   /* next ID the field dictionary hands out */
-    uint64_t created_commit;  /* archive commit sequence that created the store */
-    uint32_t flags;           /* CDB_STORE_* */
+    uint32_t schema_version; /* current version; 0 = no schema */
+    uint64_t next_field_id;  /* next ID the field dictionary hands out */
+    uint64_t created_commit; /* archive commit sequence that created the store */
+    uint32_t flags;          /* CDB_STORE_* */
     /* Document pools (spec 8, 14.9). Optional fields; 0 when absent. */
-    uint64_t head_root;       /* index: entry ID -> head revision */
-    uint64_t rev_root;        /* index: (entry ID, revision) -> revision page */
-    uint64_t next_entry_id;   /* entry IDs are never reused (spec 6.1) */
+    uint64_t head_root;                           /* index: entry ID -> head revision */
+    uint64_t rev_root;                            /* index: (entry ID, revision) -> revision page */
+    uint64_t next_entry_id;                       /* entry IDs are never reused (spec 6.1) */
     uint8_t full_text[CDB_CATALOG_FULL_TEXT_MAX]; /* encoded settings (14.14); empty = none */
     size_t full_text_len;
-    uint8_t vector[CDB_CATALOG_SETTINGS_MAX]; /* encoded collection settings (14.12.3); empty = none */
+    uint8_t
+        vector[CDB_CATALOG_SETTINGS_MAX]; /* encoded collection settings (14.12.3); empty = none */
     size_t vector_len;
 } cdb_store_info;
 
@@ -75,15 +77,16 @@ typedef struct cdb_catalog {
     cdb_index body;
     cdb_index mirror;
     cdb_index_work work;
-    uint8_t *page;            /* one page buffer */
-    int open;                 /* body and mirror exist */
+    uint8_t *page; /* one page buffer */
+    int open;      /* body and mirror exist */
 } cdb_catalog;
 
 /* Binds the catalog to an open pager. page is a page_size buffer; work is
  * index working memory (shared by the body and its mirror).
  * A file without a catalog is fine: the trees are created by the first
  * change. CDB_E_CORRUPT when the catalog's trees cannot be opened. */
-cdb_status cdb_catalog_open(cdb_catalog *cat, cdb_pager *p, const cdb_index_work *work, uint8_t *page);
+cdb_status cdb_catalog_open(cdb_catalog *cat, cdb_pager *p, const cdb_index_work *work,
+                            uint8_t *page);
 
 /* Creates a store and commits. CDB_E_EXISTS for a name already in use by a
  * live store; CDB_E_INVALID_ARG for a bad name or model. Names starting
@@ -92,17 +95,21 @@ cdb_status cdb_catalog_create_store(cdb_catalog *cat, const char *name, size_t l
                                     uint64_t *id);
 /* As create_store, with a vector collection's settings (an encoded object)
  * in the same record and commit. */
-cdb_status cdb_catalog_create_store_ex(cdb_catalog *cat, const char *name, size_t len, uint32_t model,
-                                       const void *vector, size_t vector_len, uint64_t *id);
+cdb_status cdb_catalog_create_store_ex(cdb_catalog *cat, const char *name, size_t len,
+                                       uint32_t model, const void *vector, size_t vector_len,
+                                       uint64_t *id);
 /* The ID the next created store will get, for pages written before it. */
 uint64_t cdb_catalog_next_store_id(const cdb_catalog *cat);
 /* Replaces a vector collection's settings and commits immediately. */
-cdb_status cdb_catalog_set_vector(cdb_catalog *cat, uint64_t store_id, const void *settings, size_t len);
+cdb_status cdb_catalog_set_vector(cdb_catalog *cat, uint64_t store_id, const void *settings,
+                                  size_t len);
 /* Records a store's next entry ID without committing (like stage_pool). */
-cdb_status cdb_catalog_stage_next_entry(cdb_catalog *cat, uint64_t store_id, uint64_t next_entry_id);
+cdb_status cdb_catalog_stage_next_entry(cdb_catalog *cat, uint64_t store_id,
+                                        uint64_t next_entry_id);
 
 /* *found is 0 when no live store has that name. */
-cdb_status cdb_catalog_find_store(cdb_catalog *cat, const char *name, size_t len, uint64_t *id, int *found);
+cdb_status cdb_catalog_find_store(cdb_catalog *cat, const char *name, size_t len, uint64_t *id,
+                                  int *found);
 /* Dropped stores are still found by ID (their IDs are never reused).
  * CDB_E_NOT_FOUND for an unknown ID or an ID that names a link type. */
 cdb_status cdb_catalog_get_store(cdb_catalog *cat, uint64_t id, cdb_store_info *info);
@@ -115,8 +122,10 @@ cdb_status cdb_catalog_drop_store(cdb_catalog *cat, uint64_t id);
 /* Link types. create assigns the next object ID and commits; the name is
  * unique among link types. get gives CDB_E_NOT_FOUND for an ID that is not
  * a link type. */
-cdb_status cdb_catalog_create_link_type(cdb_catalog *cat, const cdb_link_type_info *in, uint64_t *id);
-cdb_status cdb_catalog_find_link_type(cdb_catalog *cat, const char *name, size_t len, uint64_t *id, int *found);
+cdb_status cdb_catalog_create_link_type(cdb_catalog *cat, const cdb_link_type_info *in,
+                                        uint64_t *id);
+cdb_status cdb_catalog_find_link_type(cdb_catalog *cat, const char *name, size_t len, uint64_t *id,
+                                      int *found);
 cdb_status cdb_catalog_get_link_type(cdb_catalog *cat, uint64_t id, cdb_link_type_info *out);
 
 /* Records a pool's index roots and entry counter without committing: the
@@ -126,21 +135,22 @@ cdb_status cdb_catalog_stage_pool(cdb_catalog *cat, uint64_t store_id, uint64_t 
 
 /* Records a store's full-text settings (an encoded object, spec 14.14) and
  * commits immediately. */
-cdb_status cdb_catalog_set_full_text(cdb_catalog *cat, uint64_t store_id, const void *settings, size_t len);
+cdb_status cdb_catalog_set_full_text(cdb_catalog *cat, uint64_t store_id, const void *settings,
+                                     size_t len);
 
 /* Schema history (spec 4.3, 4.11): adds a version and makes it current.
  * The schema is stored as given (it is checked by cdb_schema, not here) and
  * must fit in one page. Versions count up from 1. */
-cdb_status cdb_catalog_add_schema(cdb_catalog *cat, uint64_t store_id, const void *schema, size_t len,
-                                  uint32_t *version);
+cdb_status cdb_catalog_add_schema(cdb_catalog *cat, uint64_t store_id, const void *schema,
+                                  size_t len, uint32_t *version);
 /* Copies schema version `version` into buf. CDB_E_NOT_FOUND if there is no
  * such version; CDB_E_BUFFER_TOO_SMALL (with *len set) if cap is too small. */
-cdb_status cdb_catalog_get_schema(cdb_catalog *cat, uint64_t store_id, uint32_t version,
-                                  void *buf, size_t cap, size_t *len);
+cdb_status cdb_catalog_get_schema(cdb_catalog *cat, uint64_t store_id, uint32_t version, void *buf,
+                                  size_t cap, size_t *len);
 
 /* Looks up a field's ID without adding it. *found is 0 if absent. */
-cdb_status cdb_catalog_field_lookup(cdb_catalog *cat, uint64_t store_id, const char *name, size_t len,
-                                    uint64_t *field_id, int *found);
+cdb_status cdb_catalog_field_lookup(cdb_catalog *cat, uint64_t store_id, const char *name,
+                                    size_t len, uint64_t *field_id, int *found);
 
 /* Field dictionary (spec 14.6.3): returns the field's ID, adding the name if new.
  * Adding a name commits immediately. */
@@ -154,7 +164,7 @@ cdb_status cdb_catalog_field_name(cdb_catalog *cat, uint64_t store_id, uint64_t 
  * instead: looking the name up no longer finds it (so cdb_catalog_field_id
  * hands out a new ID for it), while the reverse lookup still gives the old
  * name. Commits immediately. CDB_E_EXISTS: the new name is another field's. */
-cdb_status cdb_catalog_field_rename(cdb_catalog *cat, uint64_t store_id, uint64_t field_id, const char *name,
-                                    size_t len);
+cdb_status cdb_catalog_field_rename(cdb_catalog *cat, uint64_t store_id, uint64_t field_id,
+                                    const char *name, size_t len);
 
 #endif

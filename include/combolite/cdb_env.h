@@ -56,7 +56,8 @@ typedef struct cdb_env_ops {
      * Optional: calls fn once for each file or directory name directly in
      * dir (the name alone, without dir), in any order. A nonzero return from
      * fn stops the listing early; list then returns CDB_OK. */
-    cdb_status (*list)(void *ctx, const char *dir, int (*fn)(void *arg, const char *name), void *arg);
+    cdb_status (*list)(void *ctx, const char *dir, int (*fn)(void *arg, const char *name),
+                       void *arg);
     /* Optional: a monotonic clock in nanoseconds from an arbitrary start.
      * It never goes backwards while the process runs. */
     cdb_status (*mono)(void *ctx, int64_t *ns);
@@ -119,8 +120,9 @@ typedef struct cdb_accel_mirror cdb_accel_mirror;
 typedef struct cdb_accel_ops {
     /* A mirror for one collection, sized for `expect` vectors. elem is a
      * cdb_vector_elem and measure a CDB_VEC_* distance (cdb_vec.h). */
-    cdb_status (*mirror_open)(void *ctx, uint64_t store, unsigned elem, uint32_t dims, unsigned measure,
-                              cdb_byte_order order, uint64_t expect, cdb_accel_mirror **out);
+    cdb_status (*mirror_open)(void *ctx, uint64_t store, unsigned elem, uint32_t dims,
+                              unsigned measure, cdb_byte_order order, uint64_t expect,
+                              cdb_accel_mirror **out);
     /* Inserts or replaces n vectors: ids[i] is the i-th of vecs. */
     cdb_status (*mirror_put)(void *ctx, cdb_accel_mirror *m, const uint64_t *ids, const void *vecs,
                              size_t vec_bytes, size_t n);
@@ -131,8 +133,8 @@ typedef struct cdb_accel_ops {
      * is how many. bounds[i] bounds how far any distance for query i may be
      * from the CPU's (spec 18.10); 0 only for distances computed exactly,
      * whose ties must then be ordered by lower entry ID. */
-    cdb_status (*nearest)(void *ctx, cdb_accel_mirror *m, const void *queries, size_t nq, size_t want,
-                          uint64_t *ids, float *dists, size_t *counts, double *bounds);
+    cdb_status (*nearest)(void *ctx, cdb_accel_mirror *m, const void *queries, size_t nq,
+                          size_t want, uint64_t *ids, float *dists, size_t *counts, double *bounds);
 } cdb_accel_ops;
 
 /* An environment handle: an operation table plus its state, and an
