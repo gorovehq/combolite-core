@@ -20,6 +20,24 @@
 #define MAX_STRING_POOL 8192
 #define MAX_VARS 64
 
+/* Maximum CMBQL parser recursion depth (CWE-674, F2 / GHSA-rf29-8939-p85v).
+ *
+ * The recursive-descent query parser has two mutually-recursive cycles reachable
+ * from untrusted query text: the expression cycle
+ * (parse_expr -> ... -> parse_unary/parse_primary, re-entering parse_expr on a
+ * parenthesised sub-expression, a function argument, or a NOT/MINUS unary) and
+ * the query/source cycle (parse_query -> parse_source, re-entering parse_query on
+ * a parenthesised subquery). A bare '(' allocates no AST node, so without this cap
+ * nesting depth is bounded only by input length and tens of thousands of nested
+ * '(' overflow the C call stack (SIGSEGV).
+ *
+ * 64 is far above any realistic legitimate nesting (the value decoder caps at
+ * CDB_VALUE_MAX_DEPTH=32; hand-written queries rarely exceed single digits) yet
+ * orders of magnitude below the frame budget of a default 8 MiB stack, so valid
+ * queries compile unchanged while deep-nested abuse input fails closed with
+ * CDB_E_DEPTH. A single shared counter bounds both recursion cycles. */
+#define CDB_CMBQL_MAX_DEPTH 64
+
 typedef struct ast_expr ast_expr;
 typedef struct ast_node ast_node;
 
@@ -192,6 +210,12 @@ typedef struct compiler_ctx {
     /* Current active store name for field qualification */
     const char *active_store;
     size_t active_store_len;
+
+    /* Recursion-depth mediation (CWE-674, F2). depth is incremented across each
+     * recursive parse edge and restored on return; depth_exceeded is a sticky
+     * flag letting cdb_compile_query map the failure to CDB_E_DEPTH. */
+    size_t depth;
+    int depth_exceeded;
 } compiler_ctx;
 
 static void set_error(compiler_ctx *ctx, const cdb_token *tok, const char *msg) {
@@ -199,6 +223,25 @@ static void set_error(compiler_ctx *ctx, const cdb_token *tok, const char *msg) 
     ctx->err->line = tok ? tok->line : ctx->lex.line;
     ctx->err->col = tok ? tok->col : ctx->lex.col;
     snprintf(ctx->err->msg, sizeof(ctx->err->msg), "%s", msg);
+}
+
+/* Attempt to descend one recursion level. Returns 1 and increments depth when
+ * within the cap; on over-depth records a bounded error, sets the sticky flag,
+ * and returns 0 so the caller fails closed (returns NULL) without recursing.
+ * Pairs with depth_leave at each recursive call site (symmetric, leak-free). */
+static int depth_enter(compiler_ctx *ctx) {
+    if (ctx->depth >= (size_t)CDB_CMBQL_MAX_DEPTH) {
+        ctx->depth_exceeded = 1;
+        set_error(ctx, NULL, "query nesting exceeds maximum depth");
+        return 0;
+    }
+    ctx->depth++;
+    return 1;
+}
+
+/* Restore one recursion level. Call on every return path after depth_enter. */
+static void depth_leave(compiler_ctx *ctx) {
+    ctx->depth--;
 }
 
 static const char *pool_strdup(compiler_ctx *ctx, const char *s, size_t len) {
@@ -558,7 +601,9 @@ static ast_expr *parse_primary(compiler_ctx *ctx) {
 
     /* Parenthesized expression: ( expr ) */
     if (tok.kind == CDB_TOK_LPAREN) {
+        if (!depth_enter(ctx)) return NULL; /* bound recursion (CWE-674, F2) */
         ast_expr *e = parse_expr(ctx);
+        depth_leave(ctx);
         if (!e) return NULL;
         if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' to close expression", NULL) != CDB_OK) return NULL;
         return e;
@@ -583,7 +628,9 @@ static ast_expr *parse_primary(compiler_ctx *ctx) {
 
             if (!match(ctx, CDB_TOK_RPAREN, NULL)) {
                 do {
+                    if (!depth_enter(ctx)) return NULL; /* bound recursion (CWE-674, F2) */
                     ast_expr *arg = parse_expr(ctx);
+                    depth_leave(ctx);
                     if (!arg) return NULL;
                     if (e->as.call.n_args < 8) {
                         e->as.call.args[e->as.call.n_args++] = arg;
@@ -628,7 +675,9 @@ static ast_expr *parse_primary(compiler_ctx *ctx) {
 
 static ast_expr *parse_unary(compiler_ctx *ctx) {
     if (match(ctx, CDB_TOK_KW_NOT, NULL) || match(ctx, CDB_TOK_BANG, NULL)) {
+        if (!depth_enter(ctx)) return NULL; /* bound recursion (CWE-674, F2) */
         ast_expr *child = parse_unary(ctx);
+        depth_leave(ctx);
         if (!child) return NULL;
         ast_expr *e = alloc_expr(ctx);
         if (!e) return NULL;
@@ -638,7 +687,9 @@ static ast_expr *parse_unary(compiler_ctx *ctx) {
         return e;
     }
     if (match(ctx, CDB_TOK_MINUS, NULL)) {
+        if (!depth_enter(ctx)) return NULL; /* bound recursion (CWE-674, F2) */
         ast_expr *child = parse_unary(ctx);
+        depth_leave(ctx);
         if (!child) return NULL;
         ast_expr *e = alloc_expr(ctx);
         if (!e) return NULL;
@@ -798,7 +849,9 @@ static ast_node *parse_source(compiler_ctx *ctx) {
     }
 
     if (match(ctx, CDB_TOK_LPAREN, NULL)) {
+        if (!depth_enter(ctx)) return NULL; /* bound recursion (CWE-674, F2) */
         ast_node *sub = parse_query(ctx);
+        depth_leave(ctx);
         if (!sub) return NULL;
         if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' after subquery", NULL) != CDB_OK) return NULL;
         return sub;
@@ -1273,6 +1326,8 @@ cdb_status cdb_compile_query(const char *src, size_t len,
         if (!err || err->msg[0] == '\0') {
             set_error(&ctx, NULL, "Failed to parse query syntax");
         }
+        /* Over-depth input fails closed with the dedicated status (CWE-674, F2). */
+        if (ctx.depth_exceeded) return CDB_E_DEPTH;
         return CDB_E_INVALID_ARG;
     }
 
