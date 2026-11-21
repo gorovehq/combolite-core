@@ -9,6 +9,12 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(CDB_BUILD_TESTS "Build the test suite" ON)
 option(CDB_WERROR "Treat warnings as errors" ON)
 
+# On-demand multi-process stress harness (tests/stress, issue #46; origin #33).
+# Off by default and never registered with ctest: it forks processes, sends
+# SIGKILL, and runs for minutes, so a normal build/ctest is unaffected. Enable
+# with -DCDB_BUILD_STRESS=ON to build the stress_multiwriter_recovery tool.
+option(CDB_BUILD_STRESS "Build the on-demand multi-process stress harness (not part of ctest)" OFF)
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
@@ -226,4 +232,11 @@ if(CDB_BUILD_DEMO)
   elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../combolite-demo/CMakeLists.txt)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../combolite-demo ${CMAKE_CURRENT_BINARY_DIR}/demo)
   endif()
+endif()
+
+# The on-demand stress harness is wired independently of CDB_BUILD_TESTS: it
+# only needs the core library, and it is never added to ctest (see
+# tests/stress/CMakeLists.txt and tests/stress/README.md).
+if(CDB_BUILD_STRESS)
+  add_subdirectory(tests/stress)
 endif()
