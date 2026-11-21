@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use combolite-core in your research or software, please cite it as below."
+title: "combolite-core: a crash-safe embeddable multi-model C99 database engine"
+abstract: >-
+  combolite-core is a pure C99, crash-safe, embeddable multi-model database engine
+  (document, table, vector, time-series, and graph-link models with full-text search
+  and a CMBQL query language), designed around a no-heap, caller-owned-buffer memory
+  model for host and microcontroller profiles.
+type: software
+authors:
+  - name: "The combolite-core contributors"
+repository-code: "https://github.com/gorovehq/combolite-core"
+license: MIT
+keywords:
+  - database
+  - embedded
+  - C99
+  - multi-model
+  - vector-database
+  - time-series

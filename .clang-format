@@ -1,0 +1,25 @@
+# combolite-core C99 formatting — calibrated to the existing tree. New/changed code
+# must be clang-format-clean (CI: `clang-format --dry-run -Werror` on the diff). A
+# small amount of intentional hand-formatting (packed byte-tables, grouped short
+# assignments) is guarded with `// clang-format off/on`. See db-combolite/CLAUDE.md.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+PointerAlignment: Right
+DerivePointerAlignment: false
+BreakBeforeBraces: Linux
+BreakBeforeBinaryOperators: NonAssignment
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+AlignAfterOpenBracket: Align
+AlignEscapedNewlines: Left
+SortIncludes: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+SpaceAfterCStyleCast: false
+...
