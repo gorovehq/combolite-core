@@ -144,6 +144,7 @@ cdb_add_test(test_cmbql_crud)
 cdb_add_test(test_e2e_lifecycle)
 cdb_add_test(test_fault_sweep)
 cdb_add_test(test_idblocks)
+cdb_add_test(test_cdb_wire_depth)
 
 # The suites that use several stores again, with one open store of each
 # model at a time, so a store closed while still in use shows up here.

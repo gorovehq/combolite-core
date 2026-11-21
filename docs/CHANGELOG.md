@@ -13,6 +13,20 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Security
 
+- **Query engine (DoS, CWE-674)** — bounded the recursive descents over
+  **untrusted** precompiled query wire and stored-procedure bytecode
+  (`cdb_query_skip_expr` / `cdb_query_skip_node`, and `build_exec_tree`) with an
+  explicit recursion-depth cap (`CDB_QUERY_MAX_DEPTH`, 64 — the compiler's maximum
+  emitted plan depth, peer of `CDB_VALUE_MAX_DEPTH=32`). Hostile deeply-nested
+  wire reaching the public `cdb_exec_open` (directly or via `cdb_proc_exec`) now
+  returns the typed error `CDB_E_DEPTH` instead of driving unbounded C recursion
+  to a stack overflow (SIGSEGV) in the very code that gates untrusted input — the
+  parser now fails **closed**. The depth counters are `size_t`, incremented only
+  on the `depth < cap` branch, so they are bounded by the cap and cannot overflow
+  (CWE-190). No behaviour change for valid, reasonably-nested wire; no public
+  ABI/signature change. Held to a committed regression test
+  (`tests/test_cdb_wire_depth.c`, red→green proven under ASan+UBSan).
+  (Private security advisory GHSA-rf29-8939-p85v, finding F3)
 - Bumped the vendored Mbed TLS submodule from 3.6.2 to **3.6.5**, picking up the
   upstream maintenance and security fixes for the crypto primitives the engine
   relies on (AES-256-GCM, ChaCha20-Poly1305, SHA-256, HMAC, HKDF, ECDSA). (#1)
