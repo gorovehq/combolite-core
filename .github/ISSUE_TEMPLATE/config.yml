@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/gorovehq/combolite-core/security/advisories/new
+    about: "Do NOT open a public issue for security flaws. Use the private Security Advisory flow (see SECURITY.md)."
+  - name: Documentation, FAQ & specification
+    url: https://github.com/gorovehq/combolite-core/tree/main/docs
+    about: "README, docs/FAQ.md, the user/CMBQL manuals, and the on-disk/query spec (docs/spec/)."
+  - name: Contributing guide
+    url: https://github.com/gorovehq/combolite-core/blob/main/CONTRIBUTING.md
+    about: "How to build, test, branch, and submit changes."

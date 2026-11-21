@@ -1,0 +1,18 @@
+# CODEOWNERS — required reviewers per path (GitHub auto-requests review on matching PRs).
+# Security-relevant paths (crypto/parsers/CI) carry the maintainers as security-focused reviewers.
+
+# Default owner for everything:
+*                       @gorovedev @0xb007ab1e
+
+# Core engine & on-disk format:
+/src/                   @gorovedev @0xb007ab1e
+/docs/spec/             @gorovedev @0xb007ab1e
+
+# Security-sensitive:
+/src/cdb_crypto.*       @gorovedev @0xb007ab1e
+/SECURITY.md            @gorovedev @0xb007ab1e
+
+# Build, CI, governance:
+/CMakeLists.txt         @gorovedev @0xb007ab1e
+/.github/               @gorovedev @0xb007ab1e
+/.clang-format          @gorovedev @0xb007ab1e
