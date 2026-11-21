@@ -22,9 +22,9 @@
 
 /* Hybrid Logical Clock (HLC) timestamp. Total ordering across nodes. */
 typedef struct cdb_hlc {
-    uint64_t physical;  /* epoch timestamp (e.g. microseconds or logical counter) */
-    uint32_t logical;   /* sub-tick logical sequence counter */
-    uint32_t peer_id;   /* unique node/peer identifier */
+    uint64_t physical; /* epoch timestamp (e.g. microseconds or logical counter) */
+    uint32_t logical;  /* sub-tick logical sequence counter */
+    uint32_t peer_id;  /* unique node/peer identifier */
 } cdb_hlc;
 
 /* Compares two HLC timestamps. Returns <0 if a < b, >0 if a > b, 0 if a == b. */
@@ -39,8 +39,8 @@ void cdb_hlc_update(cdb_hlc *clock, cdb_hlc remote, uint64_t wall_clock_now);
 /* One entry in a peer version vector. */
 typedef struct cdb_crdt_peer_entry {
     uint32_t peer_id;
-    uint64_t counter;   /* mutation sequence counter */
-    cdb_hlc hlc;        /* highest HLC seen from peer */
+    uint64_t counter; /* mutation sequence counter */
+    cdb_hlc hlc;      /* highest HLC seen from peer */
 } cdb_crdt_peer_entry;
 
 /* Compact bounded peer version vector. */
@@ -51,13 +51,14 @@ typedef struct cdb_crdt_vector {
 
 /* Vector comparison results. */
 #define CDB_CRDT_CMP_EQUAL 0
-#define CDB_CRDT_CMP_DOMINATES 1    /* a is strictly ahead of b */
-#define CDB_CRDT_CMP_DOMINATED -1  /* a is strictly behind b */
-#define CDB_CRDT_CMP_CONCURRENT 2  /* a and b have divergent/concurrent edits */
+#define CDB_CRDT_CMP_DOMINATES 1  /* a is strictly ahead of b */
+#define CDB_CRDT_CMP_DOMINATED -1 /* a is strictly behind b */
+#define CDB_CRDT_CMP_CONCURRENT 2 /* a and b have divergent/concurrent edits */
 
 int cdb_crdt_vector_compare(const cdb_crdt_vector *a, const cdb_crdt_vector *b);
 void cdb_crdt_vector_set(cdb_crdt_vector *v, uint32_t peer_id, uint64_t counter, cdb_hlc hlc);
-cdb_status cdb_crdt_vector_get(const cdb_crdt_vector *v, uint32_t peer_id, cdb_crdt_peer_entry *out);
+cdb_status cdb_crdt_vector_get(const cdb_crdt_vector *v, uint32_t peer_id,
+                               cdb_crdt_peer_entry *out);
 void cdb_crdt_vector_merge(cdb_crdt_vector *dest, const cdb_crdt_vector *src);
 
 /* Positive-Negative Counter (PN-Counter). */
@@ -110,30 +111,29 @@ int cdb_crdt_link_resolve(cdb_crdt_link_token a, cdb_crdt_link_token b);
 #define CDB_CRDT_MSG_DELTA_SLICE 2u
 
 /* Encodes a handshake message with the local version vector. */
-cdb_status cdb_crdt_handshake_encode(uint32_t peer_id, const cdb_crdt_vector *v,
-                                     uint8_t *buf, size_t cap, size_t *len);
+cdb_status cdb_crdt_handshake_encode(uint32_t peer_id, const cdb_crdt_vector *v, uint8_t *buf,
+                                     size_t cap, size_t *len);
 
 /* Decodes a handshake message. */
-cdb_status cdb_crdt_handshake_decode(const uint8_t *buf, size_t len,
-                                     uint32_t *peer_id, cdb_crdt_vector *v);
+cdb_status cdb_crdt_handshake_decode(const uint8_t *buf, size_t len, uint32_t *peer_id,
+                                     cdb_crdt_vector *v);
 
 /* CRDT replication delta record. */
 typedef struct cdb_crdt_delta_rec {
     uint64_t store_id;
     uint64_t entry_id;
-    uint8_t op;          /* CDB_OP_* */
+    uint8_t op; /* CDB_OP_* */
     cdb_hlc hlc;
     const uint8_t *data;
     size_t len;
 } cdb_crdt_delta_rec;
 
 /* Encodes a delta slice containing delta records. */
-cdb_status cdb_crdt_slice_encode(uint32_t sender_peer_id, const cdb_crdt_delta_rec *recs, size_t count,
-                                 uint8_t *buf, size_t cap, size_t *len);
+cdb_status cdb_crdt_slice_encode(uint32_t sender_peer_id, const cdb_crdt_delta_rec *recs,
+                                 size_t count, uint8_t *buf, size_t cap, size_t *len);
 
 /* Decodes a delta slice into records. */
-cdb_status cdb_crdt_slice_decode(const uint8_t *buf, size_t len,
-                                 uint32_t *sender_peer_id,
+cdb_status cdb_crdt_slice_decode(const uint8_t *buf, size_t len, uint32_t *sender_peer_id,
                                  cdb_crdt_delta_rec *recs, size_t cap, size_t *count);
 
 #endif

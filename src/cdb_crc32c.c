@@ -28,10 +28,14 @@ uint32_t cdb_crc32c_sw(uint32_t crc, const void *data, size_t len)
     /* Bytes are combined explicitly, so the host's byte order and the
      * buffer's alignment don't matter. */
     while (len >= 8) {
-        uint32_t lo = c ^ ((uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24);
-        uint32_t hi = (uint32_t)p[4] | (uint32_t)p[5] << 8 | (uint32_t)p[6] << 16 | (uint32_t)p[7] << 24;
-        c = crc32c_table[7][lo & 0xFFu] ^ crc32c_table[6][(lo >> 8) & 0xFFu] ^ crc32c_table[5][(lo >> 16) & 0xFFu]
-            ^ crc32c_table[4][lo >> 24] ^ crc32c_table[3][hi & 0xFFu] ^ crc32c_table[2][(hi >> 8) & 0xFFu]
+        uint32_t lo =
+            c
+            ^ ((uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24);
+        uint32_t hi =
+            (uint32_t)p[4] | (uint32_t)p[5] << 8 | (uint32_t)p[6] << 16 | (uint32_t)p[7] << 24;
+        c = crc32c_table[7][lo & 0xFFu] ^ crc32c_table[6][(lo >> 8) & 0xFFu]
+            ^ crc32c_table[5][(lo >> 16) & 0xFFu] ^ crc32c_table[4][lo >> 24]
+            ^ crc32c_table[3][hi & 0xFFu] ^ crc32c_table[2][(hi >> 8) & 0xFFu]
             ^ crc32c_table[1][(hi >> 16) & 0xFFu] ^ crc32c_table[0][hi >> 24];
         p += 8;
         len -= 8;
@@ -45,7 +49,8 @@ uint32_t cdb_crc32c_sw(uint32_t crc, const void *data, size_t len)
 #ifdef CDB_CRC32C_X86
 /* The instruction reads eight bytes as a little-endian word, which is how
  * x86 loads them. */
-__attribute__((target("sse4.2"))) static uint32_t crc32c_x86(uint32_t crc, const uint8_t *p, size_t len)
+__attribute__((target("sse4.2"))) static uint32_t crc32c_x86(uint32_t crc, const uint8_t *p,
+                                                             size_t len)
 {
     uint64_t c = ~crc;
     uint32_t c32;

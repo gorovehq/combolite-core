@@ -31,21 +31,15 @@ typedef struct cdb_compile_error {
  * If cat is non-NULL, enables schema lookup for unquoted dotted field names.
  * Returns CDB_OK on success, or an error status code and fills err.
  */
-cdb_status cdb_compile_query(const char *src, size_t len,
-                             cdb_catalog *cat,
-                             uint8_t *wire_buf, size_t wire_cap,
-                             size_t *out_wire_len,
-                             cdb_compile_error *err);
+cdb_status cdb_compile_query(const char *src, size_t len, cdb_catalog *cat, uint8_t *wire_buf,
+                             size_t wire_cap, size_t *out_wire_len, cdb_compile_error *err);
 
 /* Compiles a CMBQL stored procedure script into sandboxed bytecode (CMBP).
  *
  * Returns CDB_OK on success, or an error status code and fills err.
  */
-cdb_status cdb_compile_proc(const char *src, size_t len,
-                            cdb_catalog *cat,
-                            uint8_t *bc_buf, size_t bc_cap,
-                            size_t *out_bc_len,
-                            cdb_compile_error *err);
+cdb_status cdb_compile_proc(const char *src, size_t len, cdb_catalog *cat, uint8_t *bc_buf,
+                            size_t bc_cap, size_t *out_bc_len, cdb_compile_error *err);
 
 #ifdef __cplusplus
 }

@@ -257,8 +257,9 @@ static cdb_status check_layout(const cdb_ts_layout *L)
 {
     unsigned f;
 
-    if (L->nfields > CDB_TS_MAX_FIELDS || L->precision > CDB_TS_NANOS ||
-        (L->flags & ~(CDB_TS_BLOCK_COV | CDB_TS_BLOCK_LATE)) != 0 || L->window_start >= L->window_end)
+    if (L->nfields > CDB_TS_MAX_FIELDS || L->precision > CDB_TS_NANOS
+        || (L->flags & ~(CDB_TS_BLOCK_COV | CDB_TS_BLOCK_LATE)) != 0
+        || L->window_start >= L->window_end)
         return CDB_E_INVALID_ARG;
     for (f = 0; f < L->nfields; f++) {
         if (kind_of(L->fields[f].type) == K_BAD)
@@ -293,10 +294,8 @@ static cdb_status check_val(uint8_t type, const cdb_ts_val *v, cdb_byte_order o)
     if (!v->present)
         return CDB_OK;
     switch (kind_of(type)) {
-    case K_F32:
-        return (v->bits >> 32) ? CDB_E_INVALID_ARG : CDB_OK;
-    case K_BOOL:
-        return v->bits > 1u ? CDB_E_INVALID_ARG : CDB_OK;
+    case K_F32: return (v->bits >> 32) ? CDB_E_INVALID_ARG : CDB_OK;
+    case K_BOOL: return v->bits > 1u ? CDB_E_INVALID_ARG : CDB_OK;
     case K_STR:
         if (v->len > UINT32_MAX || (v->len && v->bytes == NULL) || !utf8_valid(v->bytes, v->len))
             return CDB_E_INVALID_ARG;
@@ -305,8 +304,7 @@ static cdb_status check_val(uint8_t type, const cdb_ts_val *v, cdb_byte_order o)
         if (v->bytes == NULL || v->len == 0 || check_plain(v->bytes, v->len, type, o) != CDB_OK)
             return CDB_E_INVALID_ARG;
         return CDB_OK;
-    default:
-        return CDB_OK;
+    default: return CDB_OK;
     }
 }
 
@@ -324,7 +322,8 @@ static void state_init(cdb_tsblock_state *s, int64_t first)
 }
 
 /* Encodes one present value of a bit-coded column (not strings). */
-static cdb_status enc_val(cdb_bitw *w, int kind, cdb_tsblock_state *s, unsigned f, const cdb_ts_val *v)
+static cdb_status enc_val(cdb_bitw *w, int kind, cdb_tsblock_state *s, unsigned f,
+                          const cdb_ts_val *v)
 {
     switch (kind) {
     case K_INT: return cdb_tsb_int_encode(w, &s->ints[f], u2i(v->bits));
@@ -340,7 +339,8 @@ static cdb_status enc_val(cdb_bitw *w, int kind, cdb_tsblock_state *s, unsigned 
  * byte length are reserved, then filled in), then the index stream. The
  * dictionary is built in the output itself, so looking a string up means
  * scanning the entries written so far. */
-static cdb_status build_string(obuf *b, const cdb_ts_point *pts, size_t n, unsigned f, cdb_tsblock_state *s)
+static cdb_status build_string(obuf *b, const cdb_ts_point *pts, size_t n, unsigned f,
+                               cdb_tsblock_state *s)
 {
     size_t cntpos = b->len, dstart, i, cp;
     uint32_t idx, dn, used = 0;
@@ -384,8 +384,8 @@ static cdb_status build_string(obuf *b, const cdb_ts_point *pts, size_t n, unsig
         const cdb_ts_val *v = &pts[i].v[f];
         if (!v->present)
             continue;
-        st = dict_find(b->p + dstart, (size_t)cdb_load_u32(b->p + cntpos + 4u, b->o), v->bytes, v->len, &idx,
-                       &dn);
+        st = dict_find(b->p + dstart, (size_t)cdb_load_u32(b->p + cntpos + 4u, b->o), v->bytes,
+                       v->len, &idx, &dn);
         if (st != CDB_OK)
             return st;
         if (idx > used)
@@ -400,8 +400,9 @@ static cdb_status build_string(obuf *b, const cdb_ts_point *pts, size_t n, unsig
     return o_bits_end(b, cp, &w);
 }
 
-cdb_status cdb_tsblock_build(const cdb_ts_layout *L, const cdb_ts_point *pts, size_t n, cdb_byte_order o,
-                             uint8_t *out, size_t cap, size_t *len, cdb_tsblock_state *st)
+cdb_status cdb_tsblock_build(const cdb_ts_layout *L, const cdb_ts_point *pts, size_t n,
+                             cdb_byte_order o, uint8_t *out, size_t cap, size_t *len,
+                             cdb_tsblock_state *st)
 {
     obuf b;
     cdb_tsblock_state s;
@@ -412,14 +413,15 @@ cdb_status cdb_tsblock_build(const cdb_ts_layout *L, const cdb_ts_point *pts, si
     uint8_t hdr[CDB_TS_BLOCK_HEADER];
 
     /* Validate everything before writing anything. */
-    if (L == NULL || pts == NULL || out == NULL || len == NULL || n == 0 || n > CDB_TS_BLOCK_MAX_POINTS ||
-        (o != CDB_ORDER_LITTLE && o != CDB_ORDER_BIG))
+    if (L == NULL || pts == NULL || out == NULL || len == NULL || n == 0
+        || n > CDB_TS_BLOCK_MAX_POINTS || (o != CDB_ORDER_LITTLE && o != CDB_ORDER_BIG))
         return CDB_E_INVALID_ARG;
     rc = check_layout(L);
     if (rc != CDB_OK)
         return rc;
     for (i = 0; i < n; i++) {
-        if (pts[i].ts < L->window_start || pts[i].ts >= L->window_end || (i > 0 && pts[i].ts <= pts[i - 1].ts))
+        if (pts[i].ts < L->window_start || pts[i].ts >= L->window_end
+            || (i > 0 && pts[i].ts <= pts[i - 1].ts))
             return CDB_E_INVALID_ARG;
         for (f = 0; f < L->nfields; f++)
             if (check_val(L->fields[f].type, &pts[i].v[f], o) != CDB_OK)
@@ -516,9 +518,9 @@ cdb_status cdb_tsblock_build(const cdb_ts_layout *L, const cdb_ts_point *pts, si
  * per field, ascending IDs, a known type, zero bitmap padding, and the
  * column decoded exactly to the end of its stream; no trailing bytes.
  * The encoder state is rebuilt along the way, so an append can follow. */
-static cdb_status walk(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_layout *L, cdb_ts_point *out,
-                       size_t cap, uint32_t *count_out, int64_t *first_out, int64_t *last_out,
-                       cdb_tsblock_state *st_out)
+static cdb_status walk(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_layout *L,
+                       cdb_ts_point *out, size_t cap, uint32_t *count_out, int64_t *first_out,
+                       int64_t *last_out, cdb_tsblock_state *st_out)
 {
     rd r;
     cdb_ts_layout lay;
@@ -549,8 +551,8 @@ static cdb_status walk(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_l
     lay.nfields = cdb_load_u16(q + 28, o);
     lay.precision = q[30];
     lay.flags = q[31];
-    if (count == 0 || count > CDB_TS_BLOCK_MAX_POINTS || lay.nfields > CDB_TS_MAX_FIELDS ||
-        lay.precision > CDB_TS_NANOS || lay.window_start >= lay.window_end)
+    if (count == 0 || count > CDB_TS_BLOCK_MAX_POINTS || lay.nfields > CDB_TS_MAX_FIELDS
+        || lay.precision > CDB_TS_NANOS || lay.window_start >= lay.window_end)
         return CDB_E_MALFORMED;
     if ((lay.flags & ~(CDB_TS_BLOCK_COV | CDB_TS_BLOCK_LATE)) != 0)
         return CDB_E_MALFORMED;
@@ -755,8 +757,8 @@ static cdb_status walk(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_l
     return CDB_OK;
 }
 
-cdb_status cdb_tsblock_parse(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_layout *L, uint32_t *count,
-                             int64_t *first_ts, int64_t *last_ts)
+cdb_status cdb_tsblock_parse(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_ts_layout *L,
+                             uint32_t *count, int64_t *first_ts, int64_t *last_ts)
 {
     int64_t first;
     cdb_status rc;
@@ -805,8 +807,9 @@ static cdb_status app_bits(rd *r, obuf *b, size_t *cp, cdb_bitw *w)
     return CDB_OK;
 }
 
-cdb_status cdb_tsblock_append(const uint8_t *pl, size_t len, cdb_byte_order o, cdb_tsblock_state *st,
-                              const cdb_ts_point *p, uint8_t *out, size_t cap, size_t *outlen)
+cdb_status cdb_tsblock_append(const uint8_t *pl, size_t len, cdb_byte_order o,
+                              cdb_tsblock_state *st, const cdb_ts_point *p, uint8_t *out,
+                              size_t cap, size_t *outlen)
 {
     rd r;
     obuf b;
@@ -820,8 +823,8 @@ cdb_status cdb_tsblock_append(const uint8_t *pl, size_t len, cdb_byte_order o, c
     unsigned f;
     cdb_status rc;
 
-    if (pl == NULL || st == NULL || p == NULL || out == NULL || outlen == NULL || out == pl ||
-        (o != CDB_ORDER_LITTLE && o != CDB_ORDER_BIG))
+    if (pl == NULL || st == NULL || p == NULL || out == NULL || outlen == NULL || out == pl
+        || (o != CDB_ORDER_LITTLE && o != CDB_ORDER_BIG))
         return CDB_E_INVALID_ARG;
     if (len < CDB_TS_BLOCK_HEADER)
         return CDB_E_MALFORMED;
@@ -899,7 +902,8 @@ cdb_status cdb_tsblock_append(const uint8_t *pl, size_t len, cdb_byte_order o, c
         if (nb > ob)
             b.p[b.len + ob] = 0;
         if (v->present)
-            b.p[b.len + (count >> 3)] = (uint8_t)(b.p[b.len + (count >> 3)] | (0x80u >> (count & 7u)));
+            b.p[b.len + (count >> 3)] =
+                (uint8_t)(b.p[b.len + (count >> 3)] | (0x80u >> (count & 7u)));
         b.len += nb;
 
         if (kind == K_STR) {

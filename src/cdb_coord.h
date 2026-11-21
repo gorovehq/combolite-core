@@ -40,13 +40,13 @@
 #include "combolite/cdb_env.h"
 #include "cdb_endian.h"
 
-#define CDB_COORD_HALF 512u          /* bytes per slot half (spec 14.5.2) */
-#define CDB_COORD_MAX 64u            /* most coordinators this build tracks */
-#define CDB_COORD_MAX_BLOCKS 21u     /* held entry-ID blocks per slot (spec 5.9.3) */
-#define CDB_COORD_ID_BLOCK 1024u     /* entry IDs per claimed block (spec 5.9.3) */
-#define CDB_COORD_MAX_LOBBY 16u      /* lobby files looked at per scan */
-#define CDB_COORD_DIR 172u           /* longest coord/ folder path, with its zero */
-#define CDB_COORD_PATH 220u          /* the folder plus "/" and the longest name */
+#define CDB_COORD_HALF 512u      /* bytes per slot half (spec 14.5.2) */
+#define CDB_COORD_MAX 64u        /* most coordinators this build tracks */
+#define CDB_COORD_MAX_BLOCKS 21u /* held entry-ID blocks per slot (spec 5.9.3) */
+#define CDB_COORD_ID_BLOCK 1024u /* entry IDs per claimed block (spec 5.9.3) */
+#define CDB_COORD_MAX_LOBBY 16u  /* lobby files looked at per scan */
+#define CDB_COORD_DIR 172u       /* longest coord/ folder path, with its zero */
+#define CDB_COORD_PATH 220u      /* the folder plus "/" and the longest name */
 
 /* Roles (offset 12). */
 #define CDB_COORD_FREE 0u
@@ -57,15 +57,15 @@
 #define CDB_COORD_ALIVE 0x01u
 #define CDB_COORD_BATON_PENDING 0x02u
 #define CDB_COORD_JOURNAL 0x04u
-#define CDB_COORD_LOCKED 0x08u       /* lock liveness: judge this slot by its lock (spec 5.8) */
-#define CDB_COORD_CLOSED 0x10u       /* closed, journal pending (spec 5.9.1) */
+#define CDB_COORD_LOCKED 0x08u /* lock liveness: judge this slot by its lock (spec 5.8) */
+#define CDB_COORD_CLOSED 0x10u /* closed, journal pending (spec 5.9.1) */
 
 /* Request kinds (offset 88). */
 #define CDB_COORD_REQ_NONE 0u
 #define CDB_COORD_REQ_BATON 1u
 #define CDB_COORD_REQ_PRIMARY 2u
 #define CDB_COORD_REQ_PRIORITY 3u
-#define CDB_COORD_REQ_JOIN 4u        /* in a lobby file: the slot and priority wanted */
+#define CDB_COORD_REQ_JOIN 4u /* in a lobby file: the slot and priority wanted */
 #define CDB_COORD_REQ_ID_BLOCK 5u
 #define CDB_COORD_REQ_RECONCILE 6u
 
@@ -86,31 +86,31 @@ typedef struct cdb_coord_rec {
     uint16_t slot;
     uint8_t role;
     uint8_t flags;
-    uint16_t priority;           /* 1 is the highest */
+    uint16_t priority; /* 1 is the highest */
     uint8_t db_id[16];
     uint8_t session[16];
     uint64_t principal;
-    uint64_t beat;               /* heartbeat counter */
+    uint64_t beat; /* heartbeat counter */
     uint64_t beat_time;
-    uint64_t seq_hwm;            /* delta-sequence high-water mark */
-    uint64_t tx_hwm;             /* transaction-counter high-water mark */
+    uint64_t seq_hwm; /* delta-sequence high-water mark */
+    uint64_t tx_hwm;  /* transaction-counter high-water mark */
     uint8_t req_kind;
-    uint8_t status_op;           /* CDB_COORD_OP_* */
+    uint8_t status_op; /* CDB_COORD_OP_* */
     uint16_t heat;
-    uint32_t estimate_ms;        /* how long the operation still expects to take */
+    uint32_t estimate_ms; /* how long the operation still expects to take */
     uint64_t req_time;
     uint64_t x_total;
     uint64_t cts;
     uint64_t x;
     uint64_t issued;
-    uint64_t clock;              /* published by the primary */
-    uint64_t pinned;             /* archive committed sequence its readers use */
+    uint64_t clock;  /* published by the primary */
+    uint64_t pinned; /* archive committed sequence its readers use */
     uint8_t nblocks;
     struct cdb_coord_block {
         uint64_t store;
         uint64_t first;
     } blocks[CDB_COORD_MAX_BLOCKS];
-    uint64_t status_start;       /* when the operation began; 0 when idle */
+    uint64_t status_start; /* when the operation began; 0 when idle */
 } cdb_coord_rec;
 
 /* Encodes r into one 512-byte half. */
@@ -123,12 +123,12 @@ cdb_status cdb_coord_decode(const uint8_t *in, cdb_byte_order order, cdb_coord_r
 /* Timing and capacity. Zero fields take the provisional defaults of spec
  * 5.9.6; they move to the device-class table once measured. */
 typedef struct cdb_coord_config {
-    unsigned max_coords;         /* 0: 64; at most CDB_COORD_MAX */
-    int64_t beat_ns;             /* heartbeat interval; 0: 1 s */
-    unsigned dead_after;         /* heartbeat intervals before a coordinator is dead; 0: 3 */
-    int64_t settle_ns;           /* settle interval (spec 5.5); 0: 2 ms */
-    int64_t baton_wait_ns;       /* longest wait for the baton; 0: the holder's service
-                                    window plus the dead timeout (spec 5.9.8) */
+    unsigned max_coords;   /* 0: 64; at most CDB_COORD_MAX */
+    int64_t beat_ns;       /* heartbeat interval; 0: 1 s */
+    unsigned dead_after;   /* heartbeat intervals before a coordinator is dead; 0: 3 */
+    int64_t settle_ns;     /* settle interval (spec 5.5); 0: 2 ms */
+    int64_t baton_wait_ns; /* longest wait for the baton; 0: the holder's service
+                              window plus the dead timeout (spec 5.9.8) */
 } cdb_coord_config;
 
 /* The parts of another coordinator's record that the choices here use. */
@@ -142,23 +142,23 @@ typedef struct cdb_coord_brief {
     uint64_t clock;
     uint64_t pinned;
     uint64_t cts;
-    uint64_t issued;             /* nonzero while it holds the baton */
+    uint64_t issued; /* nonzero while it holds the baton */
     uint64_t x, x_total;
-    uint64_t beat_time;          /* when its record was written */
-    uint8_t status_op;           /* CDB_COORD_OP_* */
-    uint32_t estimate_ms;        /* as of beat_time */
+    uint64_t beat_time;   /* when its record was written */
+    uint8_t status_op;    /* CDB_COORD_OP_* */
+    uint32_t estimate_ms; /* as of beat_time */
 } cdb_coord_brief;
 
 /* What one observer knows about another coordinator: when its counter last
  * changed, on the observer's monotonic clock. */
 typedef struct cdb_coord_peer {
     int seen;
-    int confirmed;               /* its counter changed while watched, or its lock answered */
+    int confirmed; /* its counter changed while watched, or its lock answered */
     int live;
-    int by_lock;                 /* judged by its lock (spec 5.8), not its heartbeat */
+    int by_lock; /* judged by its lock (spec 5.8), not its heartbeat */
     uint64_t beat;
     int64_t changed_at;
-    int64_t moved_at;            /* when its baton or progress last changed */
+    int64_t moved_at; /* when its baton or progress last changed */
     cdb_coord_brief b;
 } cdb_coord_peer;
 
@@ -172,35 +172,35 @@ typedef struct cdb_coord {
     cdb_env env;
     cdb_coord_config cfg;
     cdb_byte_order order;
-    char dir[CDB_COORD_DIR];     /* the coord/ folder */
-    char path[CDB_COORD_PATH];   /* this coordinator's slot file */
+    char dir[CDB_COORD_DIR];   /* the coord/ folder */
+    char path[CDB_COORD_PATH]; /* this coordinator's slot file */
     cdb_storage st;
     int joined;
-    unsigned next_half;          /* the half the next write goes to */
+    unsigned next_half; /* the half the next write goes to */
     cdb_coord_rec me;
     int have_mono;
-    int64_t offset;              /* primary clock = monotonic clock + offset */
-    int64_t last_beat;           /* monotonic time of the last heartbeat written */
+    int64_t offset;    /* primary clock = monotonic clock + offset */
+    int64_t last_beat; /* monotonic time of the last heartbeat written */
     int64_t joined_at;
     cdb_coord_peer peers[CDB_COORD_MAX];
     cdb_coord_lobby lobby[CDB_COORD_MAX_LOBBY];
     unsigned nlobby;
-    unsigned live_others;        /* other live coordinators at the last scan */
-    int primary;                 /* slot of the live primary at the last scan; -1 none */
-    uint64_t max_cts;            /* highest CTS any other slot file shows, live or not */
-    unsigned journals_others;    /* other slot files whose journal is in use, live or not */
-    uint64_t min_pin;            /* lowest sequence a live other publishes (spec 5.9.7); 0 none */
-    int64_t scanned_at;          /* monotonic time of the last scan */
-    int64_t req_at;              /* monotonic time of this coordinator's baton request */
-    int commit_ready;            /* nonzero once the post-join commit wait has passed */
-    int use_locks;               /* the environment has the lock hook (spec 5.8) */
-    cdb_lock *slot_lock;         /* this slot's lock, held for the session */
-    cdb_lock *dir_lock;          /* coord/lock: shared while joining, exclusive to remove the directory */
+    unsigned live_others;     /* other live coordinators at the last scan */
+    int primary;              /* slot of the live primary at the last scan; -1 none */
+    uint64_t max_cts;         /* highest CTS any other slot file shows, live or not */
+    unsigned journals_others; /* other slot files whose journal is in use, live or not */
+    uint64_t min_pin;         /* lowest sequence a live other publishes (spec 5.9.7); 0 none */
+    int64_t scanned_at;       /* monotonic time of the last scan */
+    int64_t req_at;           /* monotonic time of this coordinator's baton request */
+    int commit_ready;         /* nonzero once the post-join commit wait has passed */
+    int use_locks;            /* the environment has the lock hook (spec 5.8) */
+    cdb_lock *slot_lock;      /* this slot's lock, held for the session */
+    cdb_lock *dir_lock; /* coord/lock: shared while joining, exclusive to remove the directory */
     cdb_lock *held[CDB_COORD_MAX]; /* other slots' locks, while holding them all */
-    int holding_all;             /* cdb_coord_hold_all succeeded and is not released */
-    cdb_mutex *mx;               /* shared with the responder; NULL without one */
-    int64_t wrote_at;            /* monotonic time of the last record written, by either thread */
-    int lost;                    /* the responder found the slot taken over (fallback) */
+    int holding_all;               /* cdb_coord_hold_all succeeded and is not released */
+    cdb_mutex *mx;                 /* shared with the responder; NULL without one */
+    int64_t wrote_at;              /* monotonic time of the last record written, by either thread */
+    int lost;                      /* the responder found the slot taken over (fallback) */
 } cdb_coord;
 
 /* What cdb_coord_status_begin replaced, for cdb_coord_status_end. */
@@ -219,8 +219,9 @@ typedef struct cdb_coord_status_save {
  * that has not been watched yet, until its heartbeat moves or the dead
  * timeout passes.
  * CDB_E_BUSY when every slot is held by a live coordinator. */
-cdb_status cdb_coord_join(cdb_coord *c, const cdb_env *env, const char *dir, const uint8_t db_id[16],
-                          cdb_byte_order order, const cdb_coord_config *cfg);
+cdb_status cdb_coord_join(cdb_coord *c, const cdb_env *env, const char *dir,
+                          const uint8_t db_id[16], cdb_byte_order order,
+                          const cdb_coord_config *cfg);
 
 /* Decides whether this process can adopt the journal of slot s, a dead or
  * closed slot whose record says its journal is in use (spec 5.9.5): nonzero
@@ -229,8 +230,9 @@ typedef int (*cdb_coord_adoptable_fn)(void *arg, unsigned s);
 
 /* cdb_coord_join, but with the lock hook a slot whose journal this process
  * cannot adopt is passed over for the next one. */
-cdb_status cdb_coord_join_with(cdb_coord *c, const cdb_env *env, const char *dir, const uint8_t db_id[16],
-                               cdb_byte_order order, const cdb_coord_config *cfg, cdb_coord_adoptable_fn adoptable,
+cdb_status cdb_coord_join_with(cdb_coord *c, const cdb_env *env, const char *dir,
+                               const uint8_t db_id[16], cdb_byte_order order,
+                               const cdb_coord_config *cfg, cdb_coord_adoptable_fn adoptable,
                                void *arg);
 
 /* Writes a heartbeat if one is due (force: now), refreshes what is known

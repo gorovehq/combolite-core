@@ -12,23 +12,50 @@
 #include "cdb_header.h"
 
 /* "\x89CDB\r\n\x1A\n" (spec 14.1.3). */
-static const uint8_t header_magic[8] = { 0x89, 0x43, 0x44, 0x42, 0x0D, 0x0A, 0x1A, 0x0A };
+static const uint8_t header_magic[8] = {0x89, 0x43, 0x44, 0x42, 0x0D, 0x0A, 0x1A, 0x0A};
 
 /* Stored in the file's byte order; reading it back confirms the order flag. */
 #define BYTE_ORDER_CHECK UINT32_C(0x01020304)
 
 /* Field offsets (spec 14.1.4). */
 enum {
-    OFF_MAGIC = 0, OFF_ORDER = 8, OFF_EPOCH = 9, OFF_ROLE = 10, OFF_LAYOUT = 11,
-    OFF_ORDER_CHECK = 12, OFF_DB_ID = 16, OFF_COMMITTED_SEQ = 32, OFF_WRITE_COUNTER = 40,
-    OFF_PAGE_SEQ_HWM = 48, OFF_ANCHOR_ROOT = 56, OFF_APPEND_POINT = 64,
-    OFF_MIN_PAGE = 72, OFF_MAX_PAGE = 73, OFF_PAGE_MODE = 74, OFF_DEFAULT_PAGE = 75,
-    OFF_CHECKSUM_ALG = 76, OFF_AEAD_ALG = 77, OFF_RING_SIZE = 78,
-    OFF_COMPAT = 80, OFF_ROCOMPAT = 88, OFF_INCOMPAT = 96,
-    OFF_APP_ID = 104, OFF_CREATOR_VER = 108, OFF_WRITER_VER = 112, OFF_RESERVED_A = 116,
-    OFF_CREATED = 120, OFF_KEY_REF = 128, OFF_COMPANIONS = 256, OFF_ANCHORS = 400,
-    OFF_COMMIT_HWM = 464, OFF_ANCHOR_MIRROR = 472, OFF_CONTENT_HASH_ALG = 480,
-    OFF_RESERVED_B = 481, OFF_MARKS_ROOT = 484, OFF_TAMPER_TAG = 492, OFF_CRC = 508
+    OFF_MAGIC = 0,
+    OFF_ORDER = 8,
+    OFF_EPOCH = 9,
+    OFF_ROLE = 10,
+    OFF_LAYOUT = 11,
+    OFF_ORDER_CHECK = 12,
+    OFF_DB_ID = 16,
+    OFF_COMMITTED_SEQ = 32,
+    OFF_WRITE_COUNTER = 40,
+    OFF_PAGE_SEQ_HWM = 48,
+    OFF_ANCHOR_ROOT = 56,
+    OFF_APPEND_POINT = 64,
+    OFF_MIN_PAGE = 72,
+    OFF_MAX_PAGE = 73,
+    OFF_PAGE_MODE = 74,
+    OFF_DEFAULT_PAGE = 75,
+    OFF_CHECKSUM_ALG = 76,
+    OFF_AEAD_ALG = 77,
+    OFF_RING_SIZE = 78,
+    OFF_COMPAT = 80,
+    OFF_ROCOMPAT = 88,
+    OFF_INCOMPAT = 96,
+    OFF_APP_ID = 104,
+    OFF_CREATOR_VER = 108,
+    OFF_WRITER_VER = 112,
+    OFF_RESERVED_A = 116,
+    OFF_CREATED = 120,
+    OFF_KEY_REF = 128,
+    OFF_COMPANIONS = 256,
+    OFF_ANCHORS = 400,
+    OFF_COMMIT_HWM = 464,
+    OFF_ANCHOR_MIRROR = 472,
+    OFF_CONTENT_HASH_ALG = 480,
+    OFF_RESERVED_B = 481,
+    OFF_MARKS_ROOT = 484,
+    OFF_TAMPER_TAG = 492,
+    OFF_CRC = 508
 };
 
 #define COMPANION_SIZE 12u
@@ -193,7 +220,8 @@ cdb_status cdb_header_decode(const uint8_t in[CDB_HEADER_SLOT_SIZE], cdb_header 
      * a committed sequence of at least 1, page sizes in order. */
     if (h->role > CDB_ROLE_COMMITTED || (h->layout_flags & ~CDB_LAYOUT_KNOWN))
         return CDB_E_MALFORMED;
-    if (!all_zero(in + OFF_RESERVED_A, RESERVED_A_LEN) || !all_zero(in + OFF_RESERVED_B, RESERVED_B_LEN))
+    if (!all_zero(in + OFF_RESERVED_A, RESERVED_A_LEN)
+        || !all_zero(in + OFF_RESERVED_B, RESERVED_B_LEN))
         return CDB_E_MALFORMED;
     if (h->committed_seq == 0 || h->ring_size < CDB_HEADER_SLOTS || h->page_mode > 1)
         return CDB_E_MALFORMED;
@@ -368,7 +396,8 @@ cdb_status cdb_header_commit(const cdb_storage *st, cdb_header_state *hs, const 
 
     memcpy(rec.db_id, hs->record.db_id, sizeof rec.db_id);
     rec.order = hs->record.order;
-    rec.incompat_flags |= hs->record.incompat_flags & CDB_FEATURES_INCOMPAT_REQUIRED; /* never dropped */
+    rec.incompat_flags |=
+        hs->record.incompat_flags & CDB_FEATURES_INCOMPAT_REQUIRED; /* never dropped */
     rec.committed_seq = hs->record.committed_seq + 1;
     rec.role = CDB_ROLE_COMMITTED;
     if ((s = write_next(st, hs, &rec)) != CDB_OK)
@@ -381,8 +410,8 @@ cdb_status cdb_header_commit(const cdb_storage *st, cdb_header_state *hs, const 
 /* A copy of the committed record, marked working, with new marks. Since it
  * holds the same committed state, overwriting either slot with it is safe:
  * whichever slot survives a crash describes the same commit. */
-cdb_status cdb_header_checkpoint(const cdb_storage *st, cdb_header_state *hs,
-                                 uint64_t page_seq_hwm, uint64_t commit_hwm)
+cdb_status cdb_header_checkpoint(const cdb_storage *st, cdb_header_state *hs, uint64_t page_seq_hwm,
+                                 uint64_t commit_hwm)
 {
     cdb_header rec = hs->record;
     cdb_status s;

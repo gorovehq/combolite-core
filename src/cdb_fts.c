@@ -35,7 +35,8 @@ size_t cdb_fts_tokens_needed(size_t page_size, size_t doc_max)
  * cursor page. */
 static uint8_t *cursor_page(cdb_db *db)
 {
-    return db->cfg.fts_buffers + cdb_doc_buffer_size(db->pager.page_size, db->cfg.doc_max) + db->pager.page_size;
+    return db->cfg.fts_buffers + cdb_doc_buffer_size(db->pager.page_size, db->cfg.doc_max)
+           + db->pager.page_size;
 }
 
 /* -------------------------------------------------------- words */
@@ -85,7 +86,7 @@ static int is_separator(uint32_t cp)
 {
     if (cp < 0x80u)
         return !((cp >= '0' && cp <= '9') || (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z'));
-    if (cp <= 0xBFu)  /* Latin-1 controls, no-break space, punctuation, symbols */
+    if (cp <= 0xBFu) /* Latin-1 controls, no-break space, punctuation, symbols */
         return cp != 0xAAu && cp != 0xB5u && cp != 0xBAu;
     if (cp == 0xD7u || cp == 0xF7u)
         return 1;
@@ -171,7 +172,8 @@ static size_t group(cdb_fts_token *t, size_t n)
 
 /* Words of a value at an indexed path: a string, or the strings directly
  * inside an array (not nested deeper). Anything else adds nothing. */
-static void split_value(const cdb_value *v, cdb_byte_order o, cdb_fts_token *out, size_t cap, size_t *n)
+static void split_value(const cdb_value *v, cdb_byte_order o, cdb_fts_token *out, size_t cap,
+                        size_t *n)
 {
     if (v->type == CDB_TYPE_STRING) {
         (void)cdb_fts_split(v->payload, v->payload_len, out, cap, n);
@@ -197,7 +199,8 @@ cdb_status cdb_fts_collect(const cdb_fts_config *cfg, const cdb_fts_doc *d, cdb_
     *unique = *total = 0;
     if (d->body == NULL)
         return CDB_OK;
-    if (cdb_value_read(d->body, d->body_len, order, &root) != CDB_OK || root.type != CDB_TYPE_OBJECT)
+    if (cdb_value_read(d->body, d->body_len, order, &root) != CDB_OK
+        || root.type != CDB_TYPE_OBJECT)
         return CDB_E_CORRUPT;
     /* Follow each configured path through nested objects; a path that
      * does not exist in this document contributes nothing. */
@@ -206,7 +209,8 @@ cdb_status cdb_fts_collect(const cdb_fts_config *cfg, const cdb_fts_doc *d, cdb_
         int found = 1;
         for (i = 0; i < cfg->paths[p].depth && found; i++) {
             cdb_value next;
-            if (v.type != CDB_TYPE_OBJECT || cdb_value_object_get(&v, order, cfg->paths[p].ids[i], &next, &found) != CDB_OK)
+            if (v.type != CDB_TYPE_OBJECT
+                || cdb_value_object_get(&v, order, cfg->paths[p].ids[i], &next, &found) != CDB_OK)
                 found = 0;
             else if (found)
                 v = next;
@@ -236,8 +240,9 @@ cdb_status cdb_fts_check_config(const cdb_fts_config *cfg)
     return CDB_OK;
 }
 
-cdb_status cdb_fts_encode(const cdb_fts_config *cfg, uint64_t terms, uint64_t postings, uint64_t lengths,
-                          cdb_byte_order order, uint8_t *out, size_t cap, size_t *len)
+cdb_status cdb_fts_encode(const cdb_fts_config *cfg, uint64_t terms, uint64_t postings,
+                          uint64_t lengths, cdb_byte_order order, uint8_t *out, size_t cap,
+                          size_t *len)
 {
     cdb_value_writer w;
     unsigned p, i;
@@ -294,7 +299,8 @@ cdb_status cdb_fts_decode(const uint8_t *in, size_t len, cdb_byte_order order, c
     memset(cfg, 0, sizeof *cfg);
     if (cdb_value_read(in, len, order, &obj) != CDB_OK || obj.type != CDB_TYPE_OBJECT)
         return CDB_E_CORRUPT;
-    if (get_id(&obj, order, S_TERMS, terms) != CDB_OK || get_id(&obj, order, S_POSTINGS, postings) != CDB_OK
+    if (get_id(&obj, order, S_TERMS, terms) != CDB_OK
+        || get_id(&obj, order, S_POSTINGS, postings) != CDB_OK
         || get_id(&obj, order, S_LENGTHS, lengths) != CDB_OK)
         return CDB_E_CORRUPT;
     if (get_field(&obj, order, S_SPLITTER, &v) != CDB_OK || v.type != CDB_TYPE_INT)
@@ -390,7 +396,8 @@ static cdb_status get_stats(struct cdb_doc_pool *pool, uint64_t *docs, uint64_t 
     uint8_t k[KEY_MAX], v[16];
     size_t vlen;
     int found;
-    cdb_status s = cdb_index_get(&pool->fts_lengths, k, entry_key(k, 0), v, sizeof v, &vlen, &found);
+    cdb_status s =
+        cdb_index_get(&pool->fts_lengths, k, entry_key(k, 0), v, sizeof v, &vlen, &found);
     *docs = *words = 0;
     if (s != CDB_OK || !found)
         return s;
@@ -439,13 +446,15 @@ static cdb_status fts_create_in(cdb_db *db, struct cdb_doc_pool *pool)
 {
     cdb_status s;
     if ((s = cdb_index_create(&pool->fts_terms, &db->pager, pool->slot.store_id,
-                              CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work)) != CDB_OK)
+                              CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
     if ((s = cdb_index_create(&pool->fts_postings, &db->pager, pool->slot.store_id,
-                              CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work)) != CDB_OK)
+                              CDB_INDEX_FLAG_UNIQUE | CDB_INDEX_FLAG_PREFIX, &db->cfg.catalog_work))
+        != CDB_OK)
         return s;
-    return cdb_index_create(&pool->fts_lengths, &db->pager, pool->slot.store_id, CDB_INDEX_FLAG_UNIQUE,
-                            &db->cfg.catalog_work);
+    return cdb_index_create(&pool->fts_lengths, &db->pager, pool->slot.store_id,
+                            CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work);
 }
 
 /* Brings the index from a document's old state to its new one (either may
@@ -485,18 +494,21 @@ static cdb_status fts_update_in(cdb_db *db, struct cdb_doc_pool *pool, uint64_t 
     while (i < na || j < nb) {
         int c = i == na ? 1 : (j == nb ? -1 : cdb_fts_word_cmp(&a[i], &b[j]));
         if (c < 0) {
-            if ((s = cdb_index_delete(&pool->fts_postings, k, term_key(k, &a[i], 1, entry), &found)) != CDB_OK
+            if ((s = cdb_index_delete(&pool->fts_postings, k, term_key(k, &a[i], 1, entry), &found))
+                    != CDB_OK
                 || (s = adjust_df(pool, &a[i], -1)) != CDB_OK)
                 return s;
             i++;
         } else if (c > 0) {
-            if ((s = put_u32(&pool->fts_postings, k, term_key(k, &b[j], 1, entry), b[j].tf)) != CDB_OK
+            if ((s = put_u32(&pool->fts_postings, k, term_key(k, &b[j], 1, entry), b[j].tf))
+                    != CDB_OK
                 || (s = adjust_df(pool, &b[j], +1)) != CDB_OK)
                 return s;
             j++;
         } else {
             if (a[i].tf != b[j].tf
-                && (s = put_u32(&pool->fts_postings, k, term_key(k, &b[j], 1, entry), b[j].tf)) != CDB_OK)
+                && (s = put_u32(&pool->fts_postings, k, term_key(k, &b[j], 1, entry), b[j].tf))
+                       != CDB_OK)
                 return s;
             i++;
             j++;
@@ -506,7 +518,8 @@ static cdb_status fts_update_in(cdb_db *db, struct cdb_doc_pool *pool, uint64_t 
     if (after->body) {
         if ((s = put_u32(&pool->fts_lengths, k, entry_key(k, entry), (uint32_t)tb)) != CDB_OK)
             return s;
-    } else if ((s = cdb_index_delete(&pool->fts_lengths, k, entry_key(k, entry), &found)) != CDB_OK) {
+    } else if ((s = cdb_index_delete(&pool->fts_lengths, k, entry_key(k, entry), &found))
+               != CDB_OK) {
         return s;
     }
     if ((s = get_stats(pool, &docs, &words)) != CDB_OK)
@@ -535,7 +548,7 @@ typedef struct term_state {
     uint8_t prefix[KEY_MAX];
     size_t plen;
     double idf;
-    uint64_t entry;  /* current posting */
+    uint64_t entry; /* current posting */
     uint32_t tf;
     int done;
 } term_state;
@@ -569,7 +582,9 @@ static cdb_status advance(cdb_db *db, struct cdb_doc_pool *pool, term_state *t, 
 static void add_hit(cdb_fts_hit *hits, size_t max, size_t *n, uint64_t entry, double score)
 {
     size_t pos = *n;
-    while (pos > 0 && (hits[pos - 1].score < score || (hits[pos - 1].score == score && hits[pos - 1].entry > entry)))
+    while (pos > 0
+           && (hits[pos - 1].score < score
+               || (hits[pos - 1].score == score && hits[pos - 1].entry > entry)))
         pos--;
     if (pos >= max)
         return;
@@ -583,8 +598,8 @@ static void add_hit(cdb_fts_hit *hits, size_t max, size_t *n, uint64_t entry, do
 /* BM25 score of one document: the sum, over the query terms whose current
  * posting is this document, of idf * tf * (k1 + 1) / (tf + k1 * (1 - b +
  * b * len / avgdl)). */
-static cdb_status score(struct cdb_doc_pool *pool, const term_state *ts, unsigned nt, uint64_t entry,
-                        double avgdl, double *out)
+static cdb_status score(struct cdb_doc_pool *pool, const term_state *ts, unsigned nt,
+                        uint64_t entry, double avgdl, double *out)
 {
     uint8_t k[KEY_MAX];
     uint32_t len;
@@ -610,11 +625,11 @@ static cdb_status score(struct cdb_doc_pool *pool, const term_state *ts, unsigne
  * lowest current entry; ALL leapfrogs every list up to the highest current
  * entry until they agree. Each scored entry goes into the top-max list.
  * The query's words are kept in fts_tokens. */
-static cdb_status fts_search_in(cdb_db *db, struct cdb_doc_pool *pool, const char *query, size_t len, int mode,
-                                cdb_fts_hit *hits, size_t max, size_t *n);
+static cdb_status fts_search_in(cdb_db *db, struct cdb_doc_pool *pool, const char *query,
+                                size_t len, int mode, cdb_fts_hit *hits, size_t max, size_t *n);
 
-cdb_status cdb_fts_search(cdb_db *db, struct cdb_doc_pool *pool, const char *query, size_t len, int mode,
-                          cdb_fts_hit *hits, size_t max, size_t *n)
+cdb_status cdb_fts_search(cdb_db *db, struct cdb_doc_pool *pool, const char *query, size_t len,
+                          int mode, cdb_fts_hit *hits, size_t max, size_t *n)
 {
     cdb_status r;
     cdb_db_lock(db);
@@ -623,8 +638,8 @@ cdb_status cdb_fts_search(cdb_db *db, struct cdb_doc_pool *pool, const char *que
     return r;
 }
 
-static cdb_status fts_search_in(cdb_db *db, struct cdb_doc_pool *pool, const char *query, size_t len, int mode,
-                                cdb_fts_hit *hits, size_t max, size_t *n)
+static cdb_status fts_search_in(cdb_db *db, struct cdb_doc_pool *pool, const char *query,
+                                size_t len, int mode, cdb_fts_hit *hits, size_t max, size_t *n)
 {
     term_state ts[CDB_FTS_MAX_QUERY_TERMS];
     cdb_fts_token *words = db->cfg.fts_tokens;
@@ -635,9 +650,11 @@ static cdb_status fts_search_in(cdb_db *db, struct cdb_doc_pool *pool, const cha
     cdb_status s;
 
     *n = 0;
-    if ((query == NULL && len) || (mode != CDB_FTS_ANY && mode != CDB_FTS_ALL) || (hits == NULL && max))
+    if ((query == NULL && len) || (mode != CDB_FTS_ANY && mode != CDB_FTS_ALL)
+        || (hits == NULL && max))
         return CDB_E_INVALID_ARG;
-    if (cdb_fts_split((const uint8_t *)query, len, words, db->cfg.fts_tokens_cap, &nw) > db->cfg.fts_tokens_cap)
+    if (cdb_fts_split((const uint8_t *)query, len, words, db->cfg.fts_tokens_cap, &nw)
+        > db->cfg.fts_tokens_cap)
         return CDB_E_INVALID_ARG;
     unique = group(words, nw);
     if (unique > CDB_FTS_MAX_QUERY_TERMS)
@@ -699,7 +716,8 @@ static cdb_status fts_search_in(cdb_db *db, struct cdb_doc_pool *pool, const cha
             return s;
         add_hit(hits, max, n, entry, sc);
         for (i = 0; i < nt; i++)
-            if (!ts[i].done && ts[i].entry == entry && (s = advance(db, pool, &ts[i], entry + 1u)) != CDB_OK)
+            if (!ts[i].done && ts[i].entry == entry
+                && (s = advance(db, pool, &ts[i], entry + 1u)) != CDB_OK)
                 return s;
     }
 }

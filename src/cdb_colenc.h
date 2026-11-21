@@ -140,9 +140,9 @@ int cdb_colenc_can_bitpack(uint8_t tag);
  * Other errors come from a value that is not canonical (cdb_value_validate's
  * errors). */
 cdb_status cdb_colenc_encode(uint8_t tag, cdb_byte_order order, cdb_decimal_mode decimal_mode,
-                             const uint8_t *values, size_t values_len, size_t n,
-                             uint64_t *scratch, size_t scratch_words, uint8_t *out,
-                             size_t out_cap, unsigned *enc, size_t *out_len);
+                             const uint8_t *values, size_t values_len, size_t n, uint64_t *scratch,
+                             size_t scratch_words, uint8_t *out, size_t out_cap, unsigned *enc,
+                             size_t *out_len);
 
 /* The same with the encoding forced (used by tests and for comparing).
  * CDB_E_INVALID_ARG if it does not apply (bit-packed on a string, say, or
@@ -166,17 +166,17 @@ typedef struct cdb_colenc_reader {
     size_t len;
     size_t pos; /* byte cursor (plain, run-length) */
     size_t n;
-    size_t i;                    /* values yielded so far */
-    uint64_t run_left;           /* run-length: values left in the current run */
+    size_t i;          /* values yielded so far */
+    uint64_t run_left; /* run-length: values left in the current run */
     const uint8_t *run_item;
     size_t run_item_len;
-    int have_prev;               /* run-length: a previous run exists */
-    uint64_t *offs;              /* dictionary: item offsets */
-    uint64_t k;                  /* dictionary: entries */
-    uint64_t next_new;           /* dictionary: next index that may first appear */
-    unsigned width;              /* dictionary and bit-packed: bits per value */
+    int have_prev;     /* run-length: a previous run exists */
+    uint64_t *offs;    /* dictionary: item offsets */
+    uint64_t k;        /* dictionary: entries */
+    uint64_t next_new; /* dictionary: next index that may first appear */
+    unsigned width;    /* dictionary and bit-packed: bits per value */
     cdb_bitr bits;
-    int64_t min;                 /* bit-packed */
+    int64_t min; /* bit-packed */
     uint8_t prec;
     uint64_t max_delta;
     int saw_min;
@@ -188,13 +188,11 @@ typedef struct cdb_colenc_reader {
  * its entry offsets (n + 1 words is always enough; cdb_colenc_scratch_words
  * is sized generously too). data and scratch must outlive the reader. */
 cdb_status cdb_colenc_reader_init(cdb_colenc_reader *r, uint8_t tag, cdb_byte_order order,
-                                  cdb_decimal_mode decimal_mode, unsigned enc,
-                                  const uint8_t *data, size_t len, size_t n, uint64_t *scratch,
-                                  size_t scratch_words);
+                                  cdb_decimal_mode decimal_mode, unsigned enc, const uint8_t *data,
+                                  size_t len, size_t n, uint64_t *scratch, size_t scratch_words);
 
 /* Next item, or *done = 1 (and CDB_OK) after n values. Errors are sticky. */
-cdb_status cdb_colenc_next(cdb_colenc_reader *r, const uint8_t **item, size_t *item_len,
-                           int *done);
+cdb_status cdb_colenc_next(cdb_colenc_reader *r, const uint8_t **item, size_t *item_len, int *done);
 
 /* After all n values: checks the form's closing rules (see above) and that
  * the chunk ends here. CDB_E_STATE if values remain. */

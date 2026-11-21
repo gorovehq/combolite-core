@@ -134,8 +134,8 @@ size_t cdb_exec_row_size(void);
 
 /* Opens a query cursor from wire format bytes */
 cdb_status cdb_exec_open(cdb_exec_cursor *cur, cdb_db *db, const uint8_t *wire, size_t len,
-                         const cdb_eval_param *params, size_t n_params,
-                         uint8_t *scratch, size_t scratch_cap);
+                         const cdb_eval_param *params, size_t n_params, uint8_t *scratch,
+                         size_t scratch_cap);
 
 /* Fetches the next row from the query cursor.
  * Returns CDB_OK with *has_row = 1 if a row was produced;
@@ -149,9 +149,8 @@ cdb_status cdb_exec_reset(cdb_exec_cursor *cur);
 cdb_status cdb_exec_close(cdb_exec_cursor *cur);
 
 /* Looks up a field value by name or path in an executed row */
-cdb_status cdb_exec_row_get_field(const cdb_exec_row *row, cdb_eval_ctx *eval_ctx,
-                                  const char *name, size_t name_len,
-                                  cdb_value *out_val, int *found);
+cdb_status cdb_exec_row_get_field(const cdb_exec_row *row, cdb_eval_ctx *eval_ctx, const char *name,
+                                  size_t name_len, cdb_value *out_val, int *found);
 
 /* Helper to copy an executed row into target buffer */
 void cdb_exec_row_copy(cdb_exec_row *dst, const cdb_exec_row *src);

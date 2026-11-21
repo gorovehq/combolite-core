@@ -75,7 +75,8 @@ cdb_status cdb_doc_insert(cdb_db *db, uint64_t store, const char *summary, size_
                           const void *body, size_t body_len, uint64_t *entry);
 cdb_status cdb_doc_replace(cdb_db *db, uint64_t store, uint64_t entry, const char *summary,
                            size_t summary_len, const void *body, size_t body_len);
-cdb_status cdb_doc_patch(cdb_db *db, uint64_t store, uint64_t entry, const void *patch, size_t patch_len);
+cdb_status cdb_doc_patch(cdb_db *db, uint64_t store, uint64_t entry, const void *patch,
+                         size_t patch_len);
 cdb_status cdb_doc_delete(cdb_db *db, uint64_t store, uint64_t entry);
 
 /* Reads a document as of revision rev (0 = current). Copies the body and, if
@@ -85,19 +86,20 @@ cdb_status cdb_doc_delete(cdb_db *db, uint64_t store, uint64_t entry);
  * CDB_E_BUFFER_TOO_SMALL when body or summary does not fit; *body_len and
  * *summary_len are set first, so the call can be retried. summary_len and
  * info may be NULL. The summary is not zero-terminated. */
-cdb_status cdb_doc_get(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev,
-                       void *body, size_t cap, size_t *body_len,
-                       char *summary, size_t summary_cap, size_t *summary_len, cdb_doc_info *info);
+cdb_status cdb_doc_get(cdb_db *db, uint64_t store, uint64_t entry, uint64_t rev, void *body,
+                       size_t cap, size_t *body_len, char *summary, size_t summary_cap,
+                       size_t *summary_len, cdb_doc_info *info);
 
 /* Adds a schema version and makes it current; commits immediately, like other
  * catalog changes, so not inside a transaction. An empty object ({}) accepts
  * every document, which is how a schema is cleared. */
-cdb_status cdb_doc_set_schema(cdb_db *db, uint64_t store, const void *schema, size_t len, uint32_t *version);
+cdb_status cdb_doc_set_schema(cdb_db *db, uint64_t store, const void *schema, size_t len,
+                              uint32_t *version);
 
 /* Copies schema version (0 = current) and reports the current version.
  * CDB_E_NOT_FOUND if the pool has no such version. */
-cdb_status cdb_doc_get_schema(cdb_db *db, uint64_t store, uint32_t version, void *schema, size_t cap,
-                              size_t *len, uint32_t *current);
+cdb_status cdb_doc_get_schema(cdb_db *db, uint64_t store, uint32_t version, void *schema,
+                              size_t cap, size_t *len, uint32_t *current);
 
 /* Full-text search (spec 8.10, 14.14; cdb_fts.h). create builds the index
  * over the documents already in the pool and commits immediately, like other
@@ -130,8 +132,8 @@ cdb_status cdb_doc_live_in_tx(cdb_db *db, uint64_t store, uint64_t entry, int *l
  * staged offset, or CDB_STAGE_OFF_NONE if read from the journal on overflow),
  * possibly more than once; nothing outside one. */
 typedef cdb_status (*cdb_doc_entry_fn)(void *ctx, uint64_t entry, size_t staged_off);
-cdb_status cdb_doc_get_in_tx(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off, void *body,
-                             size_t cap, size_t *len, int *live, uint32_t *schema);
+cdb_status cdb_doc_get_in_tx(cdb_db *db, uint64_t store, uint64_t entry, size_t staged_off,
+                             void *body, size_t cap, size_t *len, int *live, uint32_t *schema);
 cdb_status cdb_doc_tx_entries(cdb_db *db, uint64_t store, cdb_doc_entry_fn fn, void *ctx);
 /* For cdb_tx_rollback_to: puts the document stage back to its length and
  * overflow flag at a savepoint. When a staged record was replaced since
@@ -139,14 +141,15 @@ cdb_status cdb_doc_tx_entries(cdb_db *db, uint64_t store, cdb_doc_entry_fn fn, v
 void cdb_doc_stage_rewind(cdb_db *db, size_t used, int overflow, uint32_t removals);
 /* The first committed live entry after `after`, in entry order; *done 1 at
  * the end. Uses the page buffer, so calls must not interleave with reads. */
-cdb_status cdb_doc_next_live(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry, int *done);
+cdb_status cdb_doc_next_live(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry,
+                             int *done);
 /* Nibblet merging (cdb_nib.h) moved a revision; CDB_E_NOT_FOUND if its
  * store or revision is gone, so the record is dropped. */
-cdb_status cdb_doc_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen, uint64_t old_addr,
-                             uint64_t addr);
+cdb_status cdb_doc_nib_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
+                             uint64_t old_addr, uint64_t addr);
 /* Nibblet merging moved an overflow tail owned by a document revision. */
-cdb_status cdb_doc_overflow_tail_moved(cdb_db *db, uint64_t store, const uint8_t *okey, size_t oklen,
-                                       uint64_t old_addr, uint64_t addr);
+cdb_status cdb_doc_overflow_tail_moved(cdb_db *db, uint64_t store, const uint8_t *okey,
+                                       size_t oklen, uint64_t old_addr, uint64_t addr);
 /* A table's revision window changed (spec 9.11): the open pool follows. */
 cdb_status cdb_doc_set_keep(cdb_db *db, uint64_t store, uint32_t keep);
 

@@ -16,7 +16,7 @@
 #include "cdb_varint.h"
 
 /* "\x89CDBCMP\n", the companion-file magic (spec 14.4.1). */
-static const uint8_t journal_magic[8] = { 0x89, 0x43, 0x44, 0x42, 0x43, 0x4D, 0x50, 0x0A };
+static const uint8_t journal_magic[8] = {0x89, 0x43, 0x44, 0x42, 0x43, 0x4D, 0x50, 0x0A};
 
 /* Every record starts with the marker C0 DE (spec 14.4.2). */
 #define RECORD_MARKER_0 0xC0u
@@ -25,7 +25,8 @@ static const uint8_t journal_magic[8] = { 0x89, 0x43, 0x44, 0x42, 0x43, 0x4D, 0x
 
 /* Encodes the 80-byte companion header (spec 14.4.1) and writes it at
  * offset 0. */
-cdb_status cdb_companion_write_header(const cdb_storage *st, cdb_byte_order order, const cdb_journal_header *hdr)
+cdb_status cdb_companion_write_header(const cdb_storage *st, cdb_byte_order order,
+                                      const cdb_journal_header *hdr)
 {
     uint8_t h[CDB_JOURNAL_HEADER_SIZE];
 
@@ -204,8 +205,8 @@ cdb_status cdb_journal_append(cdb_journal *j, cdb_record *r, uint8_t *buf, size_
 }
 
 cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf, size_t buf_size,
-                                   cdb_record *r, uint64_t *next,
-                                   unsigned aead_alg, const uint8_t *key)
+                                   cdb_record *r, uint64_t *next, unsigned aead_alg,
+                                   const uint8_t *key)
 {
     uint32_t payload_len;
     size_t size;
@@ -229,7 +230,8 @@ cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf
     if (size > buf_size)
         return CDB_E_CORRUPT; /* larger than any record we would write */
     if ((s = cdb_storage_read(&j->st, offset + CDB_RECORD_HEADER_SIZE, buf + CDB_RECORD_HEADER_SIZE,
-                              size - CDB_RECORD_HEADER_SIZE)) != CDB_OK)
+                              size - CDB_RECORD_HEADER_SIZE))
+        != CDB_OK)
         return s;
 
     trailer = buf + size - CDB_RECORD_TRAILER_SIZE;
@@ -253,8 +255,8 @@ cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf
             return CDB_E_SECURITY;
         cdb_crypto_make_nonce(track_id, r->seq, nonce);
         s = cdb_crypto_aead_decrypt(aead_alg, key, nonce, buf, CDB_RECORD_HEADER_SIZE,
-                                    buf + CDB_RECORD_HEADER_SIZE, payload_len,
-                                    trailer, buf + CDB_RECORD_HEADER_SIZE);
+                                    buf + CDB_RECORD_HEADER_SIZE, payload_len, trailer,
+                                    buf + CDB_RECORD_HEADER_SIZE);
         if (s != CDB_OK)
             return CDB_E_CORRUPT;
         /* The hidden target: two shortest-form varints (spec 14.4.2). */
@@ -294,7 +296,8 @@ cdb_status cdb_journal_read(cdb_journal *j, uint64_t offset, uint8_t *buf, size_
 /* Commit record payload (spec 14.4.4): commit number, timestamp, principal,
  * delta count, track mask, then the signature length. Signatures are not
  * implemented yet, so the length is always 0 and no signature follows. */
-void cdb_commit_encode(const cdb_commit_info *c, uint8_t out[CDB_COMMIT_PAYLOAD_SIZE], cdb_byte_order order)
+void cdb_commit_encode(const cdb_commit_info *c, uint8_t out[CDB_COMMIT_PAYLOAD_SIZE],
+                       cdb_byte_order order)
 {
     cdb_store_u64(out, c->commit_number, order);
     cdb_store_u64(out + 8, c->timestamp, order);

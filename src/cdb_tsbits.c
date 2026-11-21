@@ -196,8 +196,8 @@ cdb_status cdb_tsb_bucket_decode(cdb_bitr *r, uint64_t *z)
     /* Indexed by the number of leading 1 bits: the payload width, and the
      * smallest value that may use that bucket (anything smaller belongs in
      * a smaller bucket, so it is not canonical). */
-    static const unsigned width[5] = { 0, 7, 15, 31, 64 };
-    static const uint64_t min[5] = { 0, 1, B7, B15, B31 };
+    static const unsigned width[5] = {0, 7, 15, 31, 64};
+    static const uint64_t min[5] = {0, 1, B7, B15, B31};
     size_t start = r->pos;
     unsigned ones = 0;
     uint64_t bit, v = 0;

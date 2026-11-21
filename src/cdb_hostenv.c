@@ -141,7 +141,8 @@ static void he_free(void *ctx, void *p)
 }
 
 /* readdir, skipping "." and "..". */
-static cdb_status he_list(void *ctx, const char *dir, int (*fn)(void *arg, const char *name), void *arg)
+static cdb_status he_list(void *ctx, const char *dir, int (*fn)(void *arg, const char *name),
+                          void *arg)
 {
     DIR *d;
     struct dirent *e;
@@ -448,14 +449,12 @@ static void he_lock_close(void *ctx, cdb_lock *l)
 }
 
 static const cdb_env_ops hostenv_ops = {
-    he_open, he_remove, he_rename, he_mkdir, he_rmdir, he_exists, he_sync_dir, he_now, he_alloc, he_free,
-    he_list, he_mono, he_random, he_sleep,
-    he_mutex_create, he_mutex_lock, he_mutex_unlock, he_mutex_destroy,
-    he_cond_create, he_cond_signal, he_cond_broadcast, he_cond_wait, he_cond_destroy,
-    he_thread_create, he_thread_join,
-    he_lock_open, he_lock_close,
-    he_mutex_trylock
-};
+    he_open,           he_remove,       he_rename,        he_mkdir,         he_rmdir,
+    he_exists,         he_sync_dir,     he_now,           he_alloc,         he_free,
+    he_list,           he_mono,         he_random,        he_sleep,         he_mutex_create,
+    he_mutex_lock,     he_mutex_unlock, he_mutex_destroy, he_cond_create,   he_cond_signal,
+    he_cond_broadcast, he_cond_wait,    he_cond_destroy,  he_thread_create, he_thread_join,
+    he_lock_open,      he_lock_close,   he_mutex_trylock};
 
 void cdb_hostenv_init(cdb_hostenv *he, cdb_env *out)
 {

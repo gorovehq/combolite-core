@@ -18,22 +18,24 @@ typedef struct cdb_catroot {
     uint8_t slot_index;
     uint64_t commit_seq;
     uint64_t write_counter;
-    uint64_t body_root;        /* logical page ID of the catalog body (primary) */
-    uint64_t mirror_root;      /* logical page ID of its mirror (spec 3.5) */
+    uint64_t body_root;   /* logical page ID of the catalog body (primary) */
+    uint64_t mirror_root; /* logical page ID of its mirror (spec 3.5) */
     uint64_t enclave_dir_root;
     uint64_t schema_history_root;
     uint64_t quick_query_root;
     uint64_t dedup_root;
     uint64_t audit_root;
-    uint64_t next_object_id;   /* never reused (spec 4.12) */
-    uint64_t nib_root;         /* public nibblet free-space index (spec 14.18.3); 0 = none yet */
-    uint64_t salt_root;        /* session salt table (spec 14.2.8); 0 = none yet */
+    uint64_t next_object_id; /* never reused (spec 4.12) */
+    uint64_t nib_root;       /* public nibblet free-space index (spec 14.18.3); 0 = none yet */
+    uint64_t salt_root;      /* session salt table (spec 14.2.8); 0 = none yet */
 } cdb_catroot;
 
-void cdb_catroot_encode(const cdb_catroot *r, uint8_t out[CDB_CATROOT_SLOT_SIZE], cdb_byte_order order);
+void cdb_catroot_encode(const cdb_catroot *r, uint8_t out[CDB_CATROOT_SLOT_SIZE],
+                        cdb_byte_order order);
 
 /* CDB_E_NOT_FOUND when the slot was never written (no start magic),
  * CDB_E_CORRUPT when it was but does not verify. */
-cdb_status cdb_catroot_decode(const uint8_t in[CDB_CATROOT_SLOT_SIZE], cdb_catroot *r, cdb_byte_order order);
+cdb_status cdb_catroot_decode(const uint8_t in[CDB_CATROOT_SLOT_SIZE], cdb_catroot *r,
+                              cdb_byte_order order);
 
 #endif

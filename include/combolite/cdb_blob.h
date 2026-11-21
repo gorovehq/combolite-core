@@ -37,17 +37,17 @@ typedef struct cdb_blob_writer {
     uint64_t total_bytes;
     size_t page_room;
     size_t curr_page_fill;
-    uint8_t *scratch;   /* Exactly p->page_size bytes */
+    uint8_t *scratch; /* Exactly p->page_size bytes */
     int is_enclave;
     int is_open;
-    void *db;           /* the cdb_db whose lock cdb_db_blob_* calls take; NULL outside one */
+    void *db; /* the cdb_db whose lock cdb_db_blob_* calls take; NULL outside one */
 } cdb_blob_writer;
 
 /* Begins streaming write of a blob owned by store_id. scratch must hold
  * p->page_size bytes. If enclave_key is non-NULL, the content hash is
  * computed as HMAC-SHA-256 under the key; otherwise standard SHA-256 is used. */
 cdb_status cdb_blob_write_begin(struct cdb_pager *p, uint64_t store_id, uint8_t *scratch,
-                               const uint8_t *enclave_key, cdb_blob_writer *w);
+                                const uint8_t *enclave_key, cdb_blob_writer *w);
 
 /* Appends len bytes from data to the streaming blob. */
 cdb_status cdb_blob_write_chunk(cdb_blob_writer *w, const void *data, size_t len);
@@ -70,10 +70,10 @@ typedef struct cdb_blob_reader {
     size_t curr_offset_in_page;
     size_t curr_page_bytes;
     cdb_crypto_hash_ctx hash_ctx;
-    uint8_t *page_buf;  /* Exactly p->page_size bytes */
+    uint8_t *page_buf; /* Exactly p->page_size bytes */
     int verify_hash;
     int is_open;
-    void *db;           /* the cdb_db whose lock cdb_db_blob_* calls take; NULL outside one */
+    void *db; /* the cdb_db whose lock cdb_db_blob_* calls take; NULL outside one */
 } cdb_blob_reader;
 
 /* Begins streaming read of a blob. page_buf must hold p->page_size bytes.
@@ -81,8 +81,8 @@ typedef struct cdb_blob_reader {
  * verifies the hash against ref->hash upon reaching EOF.
  * If enclave_key is non-NULL, the hash is verified using HMAC-SHA-256. */
 cdb_status cdb_blob_read_begin(struct cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref,
-                              uint8_t *page_buf, int verify_hash, const uint8_t *enclave_key,
-                              cdb_blob_reader *r);
+                               uint8_t *page_buf, int verify_hash, const uint8_t *enclave_key,
+                               cdb_blob_reader *r);
 
 /* Reads up to cap bytes into dest. *out_len receives the number of bytes read.
  * When EOF is reached (*out_len == 0 and remaining == 0), if verify_hash was
@@ -93,6 +93,7 @@ cdb_status cdb_blob_read_chunk(cdb_blob_reader *r, void *dest, size_t cap, size_
 cdb_status cdb_blob_read_end(cdb_blob_reader *r);
 
 /* Releases every page of the blob at ref->first_page. page_buf is p->page_size. */
-cdb_status cdb_blob_free(struct cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref, uint8_t *page_buf);
+cdb_status cdb_blob_free(struct cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref,
+                         uint8_t *page_buf);
 
 #endif /* COMBOLITE_CDB_BLOB_H */

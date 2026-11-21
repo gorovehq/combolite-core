@@ -47,7 +47,8 @@ static int count_op(cdb_faultdev *d)
 /* Appends a record to the log (with a copy of the data for a program).
  * CDB_E_BUFFER_TOO_SMALL when the caller's log memory is full; the test
  * then needs a bigger log or more frequent syncs. */
-static cdb_status log_write(cdb_faultdev *d, uint64_t offset, const void *data, size_t len, int is_erase)
+static cdb_status log_write(cdb_faultdev *d, uint64_t offset, const void *data, size_t len,
+                            int is_erase)
 {
     cdb_fault_record *r;
     if (d->log_len >= d->cfg.log_cap)
@@ -185,9 +186,8 @@ static void fd_close(void *ctx)
     (void)ctx;
 }
 
-static const cdb_storage_ops faultdev_ops = {
-    fd_read, fd_program, fd_erase, fd_sync, fd_geometry, fd_size, fd_close, fd_truncate
-};
+static const cdb_storage_ops faultdev_ops = {fd_read,     fd_program, fd_erase, fd_sync,
+                                             fd_geometry, fd_size,    fd_close, fd_truncate};
 
 cdb_status cdb_faultdev_init(cdb_faultdev *dev, const cdb_faultdev_config *cfg, cdb_storage *out)
 {
@@ -210,8 +210,8 @@ cdb_status cdb_faultdev_rebind(cdb_faultdev *dev, cdb_storage *out)
     return CDB_OK;
 }
 
-void cdb_faultdev_arm(cdb_faultdev *dev, uint64_t op, cdb_crash_mode mode,
-                      size_t keep_writes, size_t torn_bytes)
+void cdb_faultdev_arm(cdb_faultdev *dev, uint64_t op, cdb_crash_mode mode, size_t keep_writes,
+                      size_t torn_bytes)
 {
     dev->crash_at = op == 0 ? 0 : dev->mutating_ops + op;
     dev->mode = mode;
@@ -219,8 +219,8 @@ void cdb_faultdev_arm(cdb_faultdev *dev, uint64_t op, cdb_crash_mode mode,
     dev->torn_bytes = torn_bytes;
 }
 
-void cdb_faultdev_crash_now(cdb_faultdev *dev, cdb_crash_mode mode,
-                            size_t keep_writes, size_t torn_bytes)
+void cdb_faultdev_crash_now(cdb_faultdev *dev, cdb_crash_mode mode, size_t keep_writes,
+                            size_t torn_bytes)
 {
     dev->crashed = 1;
     dev->mode = mode;

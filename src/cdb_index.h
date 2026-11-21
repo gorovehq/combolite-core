@@ -20,9 +20,9 @@
 
 #include "cdb_pager.h"
 
-#define CDB_INDEX_MAX_DEPTH 16u    /* deeper trees are treated as corrupt */
-#define CDB_INDEX_MAX_PREFIX 32u   /* longest shared prefix a node stores */
-#define CDB_INDEX_MAX_SPLIT 16u    /* most pieces one node can split into */
+#define CDB_INDEX_MAX_DEPTH 16u  /* deeper trees are treated as corrupt */
+#define CDB_INDEX_MAX_PREFIX 32u /* longest shared prefix a node stores */
+#define CDB_INDEX_MAX_SPLIT 16u  /* most pieces one node can split into */
 
 /* Node flags (spec 14.8.2). */
 #define CDB_INDEX_FLAG_UNIQUE 0x01u
@@ -44,21 +44,21 @@ typedef struct cdb_index_entry {
  * operation overwrites it, so two indexes may share one work area only if
  * they are never used at the same time. */
 typedef struct cdb_index_work {
-    uint8_t *bytes;            /* at least cdb_index_work_size(page_size) bytes */
+    uint8_t *bytes; /* at least cdb_index_work_size(page_size) bytes */
     size_t bytes_size;
-    cdb_index_entry *entries;  /* at least cdb_index_entries_needed(page_size) */
+    cdb_index_entry *entries; /* at least cdb_index_entries_needed(page_size) */
     size_t entries_cap;
 } cdb_index_work;
 
 /* An open index: a small handle. The tree itself lives in pager pages. */
 typedef struct cdb_index {
-    cdb_pager *pager;   /* borrowed; must outlive the index */
-    uint64_t root;      /* logical page ID of the root, fixed for life */
-    uint8_t flags;      /* CDB_INDEX_FLAG_* for nodes this index writes */
-    uint64_t store_id;  /* owner, recorded in node page headers */
+    cdb_pager *pager;  /* borrowed; must outlive the index */
+    uint64_t root;     /* logical page ID of the root, fixed for life */
+    uint8_t flags;     /* CDB_INDEX_FLAG_* for nodes this index writes */
+    uint64_t store_id; /* owner, recorded in node page headers */
     cdb_index_work w;
-    size_t max_key;     /* longest key accepted */
-    size_t max_value;   /* longest value kept inline */
+    size_t max_key;   /* longest key accepted */
+    size_t max_value; /* longest value kept inline */
 } cdb_index;
 
 /* Internal test hook (#17 regression): forwards to the static common_prefix
@@ -89,11 +89,12 @@ cdb_status cdb_index_open(cdb_index *ix, cdb_pager *p, uint64_t root, const cdb_
  * Both buffers are copied. CDB_E_INVALID_ARG for a key longer than
  * ix->max_key or a value of 4 GiB or more; CDB_E_OVERFLOW if a node would
  * need more than CDB_INDEX_MAX_SPLIT pieces. */
-cdb_status cdb_index_put(cdb_index *ix, const uint8_t *key, size_t klen, const void *val, size_t vlen);
+cdb_status cdb_index_put(cdb_index *ix, const uint8_t *key, size_t klen, const void *val,
+                         size_t vlen);
 /* Copies the value into val (vcap bytes). *found is 0 when the key is absent.
  * A value longer than vcap gives CDB_E_BUFFER_TOO_SMALL, with *vlen set. */
-cdb_status cdb_index_get(cdb_index *ix, const uint8_t *key, size_t klen,
-                         void *val, size_t vcap, size_t *vlen, int *found);
+cdb_status cdb_index_get(cdb_index *ix, const uint8_t *key, size_t klen, void *val, size_t vcap,
+                         size_t *vlen, int *found);
 /* Removes key and releases its overflow chain, if any. *found is 0 (and
  * the status CDB_OK) when the key was not there. */
 cdb_status cdb_index_delete(cdb_index *ix, const uint8_t *key, size_t klen, int *found);
@@ -107,18 +108,18 @@ cdb_status cdb_index_drop(cdb_index *ix);
  * cursor is open. */
 typedef struct cdb_index_cursor {
     cdb_index *ix;
-    unsigned depth;                       /* nodes on the current path; 0 = finished */
-    uint64_t lid[CDB_INDEX_MAX_DEPTH];    /* the path: root first, current leaf last */
-    uint32_t slot[CDB_INDEX_MAX_DEPTH];   /* in the leaf: the next entry to return */
-    uint8_t *page;     /* caller buffer, page_size bytes */
+    unsigned depth;                     /* nodes on the current path; 0 = finished */
+    uint64_t lid[CDB_INDEX_MAX_DEPTH];  /* the path: root first, current leaf last */
+    uint32_t slot[CDB_INDEX_MAX_DEPTH]; /* in the leaf: the next entry to return */
+    uint8_t *page;                      /* caller buffer, page_size bytes */
     int done;
 } cdb_index_cursor;
 
 /* Positions the cursor at the first key >= key (klen 0: the first key). */
-cdb_status cdb_index_seek(cdb_index_cursor *c, cdb_index *ix, uint8_t *page,
-                          const uint8_t *key, size_t klen);
+cdb_status cdb_index_seek(cdb_index_cursor *c, cdb_index *ix, uint8_t *page, const uint8_t *key,
+                          size_t klen);
 /* Copies the current entry out and advances. *done is 1 when exhausted. */
-cdb_status cdb_index_next(cdb_index_cursor *c, uint8_t *key, size_t kcap, size_t *klen,
-                          void *val, size_t vcap, size_t *vlen, int *done);
+cdb_status cdb_index_next(cdb_index_cursor *c, uint8_t *key, size_t kcap, size_t *klen, void *val,
+                          size_t vcap, size_t *vlen, int *done);
 
 #endif

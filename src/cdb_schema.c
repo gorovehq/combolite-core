@@ -90,8 +90,7 @@ static cdb_status parse_rule(const cdb_value *rv, cdb_byte_order o, rule *r)
             r->elem_object = v;
             r->has_elem_object = 1;
             break;
-        default:
-            return CDB_E_UNSUPPORTED;
+        default: return CDB_E_UNSUPPORTED;
         }
     }
     return have_field ? CDB_OK : CDB_E_INVALID_ARG;
@@ -99,7 +98,8 @@ static cdb_status parse_rule(const cdb_value *rv, cdb_byte_order o, rule *r)
 
 /* Reads a schema object's two fields: open (default true) and the rules
  * array. Unknown fields are CDB_E_UNSUPPORTED. */
-static cdb_status parse_schema(const cdb_value *sv, cdb_byte_order o, int *open, cdb_value *fields, int *has_fields)
+static cdb_status parse_schema(const cdb_value *sv, cdb_byte_order o, int *open, cdb_value *fields,
+                               int *has_fields)
 {
     cdb_value_iter it;
     cdb_value v;
@@ -199,7 +199,8 @@ static cdb_status validate_value(const rule *r, const cdb_value *v, cdb_byte_ord
     if (!type_allowed(r->types, v->type))
         return CDB_E_SCHEMA;
     if (r->has_max) {
-        if ((v->type == CDB_TYPE_STRING || v->type == CDB_TYPE_BINARY) && (uint64_t)v->payload_len > r->max_len)
+        if ((v->type == CDB_TYPE_STRING || v->type == CDB_TYPE_BINARY)
+            && (uint64_t)v->payload_len > r->max_len)
             return CDB_E_SCHEMA;
         if (v->type == CDB_TYPE_ARRAY && v->as.array.count > r->max_len)
             return CDB_E_SCHEMA;
@@ -284,8 +285,8 @@ static cdb_status validate_object(const cdb_value *sv, const cdb_value *dv, cdb_
 
 /* The document is not validated as canonical here; callers do that before
  * (cdb_doc checks every body when the change is made). */
-cdb_status cdb_schema_validate(const uint8_t *schema, size_t schema_len, const uint8_t *doc, size_t doc_len,
-                               cdb_byte_order order)
+cdb_status cdb_schema_validate(const uint8_t *schema, size_t schema_len, const uint8_t *doc,
+                               size_t doc_len, cdb_byte_order order)
 {
     cdb_value sv, dv;
     if (cdb_value_read(schema, schema_len, order, &sv) != CDB_OK)

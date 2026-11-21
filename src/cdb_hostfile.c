@@ -134,9 +134,8 @@ static void hf_close(void *ctx)
     }
 }
 
-static const cdb_storage_ops hostfile_ops = {
-    hf_read, hf_program, hf_erase, hf_sync, hf_geometry, hf_size, hf_close, hf_truncate
-};
+static const cdb_storage_ops hostfile_ops = {hf_read,     hf_program, hf_erase, hf_sync,
+                                             hf_geometry, hf_size,    hf_close, hf_truncate};
 
 /* Read-only together with create is refused (CDB_E_INVALID_ARG). A missing
  * file without create is CDB_E_NOT_FOUND. */

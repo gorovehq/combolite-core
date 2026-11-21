@@ -81,23 +81,35 @@ size_t cdb_index_work_size(size_t page_size)
 /* The node currently expanded into work memory. Its entries are
  * ix->w.entries[0 .. count). */
 typedef struct node {
-    unsigned level;     /* 0 = leaf */
-    size_t count;       /* number of entries */
-    size_t heap_used;   /* bytes of the heap taken so far */
+    unsigned level;   /* 0 = leaf */
+    size_t count;     /* number of entries */
+    size_t heap_used; /* bytes of the heap taken so far */
 } node;
 
 /* Accessors for the four regions of the work memory (see the top of the
  * file). */
-static uint8_t *w_image(cdb_index *ix) { return ix->w.bytes; }
-static uint8_t *w_page(cdb_index *ix) { return ix->w.bytes + ix->pager->page_size; }
-static uint8_t *w_heap(cdb_index *ix) { return ix->w.bytes + 2u * ix->pager->page_size; }
+static uint8_t *w_image(cdb_index *ix)
+{
+    return ix->w.bytes;
+}
+static uint8_t *w_page(cdb_index *ix)
+{
+    return ix->w.bytes + ix->pager->page_size;
+}
+static uint8_t *w_heap(cdb_index *ix)
+{
+    return ix->w.bytes + 2u * ix->pager->page_size;
+}
 static uint8_t *w_seps(cdb_index *ix)
 {
     return w_heap(ix) + heap_size(capacity_of(ix->pager));
 }
 
 /* An expanded entry's full key, in the heap. */
-static uint8_t *ent_key(cdb_index *ix, const cdb_index_entry *e) { return w_heap(ix) + e->off; }
+static uint8_t *ent_key(cdb_index *ix, const cdb_index_entry *e)
+{
+    return w_heap(ix) + e->off;
+}
 
 /* Drops an entry's key but keeps its value: the value sits right after the key. */
 static void clear_key(cdb_index_entry *e)
@@ -106,7 +118,10 @@ static void clear_key(cdb_index_entry *e)
     e->klen = 0;
 }
 /* An expanded entry's value bytes (or 8-byte big-endian child/chain ID). */
-static uint8_t *ent_val(cdb_index *ix, const cdb_index_entry *e) { return w_heap(ix) + e->off + e->klen; }
+static uint8_t *ent_val(cdb_index *ix, const cdb_index_entry *e)
+{
+    return w_heap(ix) + e->off + e->klen;
+}
 
 /* Appends a new entry to the heap and fills in descriptor *e. The key is
  * the concatenation k1 + k2 (used to glue a node's shared prefix back onto
@@ -114,8 +129,8 @@ static uint8_t *ent_val(cdb_index *ix, const cdb_index_entry *e) { return w_heap
  * tlen for leaf values held in an overflow chain. CDB_E_BUFFER_TOO_SMALL if
  * the heap is full. The value is copied with memmove, so it may already lie
  * in the heap. */
-static cdb_status heap_add(cdb_index *ix, node *n, const uint8_t *k1, size_t l1, const uint8_t *k2, size_t l2,
-                           const uint8_t *v, size_t vl, cdb_index_entry *e)
+static cdb_status heap_add(cdb_index *ix, node *n, const uint8_t *k1, size_t l1, const uint8_t *k2,
+                           size_t l2, const uint8_t *v, size_t vl, cdb_index_entry *e)
 {
     size_t need = l1 + l2 + vl;
     if (need > heap_size(capacity_of(ix->pager)) - n->heap_used)
@@ -139,12 +154,12 @@ static cdb_status heap_add(cdb_index *ix, node *n, const uint8_t *k1, size_t l1,
 /* A read-only look at a node page's payload, without expanding it. Used by
  * lookups and cursors, which do not need the work heap. */
 typedef struct node_view {
-    const uint8_t *pl;     /* the payload (just past the page header) */
-    size_t cap;            /* payload capacity */
+    const uint8_t *pl; /* the payload (just past the page header) */
+    size_t cap;        /* payload capacity */
     unsigned level;
     unsigned flags;
-    size_t count;          /* number of entries */
-    size_t prefix_len;     /* shared prefix length; the prefix sits at pl + NODE_HDR */
+    size_t count;      /* number of entries */
+    size_t prefix_len; /* shared prefix length; the prefix sits at pl + NODE_HDR */
 } node_view;
 
 /* Decodes and sanity-checks the node header at pl (spec 14.8.7): the level
@@ -177,7 +192,8 @@ static cdb_status view_node(const cdb_index *ix, const uint8_t *pl, node_view *v
  * so a damaged page gives CDB_E_CORRUPT and never a read out of bounds.
  * The caller must keep i < v->count. */
 static cdb_status view_entry(const cdb_index *ix, const node_view *v, size_t i,
-                             const uint8_t **suffix, size_t *slen, const uint8_t **val, size_t *vlen, size_t *tlen)
+                             const uint8_t **suffix, size_t *slen, const uint8_t **val,
+                             size_t *vlen, size_t *tlen)
 {
     /* Slot i of the directory gives the entry's offset from the payload start. */
     size_t off = cdb_load_u16(v->pl + NODE_HDR + v->prefix_len + 2u * i, ix->pager->order);
@@ -227,7 +243,8 @@ static cdb_status view_entry(const cdb_index *ix, const node_view *v, size_t i,
 /* Reads an on-disk logical ID (child or chain start) at the address width. */
 static uint64_t child_of(const cdb_index *ix, const uint8_t *val)
 {
-    return ix->pager->addr_width == 8 ? cdb_load_u64(val, ix->pager->order) : cdb_load_u32(val, ix->pager->order);
+    return ix->pager->addr_width == 8 ? cdb_load_u64(val, ix->pager->order)
+                                      : cdb_load_u32(val, ix->pager->order);
 }
 
 /* Reads node lid into page (page_size bytes) and views it. A missing page
@@ -276,7 +293,8 @@ static cdb_status expand(cdb_index *ix, uint64_t lid, node *n)
         }
         /* Full key = the node's shared prefix + this entry's suffix. */
         if ((s = heap_add(ix, n, v.pl + NODE_HDR, v.prefix_len, suffix, slen, val, vlen,
-                          &ix->w.entries[n->count])) != CDB_OK)
+                          &ix->w.entries[n->count]))
+            != CDB_OK)
             return s;
         if (v.level == 0)
             ix->w.entries[n->count].tlen = (uint32_t)tlen;
@@ -287,8 +305,7 @@ static cdb_status expand(cdb_index *ix, uint64_t lid, node *n)
 
 /* Lexicographic comparison of key1 = (pfx, plen) ++ (sfx, slen) against key2 = (key, klen).
  * Exact drop-in equivalent of cdb_key_compare(concat(pfx, sfx), key), with no copies. */
-static int key_compare_split(const uint8_t *pfx, size_t plen,
-                             const uint8_t *sfx, size_t slen,
+static int key_compare_split(const uint8_t *pfx, size_t plen, const uint8_t *sfx, size_t slen,
                              const uint8_t *key, size_t klen)
 {
     size_t alen = plen + slen;
@@ -312,7 +329,8 @@ static int key_compare_split(const uint8_t *pfx, size_t plen,
 
 /* Index of the first entry in node_view v whose key is >= key in [0, v->count).
  * If corrupted page prevents reading an entry, returns v->count. */
-static size_t lower_bound_inplace(const cdb_index *ix, const node_view *v, const uint8_t *key, size_t klen)
+static size_t lower_bound_inplace(const cdb_index *ix, const node_view *v, const uint8_t *key,
+                                  size_t klen)
 {
     size_t lo = 0, hi = v->count;
     const uint8_t *pfx = v->pl + NODE_HDR;
@@ -338,7 +356,8 @@ static size_t lower_bound_inplace(const cdb_index *ix, const node_view *v, const
 /* For interior nodes (level > 0): the child whose range holds key (last entry with key <= key).
  * Entry 0 has an empty key, which sorts before every key, so a key smaller than every
  * separator still lands in child 0. */
-static size_t child_slot_inplace(const cdb_index *ix, const node_view *v, const uint8_t *key, size_t klen)
+static size_t child_slot_inplace(const cdb_index *ix, const node_view *v, const uint8_t *key,
+                                 size_t klen)
 {
     size_t lb = lower_bound_inplace(ix, v, key, klen);
     if (lb < v->count) {
@@ -438,7 +457,7 @@ static cdb_status write_piece(cdb_index *ix, uint64_t lid, unsigned level, size_
     size_t cap = capacity_of(ix->pager);
     size_t prefix = common_prefix(ix, level, a, b);
     uint8_t *pl = w_image(ix);
-    size_t top = cap, i;   /* top = start of the entries written so far */
+    size_t top = cap, i; /* top = start of the entries written so far */
     cdb_page_header t;
     cdb_byte_order o = ix->pager->order;
 
@@ -497,9 +516,9 @@ static cdb_status write_piece(cdb_index *ix, uint64_t lid, unsigned level, size_
 /* Result of writing a node that split: the logical IDs of the new nodes to
  * its right, and the key that separates each from the one before. */
 typedef struct split_out {
-    size_t count;                         /* new right-hand nodes */
+    size_t count; /* new right-hand nodes */
     uint64_t lid[CDB_INDEX_MAX_SPLIT];
-    size_t sep_len[CDB_INDEX_MAX_SPLIT];  /* separators live in the seps area */
+    size_t sep_len[CDB_INDEX_MAX_SPLIT]; /* separators live in the seps area */
 } split_out;
 
 /* Separator i's bytes in the separators region (max_key bytes per slot). */
@@ -597,12 +616,14 @@ static cdb_status split_root(cdb_index *ix, unsigned level, const split_out *out
     n.count = 0;
     n.heap_used = 0;
     cdb_store_u64(child, first, CDB_ORDER_BIG);
-    if ((s = heap_add(ix, &n, NULL, 0, NULL, 0, child, CHILD_BYTES, &ix->w.entries[n.count++])) != CDB_OK)
+    if ((s = heap_add(ix, &n, NULL, 0, NULL, 0, child, CHILD_BYTES, &ix->w.entries[n.count++]))
+        != CDB_OK)
         return s;
     for (i = 0; i < out->count; i++) {
         cdb_store_u64(child, out->lid[i], CDB_ORDER_BIG);
         if ((s = heap_add(ix, &n, sep_at(ix, i), out->sep_len[i], NULL, 0, child, CHILD_BYTES,
-                          &ix->w.entries[n.count++])) != CDB_OK)
+                          &ix->w.entries[n.count++]))
+            != CDB_OK)
             return s;
     }
     return write_piece(ix, ix->root, n.level, 0, n.count);
@@ -645,7 +666,8 @@ static cdb_status descend(cdb_index *ix, const uint8_t *key, size_t klen, path *
         if (v.count == 0)
             return CDB_E_CORRUPT;
         pt->slot[pt->depth] = child_slot_inplace(ix, &v, key, klen);
-        if ((s = view_entry(ix, &v, pt->slot[pt->depth], &suffix, &slen, &val, &vlen, &tlen)) != CDB_OK)
+        if ((s = view_entry(ix, &v, pt->slot[pt->depth], &suffix, &slen, &val, &vlen, &tlen))
+            != CDB_OK)
             return s;
         lid = child_of(ix, val);
         pt->depth++;
@@ -673,11 +695,13 @@ static cdb_status propagate(cdb_index *ix, const path *pt, unsigned at, split_ou
         pos = pt->slot[at] + 1;
         if (n.count + out->count > ix->w.entries_cap)
             return CDB_E_BUFFER_TOO_SMALL;
-        memmove(&ix->w.entries[pos + out->count], &ix->w.entries[pos], (n.count - pos) * sizeof(cdb_index_entry));
+        memmove(&ix->w.entries[pos + out->count], &ix->w.entries[pos],
+                (n.count - pos) * sizeof(cdb_index_entry));
         for (i = 0; i < out->count; i++) {
             cdb_store_u64(child, out->lid[i], CDB_ORDER_BIG);
             if ((s = heap_add(ix, &n, sep_at(ix, i), out->sep_len[i], NULL, 0, child, CHILD_BYTES,
-                              &ix->w.entries[pos + i])) != CDB_OK)
+                              &ix->w.entries[pos + i]))
+                != CDB_OK)
                 return s;
         }
         n.count += out->count;
@@ -694,7 +718,8 @@ static cdb_status propagate(cdb_index *ix, const path *pt, unsigned at, split_ou
  * overflow chain first, insert or overwrite the entry in the expanded leaf,
  * release a replaced value's chain, then write the leaf back, splitting it
  * and its ancestors as needed. */
-cdb_status cdb_index_put(cdb_index *ix, const uint8_t *key, size_t klen, const void *val, size_t vlen)
+cdb_status cdb_index_put(cdb_index *ix, const uint8_t *key, size_t klen, const void *val,
+                         size_t vlen)
 {
     path pt;
     node leaf;
@@ -714,7 +739,8 @@ cdb_status cdb_index_put(cdb_index *ix, const uint8_t *key, size_t klen, const v
     if (vlen > ix->max_value) {
         /* The value goes to a chain of its own; the leaf keeps the first page. */
         uint64_t first;
-        if ((s = cdb_overflow_write(ix->pager, ix->store_id, val, vlen, w_image(ix), &first)) != CDB_OK)
+        if ((s = cdb_overflow_write(ix->pager, ix->store_id, val, vlen, w_image(ix), &first))
+            != CDB_OK)
             return s;
         cdb_store_u64(chain, first, CDB_ORDER_BIG);
         stored = chain;
@@ -723,26 +749,33 @@ cdb_status cdb_index_put(cdb_index *ix, const uint8_t *key, size_t klen, const v
     /* Key already present: overwrite the descriptor in place (the old key
      * and value bytes stay unused in the heap). Remember the old chain, if
      * any, so it can be released. */
-    if (pos < leaf.count && cdb_key_compare(ent_key(ix, &ix->w.entries[pos]), ix->w.entries[pos].klen, key, klen) == 0) {
+    if (pos < leaf.count
+        && cdb_key_compare(ent_key(ix, &ix->w.entries[pos]), ix->w.entries[pos].klen, key, klen)
+               == 0) {
         if (in_chain(ix, &ix->w.entries[pos])) {
             old_chain = cdb_load_u64(ent_val(ix, &ix->w.entries[pos]), CDB_ORDER_BIG);
             old_len = ix->w.entries[pos].tlen;
         }
-        if ((s = heap_add(ix, &leaf, key, klen, NULL, 0, stored, slen, &ix->w.entries[pos])) != CDB_OK)
+        if ((s = heap_add(ix, &leaf, key, klen, NULL, 0, stored, slen, &ix->w.entries[pos]))
+            != CDB_OK)
             return s;
     } else {
         /* New key: open a gap at pos to keep the entries sorted. */
         if (leaf.count >= ix->w.entries_cap)
             return CDB_E_BUFFER_TOO_SMALL;
-        memmove(&ix->w.entries[pos + 1], &ix->w.entries[pos], (leaf.count - pos) * sizeof(cdb_index_entry));
-        if ((s = heap_add(ix, &leaf, key, klen, NULL, 0, stored, slen, &ix->w.entries[pos])) != CDB_OK)
+        memmove(&ix->w.entries[pos + 1], &ix->w.entries[pos],
+                (leaf.count - pos) * sizeof(cdb_index_entry));
+        if ((s = heap_add(ix, &leaf, key, klen, NULL, 0, stored, slen, &ix->w.entries[pos]))
+            != CDB_OK)
             return s;
         leaf.count++;
     }
     /* tlen is always the real value length; it is what marks a chained value. */
     ix->w.entries[pos].tlen = (uint32_t)vlen;
     /* The replaced value's chain is released (its pages stay until commit). */
-    if (old_chain && (s = cdb_overflow_free(ix->pager, old_chain, ix->store_id, (size_t)old_len, w_page(ix))) != CDB_OK)
+    if (old_chain
+        && (s = cdb_overflow_free(ix->pager, old_chain, ix->store_id, (size_t)old_len, w_page(ix)))
+               != CDB_OK)
         return s;
     if ((s = write_node(ix, pt.lid[pt.depth - 1], &leaf, &out)) != CDB_OK)
         return s;
@@ -759,8 +792,8 @@ cdb_status cdb_index_put(cdb_index *ix, const uint8_t *key, size_t klen, const v
  * turns out too long for vcap (CDB_E_BUFFER_TOO_SMALL); *vlen tells the
  * caller how much room is needed.
  * Runs completely in place without expanding any node into the work heap. */
-cdb_status cdb_index_get(cdb_index *ix, const uint8_t *key, size_t klen,
-                         void *val, size_t vcap, size_t *vlen, int *found)
+cdb_status cdb_index_get(cdb_index *ix, const uint8_t *key, size_t klen, void *val, size_t vcap,
+                         size_t *vlen, int *found)
 {
     uint64_t lid = ix->root;
     unsigned depth = 0;
@@ -800,7 +833,8 @@ cdb_status cdb_index_get(cdb_index *ix, const uint8_t *key, size_t klen,
             if (tl > vcap)
                 return CDB_E_BUFFER_TOO_SMALL;
             if (tl > ix->max_value)
-                return cdb_overflow_read(ix->pager, child_of(ix, vptr), ix->store_id, val, tl, w_page(ix));
+                return cdb_overflow_read(ix->pager, child_of(ix, vptr), ix->store_id, val, tl,
+                                         w_page(ix));
             if (vl)
                 memcpy(val, vptr, vl);
         }
@@ -847,13 +881,17 @@ cdb_status cdb_index_delete(cdb_index *ix, const uint8_t *key, size_t klen, int 
     if ((s = descend(ix, key, klen, &pt, &n)) != CDB_OK)
         return s;
     pos = lower_bound(ix, &n, key, klen);
-    if (pos >= n.count || cdb_key_compare(ent_key(ix, &ix->w.entries[pos]), ix->w.entries[pos].klen, key, klen) != 0)
+    if (pos >= n.count
+        || cdb_key_compare(ent_key(ix, &ix->w.entries[pos]), ix->w.entries[pos].klen, key, klen)
+               != 0)
         return CDB_OK;
     *found = 1;
     /* A chained value's pages are released along with the entry. */
     if (in_chain(ix, &ix->w.entries[pos])
-        && (s = cdb_overflow_free(ix->pager, cdb_load_u64(ent_val(ix, &ix->w.entries[pos]), CDB_ORDER_BIG),
-                                  ix->store_id, ix->w.entries[pos].tlen, w_page(ix))) != CDB_OK)
+        && (s = cdb_overflow_free(ix->pager,
+                                  cdb_load_u64(ent_val(ix, &ix->w.entries[pos]), CDB_ORDER_BIG),
+                                  ix->store_id, ix->w.entries[pos].tlen, w_page(ix)))
+               != CDB_OK)
         return s;
 
     /* Remove entry pos from the node at path index `at`, starting at the
@@ -862,7 +900,8 @@ cdb_status cdb_index_delete(cdb_index *ix, const uint8_t *key, size_t klen, int 
     at = (unsigned)(pt.depth - 1u);
     for (;;) {
         split_out none; /* removing never splits, so this stays empty */
-        memmove(&ix->w.entries[pos], &ix->w.entries[pos + 1], (n.count - pos - 1) * sizeof(cdb_index_entry));
+        memmove(&ix->w.entries[pos], &ix->w.entries[pos + 1],
+                (n.count - pos - 1) * sizeof(cdb_index_entry));
         n.count--;
         if (n.level > 0 && pos == 0 && n.count > 0)
             clear_key(&ix->w.entries[0]); /* the new lowest child has no lower bound */
@@ -964,7 +1003,8 @@ static cdb_status leftmost(cdb_index_cursor *c)
             return CDB_OK;
         if (v.count == 0 || c->depth >= CDB_INDEX_MAX_DEPTH)
             return CDB_E_CORRUPT;
-        if ((s = view_entry(c->ix, &v, c->slot[c->depth - 1], &suffix, &slen, &val, &vlen, &tlen)) != CDB_OK)
+        if ((s = view_entry(c->ix, &v, c->slot[c->depth - 1], &suffix, &slen, &val, &vlen, &tlen))
+            != CDB_OK)
             return s;
         c->lid[c->depth] = child_of(c->ix, val);
         c->slot[c->depth] = 0;
@@ -972,7 +1012,8 @@ static cdb_status leftmost(cdb_index_cursor *c)
     }
 }
 
-cdb_status cdb_index_seek(cdb_index_cursor *c, cdb_index *ix, uint8_t *page, const uint8_t *key, size_t klen)
+cdb_status cdb_index_seek(cdb_index_cursor *c, cdb_index *ix, uint8_t *page, const uint8_t *key,
+                          size_t klen)
 {
     path pt;
     node leaf;
@@ -1000,8 +1041,8 @@ cdb_status cdb_index_seek(cdb_index_cursor *c, cdb_index *ix, uint8_t *page, con
  * fit the caller's buffer, CDB_E_BUFFER_TOO_SMALL is returned with *klen and
  * *vlen set, and the cursor does not advance, so the call can be retried
  * with bigger buffers. */
-cdb_status cdb_index_next(cdb_index_cursor *c, uint8_t *key, size_t kcap, size_t *klen,
-                          void *val, size_t vcap, size_t *vlen, int *done)
+cdb_status cdb_index_next(cdb_index_cursor *c, uint8_t *key, size_t kcap, size_t *klen, void *val,
+                          size_t vcap, size_t *vlen, int *done)
 {
     for (;;) {
         node_view v;
@@ -1018,7 +1059,8 @@ cdb_status cdb_index_next(cdb_index_cursor *c, uint8_t *key, size_t kcap, size_t
             return s;
         /* An entry left in this leaf: copy out prefix + suffix and the value. */
         if (c->slot[c->depth - 1] < v.count) {
-            if ((s = view_entry(c->ix, &v, c->slot[c->depth - 1], &suffix, &slen, &value, &vl, &tl)) != CDB_OK)
+            if ((s = view_entry(c->ix, &v, c->slot[c->depth - 1], &suffix, &slen, &value, &vl, &tl))
+                != CDB_OK)
                 return s;
             *klen = v.prefix_len + slen;
             *vlen = tl;
@@ -1029,7 +1071,8 @@ cdb_status cdb_index_next(cdb_index_cursor *c, uint8_t *key, size_t kcap, size_t
             if (tl > c->ix->max_value) {
                 /* The chain is read through the cursor's page, which the
                  * next call reads again. */
-                if ((s = cdb_overflow_read(c->ix->pager, child_of(c->ix, value), c->ix->store_id, val, tl, c->page))
+                if ((s = cdb_overflow_read(c->ix->pager, child_of(c->ix, value), c->ix->store_id,
+                                           val, tl, c->page))
                     != CDB_OK)
                     return s;
             } else if (vl) {
@@ -1078,7 +1121,8 @@ static cdb_status drop_subtree(cdb_index *ix, uint64_t lid, unsigned depth)
                 return s;
             if (tlen > ix->max_value) {
                 uint64_t chain = child_of(ix, val);
-                if ((s = cdb_overflow_free(ix->pager, chain, ix->store_id, tlen, w_image(ix))) != CDB_OK)
+                if ((s = cdb_overflow_free(ix->pager, chain, ix->store_id, tlen, w_image(ix)))
+                    != CDB_OK)
                     return s;
             }
         }

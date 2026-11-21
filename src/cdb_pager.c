@@ -34,7 +34,8 @@
 #define NODE_HDR 8u
 #define ROOT_AREA 32u
 #define NODE_FLAG_ROOT 0x01u
-#define MAX_DEPTH 8u   /* most levels the anchor map may have; deeper trees are treated as corrupt */
+#define MAX_DEPTH 8u /* most levels the anchor map may have; deeper trees are treated as corrupt \
+                      */
 
 /* Free-space page payload: count, reserved, next page, then extents
  * (spec 14.7.7). */
@@ -178,8 +179,8 @@ static uint64_t alloc_phys(cdb_pager *p)
 }
 
 void cdb_pager_set_crypto(cdb_pager *p, unsigned aead_alg, const uint8_t *master_key,
-                          const uint8_t *integrity_key,
-                          cdb_pager_key_fn domain_key_fn, void *domain_key_ctx)
+                          const uint8_t *integrity_key, cdb_pager_key_fn domain_key_fn,
+                          void *domain_key_ctx)
 {
     if (p == NULL)
         return;
@@ -248,19 +249,22 @@ static cdb_status pager_seal_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h
         }
         if (p->domain_key_fn == NULL)
             return CDB_E_SECURITY;
-        if ((s = p->domain_key_fn(p->domain_key_ctx, h->domain_id, h->key_version, h->salt_index, key_buf)) != CDB_OK)
+        if ((s = p->domain_key_fn(p->domain_key_ctx, h->domain_id, h->key_version, h->salt_index,
+                                  key_buf))
+            != CDB_OK)
             return s;
         key = key_buf;
         aead_alg = p->aead_alg;
-    } else if ((p->hs.record.layout_flags & CDB_LAYOUT_GOVERNANCE) || (h->flags & CDB_PAGE_FLAG_TAMPER_EVIDENT)) {
+    } else if ((p->hs.record.layout_flags & CDB_LAYOUT_GOVERNANCE)
+               || (h->flags & CDB_PAGE_FLAG_TAMPER_EVIDENT)) {
         if (!p->has_integrity_key)
             return CDB_E_SECURITY;
         h->flags |= CDB_PAGE_FLAG_TAMPER_EVIDENT;
         key = p->integrity_key;
     }
 
-    s = cdb_page_seal_crypto(buf, p->page_size, p->fmt, p->order, p->checksum_alg,
-                             aead_alg, key, page_track(p, overlay), h);
+    s = cdb_page_seal_crypto(buf, p->page_size, p->fmt, p->order, p->checksum_alg, aead_alg, key,
+                             page_track(p, overlay), h);
     cdb_crypto_wipe(key_buf, sizeof key_buf);
     return s;
 }
@@ -282,7 +286,9 @@ static cdb_status pager_open_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h
             return CDB_E_MALFORMED;
         if (p->domain_key_fn == NULL)
             return CDB_E_SECURITY;
-        if ((s = p->domain_key_fn(p->domain_key_ctx, h->domain_id, h->key_version, h->salt_index, key_buf)) != CDB_OK)
+        if ((s = p->domain_key_fn(p->domain_key_ctx, h->domain_id, h->key_version, h->salt_index,
+                                  key_buf))
+            != CDB_OK)
             return s;
         key = key_buf;
         aead_alg = p->aead_alg;
@@ -292,8 +298,8 @@ static cdb_status pager_open_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h
         key = p->integrity_key;
     }
 
-    s = cdb_page_open_crypto(buf, p->page_size, p->fmt, p->order, p->checksum_alg,
-                             aead_alg, key, page_track(p, overlay), h);
+    s = cdb_page_open_crypto(buf, p->page_size, p->fmt, p->order, p->checksum_alg, aead_alg, key,
+                             page_track(p, overlay), h);
     cdb_crypto_wipe(key_buf, sizeof key_buf);
     return s;
 }
@@ -338,7 +344,8 @@ static cdb_status append_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h, ui
  * and checks that it has the expected page type. A page in the reserved area
  * at the start of the file, a page past the end of the file, a bad checksum
  * or the wrong type all report CDB_E_CORRUPT: a structure pointed at it. */
-static cdb_status read_page(cdb_pager *p, uint64_t phys, uint8_t *buf, uint16_t type, cdb_page_header *h)
+static cdb_status read_page(cdb_pager *p, uint64_t phys, uint8_t *buf, uint16_t type,
+                            cdb_page_header *h)
 {
     cdb_status s;
     if (phys < p->data_start)
@@ -347,7 +354,9 @@ static cdb_status read_page(cdb_pager *p, uint64_t phys, uint8_t *buf, uint16_t 
         return s == CDB_E_TRUNCATED ? CDB_E_CORRUPT : s;
     if ((s = pager_open_page(p, buf, h, 0)) != CDB_OK)
         return s;
-    return h->type == type && h->payload_len == cdb_page_capacity(p->fmt, p->page_size) ? CDB_OK : CDB_E_CORRUPT;
+    return h->type == type && h->payload_len == cdb_page_capacity(p->fmt, p->page_size)
+               ? CDB_OK
+               : CDB_E_CORRUPT;
 }
 
 /* -------------------------------------------------------- free list */
@@ -380,7 +389,8 @@ static cdb_status free_push(cdb_pager *p, uint64_t start, uint64_t len)
      * was freed by the same commit; then try to absorb the one after too. */
     if (i > 0 && list[i - 1].freed_seq == freed && list[i - 1].start + list[i - 1].len == start) {
         list[i - 1].len += len;
-        if (i < p->free_len && list[i].freed_seq == freed && list[i - 1].start + list[i - 1].len == list[i].start) {
+        if (i < p->free_len && list[i].freed_seq == freed
+            && list[i - 1].start + list[i - 1].len == list[i].start) {
             list[i - 1].len += list[i].len;
             memmove(&list[i], &list[i + 1], (p->free_len - i - 1) * sizeof *list);
             p->free_len--;
@@ -465,7 +475,8 @@ static cdb_status load_free_chain(cdb_pager *p, uint64_t root)
                 return CDB_E_BUFFER_TOO_SMALL;
             p->cfg.free_list[p->free_len].start = load_addr(p, e);
             p->cfg.free_list[p->free_len].len = load_addr(p, e + p->addr_width);
-            p->cfg.free_list[p->free_len].freed_seq = cdb_load_u64(e + 2u * p->addr_width, p->order);
+            p->cfg.free_list[p->free_len].freed_seq =
+                cdb_load_u64(e + 2u * p->addr_width, p->order);
             p->free_len++;
         }
         /* The next-page link is always 8 bytes, even in a 32-bit file. */
@@ -522,7 +533,8 @@ static cdb_status write_free_chains(cdb_pager *p)
         for (i = 0; i < n; i++) {
             /* Slice of the list for page i; may be empty (a spare page). */
             size_t first = i * per;
-            size_t count = first >= p->free_len ? 0 : (p->free_len - first < per ? p->free_len - first : per);
+            size_t count =
+                first >= p->free_len ? 0 : (p->free_len - first < per ? p->free_len - first : per);
             uint8_t *pl = p->scratch + payload_off(p);
             cdb_page_header h;
             size_t k;
@@ -620,7 +632,8 @@ static cdb_status load_node(cdb_pager *p, cdb_pager_node *n)
     cdb_page_header h;
     int ok_p = 0, ok_m = 0;
 
-    if (n->phys_primary && read_page(p, n->phys_primary, n->primary, CDB_PAGE_TYPE_ANCHOR_MAP, &h) == CDB_OK)
+    if (n->phys_primary
+        && read_page(p, n->phys_primary, n->primary, CDB_PAGE_TYPE_ANCHOR_MAP, &h) == CDB_OK)
         ok_p = node_page_ok(p, n->primary, n->level, root);
     /* A good primary leaf is enough: the mirror leaf has the same entries,
      * so copy instead of paying for a second read. Interior nodes differ
@@ -629,7 +642,8 @@ static cdb_status load_node(cdb_pager *p, cdb_pager_node *n)
         memcpy(n->mirror, n->primary, p->page_size); /* leaf copies hold the same entries */
         return CDB_OK;
     }
-    if (n->phys_mirror && read_page(p, n->phys_mirror, n->mirror, CDB_PAGE_TYPE_ANCHOR_MAP, &h) == CDB_OK)
+    if (n->phys_mirror
+        && read_page(p, n->phys_mirror, n->mirror, CDB_PAGE_TYPE_ANCHOR_MAP, &h) == CDB_OK)
         ok_m = node_page_ok(p, n->mirror, n->level, root);
     if (!ok_p && !ok_m)
         return CDB_E_CORRUPT;
@@ -668,7 +682,7 @@ static cdb_status get_node(cdb_pager *p, unsigned level, uint64_t number, cdb_pa
             if ((s = get_node(p, level + 1, number / p->inner_fan, &parent)) != CDB_OK)
                 return s;
             at = entries_off(p, node_is_root(p, level + 1, number / p->inner_fan))
-               + (size_t)(number % p->inner_fan) * p->addr_width;
+                 + (size_t)(number % p->inner_fan) * p->addr_width;
             phys_p = load_addr(p, parent->primary + at);
             phys_m = load_addr(p, parent->mirror + at);
         }
@@ -800,7 +814,8 @@ static cdb_status leaf_for(cdb_pager *p, uint64_t lid, cdb_pager_node **leaf_nod
 
 /* Reads lid's anchor entry; also returns its leaf and slot so the caller can
  * update the entry with entry_set. */
-static cdb_status entry_get(cdb_pager *p, uint64_t lid, cdb_pager_node **leaf, size_t *slot, cdb_anchor_entry *e)
+static cdb_status entry_get(cdb_pager *p, uint64_t lid, cdb_pager_node **leaf, size_t *slot,
+                            cdb_anchor_entry *e)
 {
     cdb_status s = leaf_for(p, lid, leaf, slot);
     if (s != CDB_OK)
@@ -812,7 +827,8 @@ static cdb_status entry_get(cdb_pager *p, uint64_t lid, cdb_pager_node **leaf, s
 /* Writes an entry into both copies of the leaf (they always hold the same
  * entries) and marks the leaf and its ancestors dirty. Only memory changes
  * here; the next commit writes the nodes out. */
-static cdb_status entry_set(cdb_pager *p, cdb_pager_node *leaf, size_t slot, const cdb_anchor_entry *e)
+static cdb_status entry_set(cdb_pager *p, cdb_pager_node *leaf, size_t slot,
+                            const cdb_anchor_entry *e)
 {
     entry_encode(p, entry_at(p, leaf->primary, leaf->number, slot), e);
     entry_encode(p, entry_at(p, leaf->mirror, leaf->number, slot), e);
@@ -954,7 +970,8 @@ static cdb_status setup(cdb_pager *p, const cdb_storage *st, const cdb_pager_con
     p->cache_count = 0;
     p->cache_sets = 0;
     p->cache_clock = 0;
-    if (cfg->page_cache != NULL && cfg->page_cache_size >= sizeof(cdb_page_cache_slot) + p->page_size) {
+    if (cfg->page_cache != NULL
+        && cfg->page_cache_size >= sizeof(cdb_page_cache_slot) + p->page_size) {
         size_t slot_bytes = sizeof(cdb_page_cache_slot) + p->page_size;
         size_t n_pages = cfg->page_cache_size / slot_bytes;
         if (n_pages > 0) {
@@ -995,7 +1012,8 @@ static cdb_status load_catroot(cdb_pager *p)
          * simply absent. A slot that fails verification is counted. */
         uint8_t img[CDB_CATROOT_SLOT_SIZE];
         cdb_catroot r;
-        cdb_status s = cdb_storage_read(&p->st, p->loc0 + i * CDB_CATROOT_SLOT_SIZE, img, sizeof img);
+        cdb_status s =
+            cdb_storage_read(&p->st, p->loc0 + i * CDB_CATROOT_SLOT_SIZE, img, sizeof img);
         if (s == CDB_E_TRUNCATED)
             continue;
         if (s != CDB_OK)
@@ -1016,7 +1034,8 @@ static cdb_status load_catroot(cdb_pager *p)
             continue;
         /* Prefer the higher commit sequence, then the higher write counter. */
         if (!have || r.commit_seq > p->catroot.commit_seq
-            || (r.commit_seq == p->catroot.commit_seq && r.write_counter > p->catroot.write_counter)) {
+            || (r.commit_seq == p->catroot.commit_seq
+                && r.write_counter > p->catroot.write_counter)) {
             p->catroot = r;
             have = 1;
         }
@@ -1063,7 +1082,8 @@ static cdb_status write_catroot(cdb_pager *p)
         p->catroot.slot_index = (uint8_t)p->cat_next_slot;
         cdb_catroot_encode(&p->catroot, img, p->order);
         if ((s = cdb_storage_program(&p->st, p->loc0 + p->cat_next_slot * CDB_CATROOT_SLOT_SIZE,
-                                     img, sizeof img)) != CDB_OK)
+                                     img, sizeof img))
+            != CDB_OK)
             return s;
         p->cat_next_slot = (p->cat_next_slot + 1u) % 2u;
     }
@@ -1087,14 +1107,18 @@ cdb_status cdb_pager_open(cdb_pager *p, const cdb_storage *st, const cdb_pager_c
 
     if (p == NULL || st == NULL || cfg == NULL)
         return CDB_E_INVALID_ARG;
-    if (saved_hmk) memcpy(saved_mk, p->master_key, 32);
-    if (saved_hik) memcpy(saved_ik, p->integrity_key, 32);
+    if (saved_hmk)
+        memcpy(saved_mk, p->master_key, 32);
+    if (saved_hik)
+        memcpy(saved_ik, p->integrity_key, 32);
     memset(p, 0, sizeof *p);
     p->aead_alg = (uint8_t)saved_alg;
     p->has_master_key = saved_hmk;
     p->has_integrity_key = saved_hik;
-    if (saved_hmk) memcpy(p->master_key, saved_mk, 32);
-    if (saved_hik) memcpy(p->integrity_key, saved_ik, 32);
+    if (saved_hmk)
+        memcpy(p->master_key, saved_mk, 32);
+    if (saved_hik)
+        memcpy(p->integrity_key, saved_ik, 32);
     p->domain_key_fn = saved_fn;
     p->domain_key_ctx = saved_ctx;
     if ((s = cdb_header_open(st, &p->hs)) != CDB_OK)
@@ -1219,7 +1243,8 @@ cdb_status cdb_pager_alloc(cdb_pager *p, uint64_t *lid)
 static int written_since_commit(cdb_pager *p, uint64_t phys, uint64_t lid)
 {
     cdb_page_header h;
-    if (phys < p->data_start || cdb_storage_read(&p->st, phys_offset(p, phys), p->scratch, p->page_size) != CDB_OK
+    if (phys < p->data_start
+        || cdb_storage_read(&p->st, phys_offset(p, phys), p->scratch, p->page_size) != CDB_OK
         || pager_open_page(p, p->scratch, &h, 0) != CDB_OK)
         return 0;
     return h.write_seq >= p->seq_at_commit && h.logical_id == lid;
@@ -1234,8 +1259,8 @@ static int written_since_commit(cdb_pager *p, uint64_t phys, uint64_t lid)
  * never allocated or already freed; CDB_E_INVALID_ARG for a payload larger
  * than one page can hold. The payload is copied; the caller keeps its buffer.
  * Uses p->scratch. */
-static cdb_status pager_write(cdb_pager *p, uint64_t lid, const cdb_page_header *tmpl, const void *payload,
-                              size_t len, int may_rewrite)
+static cdb_status pager_write(cdb_pager *p, uint64_t lid, const cdb_page_header *tmpl,
+                              const void *payload, size_t len, int may_rewrite)
 {
     cdb_pager_node *leaf;
     cdb_anchor_entry e;
@@ -1363,7 +1388,8 @@ cdb_status cdb_pager_write(cdb_pager *p, uint64_t lid, const cdb_page_header *tm
     return s;
 }
 
-cdb_status cdb_pager_peek(cdb_pager *p, uint64_t lid, uint8_t *page, cdb_page_header *h, int *committed)
+cdb_status cdb_pager_peek(cdb_pager *p, uint64_t lid, uint8_t *page, cdb_page_header *h,
+                          int *committed)
 {
     cdb_pager_node *leaf;
     cdb_anchor_entry e;
@@ -1374,8 +1400,9 @@ cdb_status cdb_pager_peek(cdb_pager *p, uint64_t lid, uint8_t *page, cdb_page_he
         return s;
     if (e.state != CDB_ANCHOR_LIVE && e.state != CDB_ANCHOR_PRIVATE)
         return CDB_E_NOT_FOUND;
-    if ((s = cdb_storage_read(e.state == CDB_ANCHOR_PRIVATE ? &p->overlay : &p->st, phys_offset(p, e.phys), page,
-                              p->page_size)) != CDB_OK)
+    if ((s = cdb_storage_read(e.state == CDB_ANCHOR_PRIVATE ? &p->overlay : &p->st,
+                              phys_offset(p, e.phys), page, p->page_size))
+        != CDB_OK)
         return s == CDB_E_TRUNCATED ? CDB_E_CORRUPT : s;
     if ((s = cdb_page_peek(page, p->page_size, p->fmt, p->order, h)) != CDB_OK)
         return s;
@@ -1410,8 +1437,9 @@ cdb_status cdb_pager_read(cdb_pager *p, uint64_t lid, uint8_t *page, cdb_page_he
                 if (cs->hdr.domain_id > 0 && p->aead_alg != CDB_AEAD_NONE) {
                     uint8_t key_buf[32];
                     if (p->domain_key_fn == NULL
-                        || p->domain_key_fn(p->domain_key_ctx, cs->hdr.domain_id, cs->hdr.key_version,
-                                            cs->hdr.salt_index, key_buf) != CDB_OK) {
+                        || p->domain_key_fn(p->domain_key_ctx, cs->hdr.domain_id,
+                                            cs->hdr.key_version, cs->hdr.salt_index, key_buf)
+                               != CDB_OK) {
                         cdb_crypto_wipe(key_buf, sizeof key_buf);
                         return CDB_E_SECURITY;
                     }
@@ -1429,8 +1457,9 @@ cdb_status cdb_pager_read(cdb_pager *p, uint64_t lid, uint8_t *page, cdb_page_he
         }
     }
 
-    if ((s = cdb_storage_read(e.state == CDB_ANCHOR_PRIVATE ? &p->overlay : &p->st, phys_offset(p, e.phys), page,
-                              p->page_size)) != CDB_OK)
+    if ((s = cdb_storage_read(e.state == CDB_ANCHOR_PRIVATE ? &p->overlay : &p->st,
+                              phys_offset(p, e.phys), page, p->page_size))
+        != CDB_OK)
         return s == CDB_E_TRUNCATED ? CDB_E_CORRUPT : s;
     if ((s = pager_open_page(p, page, h, e.state == CDB_ANCHOR_PRIVATE)) != CDB_OK)
         return s;
@@ -1549,7 +1578,7 @@ static cdb_status flush_node(cdb_pager *p, cdb_pager_node *n, uint64_t new_p, ui
         if (parent == NULL || !parent->dirty)
             return CDB_E_STATE; /* ancestors of a dirty node are always dirty */
         at = entries_off(p, node_is_root(p, parent->level, parent->number))
-           + (size_t)(n->number % p->inner_fan) * p->addr_width;
+             + (size_t)(n->number % p->inner_fan) * p->addr_width;
         store_addr(p, parent->primary + at, new_p);
         store_addr(p, parent->mirror + at, new_m);
     }
@@ -1578,7 +1607,8 @@ cdb_status cdb_pager_commit(cdb_pager *p)
         return CDB_E_STATE; /* only the baton holder commits (spec 5.9.1) */
     /* The salt table (spec 14.2.8) changes in the commit whose pages use it. */
     if (p->sess.precommit != NULL
-        && (s = p->sess.precommit(p->sess.ctx, p->hs.record.committed_seq + 1u, p->salt_used)) != CDB_OK)
+        && (s = p->sess.precommit(p->sess.ctx, p->hs.record.committed_seq + 1u, p->salt_used))
+               != CDB_OK)
         return s;
 
     /* Step 1 barrier: data pages written since the last commit are durable. */
@@ -1762,7 +1792,8 @@ static cdb_status relocate_nodes(cdb_pager *p, uint64_t target, uint64_t max_mov
             if ((s = mark_dirty(p, n)) != CDB_OK)
                 return s;
             (*moved)++;
-            if (dirty_nodes(p) + p->depth + 2u >= p->node_count && (s = cdb_pager_commit(p)) != CDB_OK)
+            if (dirty_nodes(p) + p->depth + 2u >= p->node_count
+                && (s = cdb_pager_commit(p)) != CDB_OK)
                 return s;
         }
         count = (count + p->inner_fan - 1) / p->inner_fan;

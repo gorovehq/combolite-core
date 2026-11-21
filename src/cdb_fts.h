@@ -64,8 +64,9 @@ int cdb_fts_word_cmp(const cdb_fts_token *a, const cdb_fts_token *b);
 
 /* Settings encoding (spec 14.14), kept in the store record. */
 cdb_status cdb_fts_check_config(const cdb_fts_config *cfg);
-cdb_status cdb_fts_encode(const cdb_fts_config *cfg, uint64_t terms, uint64_t postings, uint64_t lengths,
-                          cdb_byte_order order, uint8_t *out, size_t cap, size_t *len);
+cdb_status cdb_fts_encode(const cdb_fts_config *cfg, uint64_t terms, uint64_t postings,
+                          uint64_t lengths, cdb_byte_order order, uint8_t *out, size_t cap,
+                          size_t *len);
 cdb_status cdb_fts_decode(const uint8_t *in, size_t len, cdb_byte_order order, cdb_fts_config *cfg,
                           uint64_t *terms, uint64_t *postings, uint64_t *lengths);
 
@@ -77,7 +78,7 @@ size_t cdb_fts_tokens_needed(size_t page_size, size_t doc_max);
 cdb_status cdb_fts_create(cdb_db *db, struct cdb_doc_pool *pool);
 cdb_status cdb_fts_update(cdb_db *db, struct cdb_doc_pool *pool, uint64_t entry,
                           const cdb_fts_doc *before, const cdb_fts_doc *after);
-cdb_status cdb_fts_search(cdb_db *db, struct cdb_doc_pool *pool, const char *query, size_t len, int mode,
-                          cdb_fts_hit *hits, size_t max, size_t *n);
+cdb_status cdb_fts_search(cdb_db *db, struct cdb_doc_pool *pool, const char *query, size_t len,
+                          int mode, cdb_fts_hit *hits, size_t max, size_t *n);
 
 #endif

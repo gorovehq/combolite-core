@@ -14,12 +14,12 @@
 
 #include <string.h>
 
-void cdb_proc_vm_init(cdb_proc_vm *vm, cdb_db *db, cdb_byte_order order,
-                      const cdb_value *params, uint8_t n_params,
-                      uint64_t instruction_budget)
+void cdb_proc_vm_init(cdb_proc_vm *vm, cdb_db *db, cdb_byte_order order, const cdb_value *params,
+                      uint8_t n_params, uint64_t instruction_budget)
 {
     size_t i;
-    if (vm == NULL) return;
+    if (vm == NULL)
+        return;
 
     memset(vm, 0, sizeof(*vm));
     vm->db = db;
@@ -37,32 +37,46 @@ void cdb_proc_vm_init(cdb_proc_vm *vm, cdb_db *db, cdb_byte_order order,
 /* Helper to convert cdb_value to double */
 static double to_double(const cdb_value *v)
 {
-    if (v == NULL) return 0.0;
-    if (v->type == CDB_TYPE_F64) return v->as.f64;
-    if (v->type == CDB_TYPE_F32) return (double)v->as.f32;
-    if (v->type == CDB_TYPE_INT) return (double)v->as.i64;
-    if (v->type == CDB_TYPE_BOOL) return v->as.boolean ? 1.0 : 0.0;
+    if (v == NULL)
+        return 0.0;
+    if (v->type == CDB_TYPE_F64)
+        return v->as.f64;
+    if (v->type == CDB_TYPE_F32)
+        return (double)v->as.f32;
+    if (v->type == CDB_TYPE_INT)
+        return (double)v->as.i64;
+    if (v->type == CDB_TYPE_BOOL)
+        return v->as.boolean ? 1.0 : 0.0;
     return 0.0;
 }
 
 static uint64_t reg_get_u64(const cdb_value *v)
 {
-    if (v == NULL) return 0;
-    if (v->type == CDB_TYPE_INT) return (uint64_t)v->as.i64;
-    if (v->type == CDB_TYPE_F64) return (uint64_t)v->as.f64;
-    if (v->type == CDB_TYPE_F32) return (uint64_t)v->as.f32;
-    if (v->type == CDB_TYPE_BOOL) return v->as.boolean ? 1u : 0u;
+    if (v == NULL)
+        return 0;
+    if (v->type == CDB_TYPE_INT)
+        return (uint64_t)v->as.i64;
+    if (v->type == CDB_TYPE_F64)
+        return (uint64_t)v->as.f64;
+    if (v->type == CDB_TYPE_F32)
+        return (uint64_t)v->as.f32;
+    if (v->type == CDB_TYPE_BOOL)
+        return v->as.boolean ? 1u : 0u;
     return 0;
 }
 
 static void reg_get_str(const cdb_value *v, const char **out_str, size_t *out_len)
 {
     if (v != NULL && (v->type == CDB_TYPE_STRING || v->type == CDB_TYPE_BINARY)) {
-        if (out_str) *out_str = (const char *)v->payload;
-        if (out_len) *out_len = v->payload_len;
+        if (out_str)
+            *out_str = (const char *)v->payload;
+        if (out_len)
+            *out_len = v->payload_len;
     } else {
-        if (out_str) *out_str = "";
-        if (out_len) *out_len = 0;
+        if (out_str)
+            *out_str = "";
+        if (out_len)
+            *out_len = 0;
     }
 }
 
@@ -70,19 +84,25 @@ static const char *reg_to_cstr(const cdb_value *v, char *buf, size_t buf_cap)
 {
     const char *s = "";
     size_t len = 0;
-    if (buf == NULL || buf_cap == 0) return "";
+    if (buf == NULL || buf_cap == 0)
+        return "";
     reg_get_str(v, &s, &len);
-    if (len >= buf_cap) len = buf_cap - 1;
-    if (len > 0) memcpy(buf, s, len);
+    if (len >= buf_cap)
+        len = buf_cap - 1;
+    if (len > 0)
+        memcpy(buf, s, len);
     buf[len] = '\0';
     return buf;
 }
 
 static uint8_t hex_digit(char c)
 {
-    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
-    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
-    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+    if (c >= '0' && c <= '9')
+        return (uint8_t)(c - '0');
+    if (c >= 'a' && c <= 'f')
+        return (uint8_t)(c - 'a' + 10);
+    if (c >= 'A' && c <= 'F')
+        return (uint8_t)(c - 'A' + 10);
     return 0;
 }
 
@@ -102,66 +122,89 @@ static void parse_pubkey(const char *pk, size_t len, uint8_t pubkey[33])
 static int str_eq_ci(const char *s, size_t len, const char *target)
 {
     size_t i, tlen = strlen(target);
-    if (len != tlen) return 0;
+    if (len != tlen)
+        return 0;
     for (i = 0; i < len; i++) {
         char c1 = s[i], c2 = target[i];
-        if (c1 >= 'A' && c1 <= 'Z') c1 = (char)(c1 + 'a' - 'A');
-        if (c2 >= 'A' && c2 <= 'Z') c2 = (char)(c2 + 'a' - 'A');
-        if (c1 != c2) return 0;
+        if (c1 >= 'A' && c1 <= 'Z')
+            c1 = (char)(c1 + 'a' - 'A');
+        if (c2 >= 'A' && c2 <= 'Z')
+            c2 = (char)(c2 + 'a' - 'A');
+        if (c1 != c2)
+            return 0;
     }
     return 1;
 }
 
 static uint32_t parse_model_type(const cdb_value *v)
 {
-    if (v == NULL) return 0;
-    if (v->type == CDB_TYPE_INT) return (uint32_t)v->as.i64;
+    if (v == NULL)
+        return 0;
+    if (v->type == CDB_TYPE_INT)
+        return (uint32_t)v->as.i64;
     if (v->type == CDB_TYPE_STRING || v->type == CDB_TYPE_BINARY) {
         const char *s = (const char *)v->payload;
         size_t len = v->payload_len;
-        if (str_eq_ci(s, len, "table") || str_eq_ci(s, len, "relational")) return 1;
-        if (str_eq_ci(s, len, "document") || str_eq_ci(s, len, "doc")) return 2;
-        if (str_eq_ci(s, len, "vector") || str_eq_ci(s, len, "vec")) return 3;
-        if (str_eq_ci(s, len, "timeseries") || str_eq_ci(s, len, "ts")) return 4;
-        if (str_eq_ci(s, len, "link") || str_eq_ci(s, len, "links")) return 5;
+        if (str_eq_ci(s, len, "table") || str_eq_ci(s, len, "relational"))
+            return 1;
+        if (str_eq_ci(s, len, "document") || str_eq_ci(s, len, "doc"))
+            return 2;
+        if (str_eq_ci(s, len, "vector") || str_eq_ci(s, len, "vec"))
+            return 3;
+        if (str_eq_ci(s, len, "timeseries") || str_eq_ci(s, len, "ts"))
+            return 4;
+        if (str_eq_ci(s, len, "link") || str_eq_ci(s, len, "links"))
+            return 5;
     }
     return 0;
 }
 
 static unsigned parse_cardinality(const cdb_value *v)
 {
-    if (v == NULL) return CDB_CARD_N_M;
-    if (v->type == CDB_TYPE_INT) return (unsigned)v->as.i64;
+    if (v == NULL)
+        return CDB_CARD_N_M;
+    if (v->type == CDB_TYPE_INT)
+        return (unsigned)v->as.i64;
     if (v->type == CDB_TYPE_STRING || v->type == CDB_TYPE_BINARY) {
         const char *s = (const char *)v->payload;
         size_t len = v->payload_len;
-        if (str_eq_ci(s, len, "1:1")) return CDB_CARD_1_1;
-        if (str_eq_ci(s, len, "1:n") || str_eq_ci(s, len, "1:N")) return CDB_CARD_1_N;
-        if (str_eq_ci(s, len, "n:m") || str_eq_ci(s, len, "N:M")) return CDB_CARD_N_M;
+        if (str_eq_ci(s, len, "1:1"))
+            return CDB_CARD_1_1;
+        if (str_eq_ci(s, len, "1:n") || str_eq_ci(s, len, "1:N"))
+            return CDB_CARD_1_N;
+        if (str_eq_ci(s, len, "n:m") || str_eq_ci(s, len, "N:M"))
+            return CDB_CARD_N_M;
     }
     return CDB_CARD_N_M;
 }
 
 static uint64_t parse_rotate_target(const cdb_value *v)
 {
-    if (v == NULL) return 0;
-    if (v->type == CDB_TYPE_INT) return (uint64_t)v->as.i64;
+    if (v == NULL)
+        return 0;
+    if (v->type == CDB_TYPE_INT)
+        return (uint64_t)v->as.i64;
     if (v->type == CDB_TYPE_STRING || v->type == CDB_TYPE_BINARY) {
         const char *s = (const char *)v->payload;
         size_t len = v->payload_len;
-        if (str_eq_ci(s, len, "enclave")) return 1;
-        if (str_eq_ci(s, len, "master")) return 0;
+        if (str_eq_ci(s, len, "enclave"))
+            return 1;
+        if (str_eq_ci(s, len, "master"))
+            return 0;
     }
     return 0;
 }
 
-static void ensure_doc_object(cdb_db *db, const void *doc, size_t doc_len, uint8_t *obj_buf, size_t obj_cap, const void **out_body, size_t *out_len)
+static void ensure_doc_object(cdb_db *db, const void *doc, size_t doc_len, uint8_t *obj_buf,
+                              size_t obj_cap, const void **out_body, size_t *out_len)
 {
     cdb_value v;
-    if (doc != NULL && doc_len > 0 &&
-        cdb_value_validate((const uint8_t *)doc, doc_len, db->pager.order, CDB_DECIMAL_COMPACT, 0) == CDB_OK &&
-        cdb_value_read((const uint8_t *)doc, doc_len, db->pager.order, &v) == CDB_OK &&
-        v.type == CDB_TYPE_OBJECT) {
+    if (doc != NULL && doc_len > 0
+        && cdb_value_validate((const uint8_t *)doc, doc_len, db->pager.order, CDB_DECIMAL_COMPACT,
+                              0)
+               == CDB_OK
+        && cdb_value_read((const uint8_t *)doc, doc_len, db->pager.order, &v) == CDB_OK
+        && v.type == CDB_TYPE_OBJECT) {
         *out_body = doc;
         *out_len = doc_len;
         return;
@@ -176,13 +219,16 @@ static void ensure_doc_object(cdb_db *db, const void *doc, size_t doc_len, uint8
     *out_len = cdb_value_writer_len(&w);
 }
 
-static void ensure_doc_patch(cdb_db *db, const void *patch, size_t patch_len, uint8_t *patch_buf, size_t patch_cap, const void **out_patch, size_t *out_len)
+static void ensure_doc_patch(cdb_db *db, const void *patch, size_t patch_len, uint8_t *patch_buf,
+                             size_t patch_cap, const void **out_patch, size_t *out_len)
 {
     cdb_value v;
-    if (patch != NULL && patch_len > 0 &&
-        cdb_value_validate((const uint8_t *)patch, patch_len, db->pager.order, CDB_DECIMAL_COMPACT, 0) == CDB_OK &&
-        cdb_value_read((const uint8_t *)patch, patch_len, db->pager.order, &v) == CDB_OK &&
-        v.type == CDB_TYPE_ARRAY) {
+    if (patch != NULL && patch_len > 0
+        && cdb_value_validate((const uint8_t *)patch, patch_len, db->pager.order,
+                              CDB_DECIMAL_COMPACT, 0)
+               == CDB_OK
+        && cdb_value_read((const uint8_t *)patch, patch_len, db->pager.order, &v) == CDB_OK
+        && v.type == CDB_TYPE_ARRAY) {
         *out_patch = patch;
         *out_len = patch_len;
         return;
@@ -204,7 +250,8 @@ static void ensure_doc_patch(cdb_db *db, const void *patch, size_t patch_len, ui
 
 static cdb_status resolve_store_id(cdb_db *db, const cdb_value *v, uint64_t *out_store_id)
 {
-    if (v == NULL || out_store_id == NULL) return CDB_E_INVALID_ARG;
+    if (v == NULL || out_store_id == NULL)
+        return CDB_E_INVALID_ARG;
     if (v->type == CDB_TYPE_INT) {
         *out_store_id = (uint64_t)v->as.i64;
         return CDB_OK;
@@ -214,10 +261,13 @@ static cdb_status resolve_store_id(cdb_db *db, const cdb_value *v, uint64_t *out
         size_t len = v->payload_len;
         int found = 0;
         cdb_status s;
-        if (db == NULL) return CDB_E_NOT_FOUND;
+        if (db == NULL)
+            return CDB_E_NOT_FOUND;
         s = cdb_db_find_store(db, name, len, out_store_id, &found);
-        if (s != CDB_OK) return s;
-        if (!found) return CDB_E_NOT_FOUND;
+        if (s != CDB_OK)
+            return s;
+        if (!found)
+            return CDB_E_NOT_FOUND;
         return CDB_OK;
     }
     return CDB_E_INVALID_ARG;
@@ -241,24 +291,26 @@ static int mut_needs_tx(uint8_t op)
     case CDB_MUT_TS_RETENTION:
     case CDB_MUT_TS_APPLY_RET:
     case CDB_MUT_VEC_INSERT:
-    case CDB_MUT_VEC_DELETE:
-        return 1;
-    default:
-        return 0;
+    case CDB_MUT_VEC_DELETE: return 1;
+    default: return 0;
     }
 }
 
-static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t argc, const uint8_t *args, cdb_value *out_val)
+static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t argc,
+                                          const uint8_t *args, cdb_value *out_val)
 {
     cdb_status st = CDB_OK;
     int autocommit = 0;
 
-    if (vm == NULL || vm->db == NULL) return CDB_E_INVALID_ARG;
-    if (out_val) cdb_eval_make_null(out_val);
+    if (vm == NULL || vm->db == NULL)
+        return CDB_E_INVALID_ARG;
+    if (out_val)
+        cdb_eval_make_null(out_val);
 
     if (mut_needs_tx(op) && !vm->db->in_tx) {
         st = cdb_tx_begin(vm->db, CDB_DURABILITY_DEFAULT);
-        if (st != CDB_OK) return st;
+        if (st != CDB_OK)
+            return st;
         autocommit = 1;
     }
 
@@ -273,9 +325,13 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const void *final_doc = NULL;
         size_t final_len = 0;
 
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         reg_get_str(&vm->regs[args[1]], &doc, &doc_len);
         if (argc >= 3 && vm->regs[args[2]].type != CDB_TYPE_NULL) {
             reg_get_str(&vm->regs[args[2]], &summary, &summary_len);
@@ -298,9 +354,13 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const void *final_doc = NULL;
         size_t final_len = 0;
 
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         entry = reg_get_u64(&vm->regs[args[1]]);
         reg_get_str(&vm->regs[args[2]], &doc, &doc_len);
         if (argc >= 4 && vm->regs[args[3]].type != CDB_TYPE_NULL) {
@@ -308,7 +368,8 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         }
         ensure_doc_object(vm->db, doc, doc_len, wrap_buf, sizeof(wrap_buf), &final_doc, &final_len);
         st = cdb_doc_replace(vm->db, store, entry, summary, summary_len, final_doc, final_len);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -320,25 +381,36 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const void *final_patch = NULL;
         size_t final_len = 0;
 
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         entry = reg_get_u64(&vm->regs[args[1]]);
         reg_get_str(&vm->regs[args[2]], &patch, &patch_len);
-        ensure_doc_patch(vm->db, patch, patch_len, wrap_buf, sizeof(wrap_buf), &final_patch, &final_len);
+        ensure_doc_patch(vm->db, patch, patch_len, wrap_buf, sizeof(wrap_buf), &final_patch,
+                         &final_len);
         st = cdb_doc_patch(vm->db, store, entry, final_patch, final_len);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_DOC_DELETE: {
         uint64_t store = 0, entry = 0;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         entry = reg_get_u64(&vm->regs[args[1]]);
         st = cdb_doc_delete(vm->db, store, entry);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -350,9 +422,13 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const void *final_row = NULL;
         size_t final_len = 0;
 
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         reg_get_str(&vm->regs[args[1]], &row, &row_len);
         ensure_doc_object(vm->db, row, row_len, wrap_buf, sizeof(wrap_buf), &final_row, &final_len);
         st = cdb_table_insert(vm->db, store, final_row, final_len, &entry);
@@ -370,25 +446,36 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const void *final_changes = NULL;
         size_t final_len = 0;
 
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         entry = reg_get_u64(&vm->regs[args[1]]);
         reg_get_str(&vm->regs[args[2]], &changes, &ch_len);
-        ensure_doc_object(vm->db, changes, ch_len, wrap_buf, sizeof(wrap_buf), &final_changes, &final_len);
+        ensure_doc_object(vm->db, changes, ch_len, wrap_buf, sizeof(wrap_buf), &final_changes,
+                          &final_len);
         st = cdb_table_update(vm->db, store, entry, final_changes, final_len);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_TABLE_DELETE: {
         uint64_t store = 0, entry = 0;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         entry = reg_get_u64(&vm->regs[args[1]]);
         st = cdb_table_delete(vm->db, store, entry);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -397,18 +484,27 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         float weight = 1.0f;
         int64_t ltime = 0;
 
-        if (argc < 5) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 5) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         type = reg_get_u64(&vm->regs[args[0]]);
         st = resolve_store_id(vm->db, &vm->regs[args[1]], &s_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         s_entry = reg_get_u64(&vm->regs[args[2]]);
         st = resolve_store_id(vm->db, &vm->regs[args[3]], &t_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         t_entry = reg_get_u64(&vm->regs[args[4]]);
-        if (argc >= 6) weight = (float)to_double(&vm->regs[args[5]]);
-        if (argc >= 7) ltime = (int64_t)reg_get_u64(&vm->regs[args[6]]);
-        st = cdb_link_add(vm->db, type, cdb_ref_entry(s_store, s_entry), cdb_ref_entry(t_store, t_entry), weight, ltime);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (argc >= 6)
+            weight = (float)to_double(&vm->regs[args[5]]);
+        if (argc >= 7)
+            ltime = (int64_t)reg_get_u64(&vm->regs[args[6]]);
+        st = cdb_link_add(vm->db, type, cdb_ref_entry(s_store, s_entry),
+                          cdb_ref_entry(t_store, t_entry), weight, ltime);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -417,34 +513,50 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         float weight = 1.0f;
         int64_t ltime = 0;
 
-        if (argc < 5) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 5) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         type = reg_get_u64(&vm->regs[args[0]]);
         st = resolve_store_id(vm->db, &vm->regs[args[1]], &s_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         s_entry = reg_get_u64(&vm->regs[args[2]]);
         st = resolve_store_id(vm->db, &vm->regs[args[3]], &t_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         t_entry = reg_get_u64(&vm->regs[args[4]]);
-        if (argc >= 6) weight = (float)to_double(&vm->regs[args[5]]);
-        if (argc >= 7) ltime = (int64_t)reg_get_u64(&vm->regs[args[6]]);
-        st = cdb_link_reinforce(vm->db, type, cdb_ref_entry(s_store, s_entry), cdb_ref_entry(t_store, t_entry), weight, ltime);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (argc >= 6)
+            weight = (float)to_double(&vm->regs[args[5]]);
+        if (argc >= 7)
+            ltime = (int64_t)reg_get_u64(&vm->regs[args[6]]);
+        st = cdb_link_reinforce(vm->db, type, cdb_ref_entry(s_store, s_entry),
+                                cdb_ref_entry(t_store, t_entry), weight, ltime);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_LINK_REMOVE: {
         uint64_t type = 0, s_store = 0, s_entry = 0, t_store = 0, t_entry = 0;
 
-        if (argc < 5) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 5) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         type = reg_get_u64(&vm->regs[args[0]]);
         st = resolve_store_id(vm->db, &vm->regs[args[1]], &s_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         s_entry = reg_get_u64(&vm->regs[args[2]]);
         st = resolve_store_id(vm->db, &vm->regs[args[3]], &t_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         t_entry = reg_get_u64(&vm->regs[args[4]]);
-        st = cdb_link_remove(vm->db, type, cdb_ref_entry(s_store, s_entry), cdb_ref_entry(t_store, t_entry));
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        st = cdb_link_remove(vm->db, type, cdb_ref_entry(s_store, s_entry),
+                             cdb_ref_entry(t_store, t_entry));
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -454,11 +566,15 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         unsigned card = CDB_CARD_N_M;
         uint64_t enf = 0, inv = 0, type_id = 0;
 
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         reg_get_str(&vm->regs[args[0]], &name, &nlen);
         card = parse_cardinality(&vm->regs[args[1]]);
         enf = reg_get_u64(&vm->regs[args[2]]);
-        if (argc >= 4) inv = reg_get_u64(&vm->regs[args[3]]);
+        if (argc >= 4)
+            inv = reg_get_u64(&vm->regs[args[3]]);
         st = cdb_link_define_type(vm->db, name, nlen, card, (int)enf, (unsigned)inv, &type_id);
         if (st == CDB_OK && out_val) {
             cdb_eval_make_int(out_val, (int64_t)type_id);
@@ -472,9 +588,13 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         size_t nlen = 0;
         int created = 0;
 
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         reg_get_str(&vm->regs[args[1]], &name, &nlen);
         st = cdb_ts_series(vm->db, store, name, nlen, NULL, 0, NULL, &series, &created);
         if (st == CDB_OK && out_val) {
@@ -490,9 +610,13 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         uint8_t enc[64];
         cdb_value_writer vw;
 
-        if (argc < 4) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 4) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         series = reg_get_u64(&vm->regs[args[1]]);
         ts = (int64_t)reg_get_u64(&vm->regs[args[2]]);
 
@@ -500,7 +624,8 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         pin.ts = ts;
         pin.use_clock = (ts == 0) ? 1 : 0;
 
-        if (vm->regs[args[3]].type == CDB_TYPE_STRING || vm->regs[args[3]].type == CDB_TYPE_BINARY) {
+        if (vm->regs[args[3]].type == CDB_TYPE_STRING
+            || vm->regs[args[3]].type == CDB_TYPE_BINARY) {
             pin.values = vm->regs[args[3]].payload;
             pin.len = vm->regs[args[3]].payload_len;
         } else {
@@ -521,42 +646,57 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         }
 
         st = cdb_ts_append(vm->db, store, series, &pin, 1);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_TS_DROP_BEFORE: {
         uint64_t store = 0, series = 0;
         int64_t ts = 0;
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         series = reg_get_u64(&vm->regs[args[1]]);
         ts = (int64_t)reg_get_u64(&vm->regs[args[2]]);
         st = cdb_ts_drop_before(vm->db, store, series, ts);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_TS_RETENTION: {
         uint64_t store = 0, series = 0;
         int64_t max_age = 0;
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         series = reg_get_u64(&vm->regs[args[1]]);
         max_age = (int64_t)reg_get_u64(&vm->regs[args[2]]);
         st = cdb_ts_set_retention(vm->db, store, series, max_age);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_TS_APPLY_RET: {
         uint64_t store = 0, series = 0;
         int64_t now_ts = 0, dropped = 0;
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         series = reg_get_u64(&vm->regs[args[1]]);
         now_ts = (int64_t)reg_get_u64(&vm->regs[args[2]]);
         st = cdb_ts_apply_retention(vm->db, store, series, now_ts, &dropped);
@@ -570,13 +710,18 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         cdb_ts_downsample_spec spec;
         size_t points_gen = 0;
         int64_t from_ts = 0, to_ts = 0;
-        if (argc < 7) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 7) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         memset(&spec, 0, sizeof spec);
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &spec.src_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         spec.src_series = reg_get_u64(&vm->regs[args[1]]);
         st = resolve_store_id(vm->db, &vm->regs[args[2]], &spec.dst_store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         spec.dst_series = reg_get_u64(&vm->regs[args[3]]);
         spec.bucket_step = (int64_t)reg_get_u64(&vm->regs[args[4]]);
         from_ts = (int64_t)reg_get_u64(&vm->regs[args[5]]);
@@ -593,9 +738,13 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         uint64_t src_store = 0, src_entry = 0;
         const char *vec_data = "";
         size_t vec_len = 0;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         reg_get_str(&vm->regs[args[1]], &vec_data, &vec_len);
         if (argc >= 4) {
             src_store = reg_get_u64(&vm->regs[args[2]]);
@@ -610,12 +759,17 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
 
     case CDB_MUT_VEC_DELETE: {
         uint64_t store = 0, entry = 0;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         entry = reg_get_u64(&vm->regs[args[1]]);
         st = cdb_vec_delete(vm->db, store, entry);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -623,19 +777,26 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         uint64_t store = 0;
         cdb_blob_ref ref;
         uint8_t page_buf[4096];
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         if (vm->regs[args[1]].type == CDB_TYPE_BLOB_REF) {
             ref = vm->regs[args[1]].as.blob;
         } else {
             memset(&ref, 0, sizeof ref);
             ref.first_page = reg_get_u64(&vm->regs[args[1]]);
-            if (argc >= 3) ref.page_count = reg_get_u64(&vm->regs[args[2]]);
-            if (argc >= 4) ref.total_len = reg_get_u64(&vm->regs[args[3]]);
+            if (argc >= 3)
+                ref.page_count = reg_get_u64(&vm->regs[args[2]]);
+            if (argc >= 4)
+                ref.total_len = reg_get_u64(&vm->regs[args[3]]);
         }
         st = cdb_db_blob_free(vm->db, store, &ref, page_buf);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -644,7 +805,10 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         size_t nlen = 0;
         uint32_t model = 0;
         uint64_t store_id = 0;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         reg_get_str(&vm->regs[args[0]], &name, &nlen);
         model = parse_model_type(&vm->regs[args[1]]);
         st = cdb_db_create_store(vm->db, name, nlen, model, &store_id);
@@ -656,11 +820,16 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
 
     case CDB_MUT_DROP_STORE: {
         uint64_t store_id = 0;
-        if (argc < 1) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 1) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store_id);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         st = cdb_db_drop_store(vm->db, store_id);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -669,9 +838,13 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const char *sch = "";
         size_t slen = 0;
         uint32_t ver = 0;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         st = resolve_store_id(vm->db, &vm->regs[args[0]], &store_id);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         reg_get_str(&vm->regs[args[1]], &sch, &slen);
         st = cdb_db_add_schema(vm->db, store_id, sch, slen, &ver);
         if (st == CDB_OK && out_val) {
@@ -684,13 +857,17 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         uint64_t eid = 0;
         char kref_buf[256];
         const char *kref = NULL;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         eid = reg_get_u64(&vm->regs[args[0]]);
         if (vm->regs[args[1]].type != CDB_TYPE_NULL) {
             kref = reg_to_cstr(&vm->regs[args[1]], kref_buf, sizeof(kref_buf));
         }
         st = cdb_db_create_enclave(vm->db, eid, kref);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -698,13 +875,17 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         uint64_t eid = 0;
         char kref_buf[256];
         const char *kref = NULL;
-        if (argc < 2) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         eid = reg_get_u64(&vm->regs[args[0]]);
         if (vm->regs[args[1]].type != CDB_TYPE_NULL) {
             kref = reg_to_cstr(&vm->regs[args[1]], kref_buf, sizeof(kref_buf));
         }
         st = cdb_db_open_enclave(vm->db, eid, kref);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -712,7 +893,10 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         uint64_t target = 0, eid = 0;
         char uri_buf[256];
         const char *uri = NULL;
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         target = parse_rotate_target(&vm->regs[args[0]]);
         eid = reg_get_u64(&vm->regs[args[1]]);
         if (vm->regs[args[2]].type != CDB_TYPE_NULL) {
@@ -723,13 +907,15 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         } else {
             st = cdb_db_rotate_enclave_key(vm->db, eid, uri);
         }
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_CHECK_ROTATION: {
         st = cdb_db_check_key_rotation(vm->db);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -738,36 +924,48 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const char *pk = "";
         size_t pk_len = 0;
         uint8_t pubkey[33];
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         pid = reg_get_u64(&vm->regs[args[0]]);
         tid = reg_get_u64(&vm->regs[args[1]]);
         reg_get_str(&vm->regs[args[2]], &pk, &pk_len);
         parse_pubkey(pk, pk_len, pubkey);
         st = cdb_db_register_principal(vm->db, pid, (uint32_t)tid, pubkey);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_GRANT_ROLE: {
         uint64_t pid = 0, rid = 0, scope = 0, perms = 0;
-        if (argc < 4) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 4) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         pid = reg_get_u64(&vm->regs[args[0]]);
         rid = reg_get_u64(&vm->regs[args[1]]);
         scope = reg_get_u64(&vm->regs[args[2]]);
         perms = reg_get_u64(&vm->regs[args[3]]);
         st = cdb_db_grant_role(vm->db, pid, (uint32_t)rid, scope, (uint8_t)perms);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_CHECK_PERM: {
         uint64_t pid = 0, scope = 0, perms = 0;
-        if (argc < 3) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 3) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         pid = reg_get_u64(&vm->regs[args[0]]);
         scope = reg_get_u64(&vm->regs[args[1]]);
         perms = reg_get_u64(&vm->regs[args[2]]);
         st = cdb_db_check_perm(vm->db, pid, scope, (uint8_t)perms);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
@@ -775,31 +973,43 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         const char *name = "", *proc = "";
         size_t nlen = 0, plen = 0;
         uint64_t sid = 0, ev = 0, depth = 8;
-        if (argc < 4) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 4) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         reg_get_str(&vm->regs[args[0]], &name, &nlen);
         st = resolve_store_id(vm->db, &vm->regs[args[1]], &sid);
-        if (st != CDB_OK) break;
+        if (st != CDB_OK)
+            break;
         ev = reg_get_u64(&vm->regs[args[2]]);
         reg_get_str(&vm->regs[args[3]], &proc, &plen);
-        if (argc >= 5) depth = reg_get_u64(&vm->regs[args[4]]);
-        st = cdb_db_trigger_register(vm->db, name, nlen, sid, (uint8_t)ev, proc, plen, (uint8_t)depth);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (argc >= 5)
+            depth = reg_get_u64(&vm->regs[args[4]]);
+        st = cdb_db_trigger_register(vm->db, name, nlen, sid, (uint8_t)ev, proc, plen,
+                                     (uint8_t)depth);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_TRIGGER_UNREG: {
         const char *name = "";
         size_t nlen = 0;
-        if (argc < 1) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 1) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         reg_get_str(&vm->regs[args[0]], &name, &nlen);
         st = cdb_db_trigger_unregister(vm->db, name, nlen);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_COMPACT: {
         uint64_t max_moves = 0, moved = 0, reclaimed = 0;
-        if (argc >= 1) max_moves = reg_get_u64(&vm->regs[args[0]]);
+        if (argc >= 1)
+            max_moves = reg_get_u64(&vm->regs[args[0]]);
         st = cdb_db_compact(vm->db, max_moves, &moved, &reclaimed);
         if (st == CDB_OK && out_val) {
             cdb_eval_make_int(out_val, (int64_t)moved);
@@ -818,23 +1028,31 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
 
     case CDB_MUT_RECONCILE: {
         st = cdb_db_reconcile(vm->db);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_SET_PEER: {
         uint64_t peer_id = 0;
-        if (argc < 1) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 1) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         peer_id = reg_get_u64(&vm->regs[args[0]]);
         st = cdb_db_set_peer_id(vm->db, (uint32_t)peer_id);
-        if (out_val) cdb_eval_make_int(out_val, (int64_t)st);
+        if (out_val)
+            cdb_eval_make_int(out_val, (int64_t)st);
         break;
     }
 
     case CDB_MUT_SYNC_IMPORT: {
         const char *slice = "";
         size_t slen = 0, applied = 0;
-        if (argc < 1) { st = CDB_E_INVALID_ARG; break; }
+        if (argc < 1) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
         reg_get_str(&vm->regs[args[0]], &slice, &slen);
         st = cdb_db_crdt_import_slice(vm->db, (const uint8_t *)slice, slen, &applied);
         if (st == CDB_OK && out_val) {
@@ -843,9 +1061,7 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         break;
     }
 
-    default:
-        st = CDB_E_UNSUPPORTED;
-        break;
+    default: st = CDB_E_UNSUPPORTED; break;
     }
 
     if (autocommit) {
@@ -880,10 +1096,8 @@ static int mutation_logical(cdb_status s)
     case CDB_E_INVALID_ARG:
     case CDB_E_MALFORMED:
     case CDB_E_NOT_CANONICAL:
-    case CDB_E_DEPTH:
-        return 1;
-    default:
-        return 0;
+    case CDB_E_DEPTH: return 1;
+    default: return 0;
     }
 }
 
@@ -891,7 +1105,8 @@ static int mutation_logical(cdb_status s)
  * procedure goes on; inside a transaction, whatever the mutation journaled
  * before it failed is rolled back first, so it makes all its changes or none
  * (spec 11.12.3). Any other failure is returned and ends the procedure. */
-static cdb_status proc_mutation(cdb_proc_vm *vm, uint8_t op, uint8_t argc, const uint8_t *args, cdb_value *dst)
+static cdb_status proc_mutation(cdb_proc_vm *vm, uint8_t op, uint8_t argc, const uint8_t *args,
+                                cdb_value *dst)
 {
     cdb_tx_mark mark;
     int marked = vm->db != NULL && vm->db->in_tx && cdb_tx_savepoint(vm->db, &mark) == CDB_OK;
@@ -963,21 +1178,30 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         op = *p++;
 
         switch (op) {
-        case CDB_BC_NOP:
-            break;
+        case CDB_BC_NOP: break;
 
         case CDB_BC_LOAD_CONST: {
             uint8_t dst;
             uint64_t klen = 0;
             cdb_value val;
-            if (p >= end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p >= end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             dst = *p++;
-            if (dst >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (dst >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             if (cdb_varint_decode(p, (size_t)(end - p), &klen, &vlen) != CDB_OK) {
-                st = CDB_E_MALFORMED; goto cleanup;
+                st = CDB_E_MALFORMED;
+                goto cleanup;
             }
             p += vlen;
-            if ((size_t)(end - p) < klen) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if ((size_t)(end - p) < klen) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             if ((st = cdb_value_read(p, (size_t)klen, vm->order, &val)) != CDB_OK) {
                 goto cleanup;
             }
@@ -988,10 +1212,16 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
 
         case CDB_BC_LOAD_PARAM: {
             uint8_t dst, pidx;
-            if (p + 2 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 2 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             dst = *p++;
             pidx = *p++;
-            if (dst >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (dst >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             if (pidx < vm->n_params)
                 vm->regs[dst] = vm->params[pidx];
             else
@@ -1001,20 +1231,32 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
 
         case CDB_BC_MOVE: {
             uint8_t dst, src;
-            if (p + 2 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 2 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             dst = *p++;
             src = *p++;
-            if (dst >= vm->n_regs || src >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (dst >= vm->n_regs || src >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             vm->regs[dst] = vm->regs[src];
             break;
         }
 
         case CDB_BC_JUMP: {
             int16_t off;
-            if (p + 2 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 2 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             off = (int16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
             p += 2;
-            if (p + off < bytecode + 8 || p + off > end) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (p + off < bytecode + 8 || p + off > end) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             p += off;
             break;
         }
@@ -1022,13 +1264,22 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         case CDB_BC_JUMP_IF_TRUE: {
             uint8_t cond_reg;
             int16_t off;
-            if (p + 3 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 3 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             cond_reg = *p++;
             off = (int16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
             p += 2;
-            if (cond_reg >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (cond_reg >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             if (cdb_eval_is_truthy(&vm->regs[cond_reg])) {
-                if (p + off < bytecode + 8 || p + off > end) { st = CDB_E_MALFORMED; goto cleanup; }
+                if (p + off < bytecode + 8 || p + off > end) {
+                    st = CDB_E_MALFORMED;
+                    goto cleanup;
+                }
                 p += off;
             }
             break;
@@ -1037,13 +1288,22 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         case CDB_BC_JUMP_IF_FALSE: {
             uint8_t cond_reg;
             int16_t off;
-            if (p + 3 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 3 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             cond_reg = *p++;
             off = (int16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
             p += 2;
-            if (cond_reg >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (cond_reg >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             if (!cdb_eval_is_truthy(&vm->regs[cond_reg])) {
-                if (p + off < bytecode + 8 || p + off > end) { st = CDB_E_MALFORMED; goto cleanup; }
+                if (p + off < bytecode + 8 || p + off > end) {
+                    st = CDB_E_MALFORMED;
+                    goto cleanup;
+                }
                 p += off;
             }
             break;
@@ -1054,17 +1314,29 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
             uint16_t fn_id;
             unsigned need;
             double args[8] = {0}; /* zero-init: never read an unfilled slot (CWE-457) */
-            if (p + 4 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 4 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             dst = *p++;
             fn_id = (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
             p += 2;
             argc = *p++;
-            if (dst >= vm->n_regs || argc > 8) { st = CDB_E_MALFORMED; goto cleanup; }
-            if (p + argc > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (dst >= vm->n_regs || argc > 8) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
+            if (p + argc > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
 
             for (a = 0; a < argc; a++) {
                 uint8_t reg = *p++;
-                if (reg >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+                if (reg >= vm->n_regs) {
+                    st = CDB_E_MALFORMED;
+                    goto cleanup;
+                }
                 args[a] = to_double(&vm->regs[reg]);
             }
 
@@ -1072,27 +1344,43 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
              * consumes: otherwise the handlers below read unfilled args[]
              * slots. Every other opcode validates its arity the same way. */
             switch (fn_id) {
-            case CDB_FN_HAVERSINE: case CDB_FN_BEARING: need = 4u; break;
+            case CDB_FN_HAVERSINE:
+            case CDB_FN_BEARING: need = 4u; break;
             case CDB_FN_POW: need = 2u; break;
-            case CDB_FN_SIN: case CDB_FN_COS: case CDB_FN_SQRT:
-            case CDB_FN_SIGMOID: case CDB_FN_RELU: case CDB_FN_GELU: need = 1u; break;
+            case CDB_FN_SIN:
+            case CDB_FN_COS:
+            case CDB_FN_SQRT:
+            case CDB_FN_SIGMOID:
+            case CDB_FN_RELU:
+            case CDB_FN_GELU: need = 1u; break;
             default: need = 0u; break; /* unhandled -> null result, reads no args */
             }
-            if (argc < need) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (argc < need) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
 
             switch (fn_id) {
             case CDB_FN_SIN: cdb_eval_make_f64(&vm->regs[dst], cdb_math_sin(args[0])); break;
             case CDB_FN_COS: cdb_eval_make_f64(&vm->regs[dst], cdb_math_cos(args[0])); break;
             case CDB_FN_SQRT: cdb_eval_make_f64(&vm->regs[dst], cdb_math_sqrt(args[0])); break;
-            case CDB_FN_POW: cdb_eval_make_f64(&vm->regs[dst], cdb_math_pow(args[0], args[1])); break;
-            case CDB_FN_HAVERSINE: cdb_eval_make_f64(&vm->regs[dst], cdb_math_haversine(args[0], args[1], args[2], args[3])); break;
-            case CDB_FN_BEARING: cdb_eval_make_f64(&vm->regs[dst], cdb_math_bearing(args[0], args[1], args[2], args[3])); break;
-            case CDB_FN_SIGMOID: cdb_eval_make_f64(&vm->regs[dst], cdb_math_sigmoid(args[0])); break;
+            case CDB_FN_POW:
+                cdb_eval_make_f64(&vm->regs[dst], cdb_math_pow(args[0], args[1]));
+                break;
+            case CDB_FN_HAVERSINE:
+                cdb_eval_make_f64(&vm->regs[dst],
+                                  cdb_math_haversine(args[0], args[1], args[2], args[3]));
+                break;
+            case CDB_FN_BEARING:
+                cdb_eval_make_f64(&vm->regs[dst],
+                                  cdb_math_bearing(args[0], args[1], args[2], args[3]));
+                break;
+            case CDB_FN_SIGMOID:
+                cdb_eval_make_f64(&vm->regs[dst], cdb_math_sigmoid(args[0]));
+                break;
             case CDB_FN_RELU: cdb_eval_make_f64(&vm->regs[dst], cdb_math_relu(args[0])); break;
             case CDB_FN_GELU: cdb_eval_make_f64(&vm->regs[dst], cdb_math_gelu(args[0])); break;
-            default:
-                cdb_eval_make_null(&vm->regs[dst]);
-                break;
+            default: cdb_eval_make_null(&vm->regs[dst]); break;
             }
             break;
         }
@@ -1100,52 +1388,81 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         case CDB_BC_CALL_MUTATION: {
             uint8_t dst, mut_op, store_r, entry_r, pay_r;
             uint8_t m_args[3];
-            if (p + 5 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 5 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             dst = *p++;
             mut_op = *p++;
             store_r = *p++;
             entry_r = *p++;
             pay_r = *p++;
-            if (dst >= vm->n_regs || store_r >= vm->n_regs || entry_r >= vm->n_regs || pay_r >= vm->n_regs) {
-                st = CDB_E_MALFORMED; goto cleanup;
+            if (dst >= vm->n_regs || store_r >= vm->n_regs || entry_r >= vm->n_regs
+                || pay_r >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
             }
             m_args[0] = store_r;
             m_args[1] = entry_r;
             m_args[2] = pay_r;
             st = proc_mutation(vm, mut_op, 3, m_args, &vm->regs[dst]);
-            if (st != CDB_OK) goto cleanup;
+            if (st != CDB_OK)
+                goto cleanup;
             break;
         }
 
         case CDB_BC_CALL_MUTATION_EX: {
             uint8_t dst, mut_op, argc, a_idx;
             uint8_t m_args[16];
-            if (p + 3 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 3 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             dst = *p++;
             mut_op = *p++;
             argc = *p++;
-            if (argc > 16 || p + argc > end) { st = CDB_E_MALFORMED; goto cleanup; }
-            if (dst >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (argc > 16 || p + argc > end) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
+            if (dst >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             for (a_idx = 0; a_idx < argc; a_idx++) {
                 m_args[a_idx] = *p++;
-                if (m_args[a_idx] >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+                if (m_args[a_idx] >= vm->n_regs) {
+                    st = CDB_E_MALFORMED;
+                    goto cleanup;
+                }
             }
             st = proc_mutation(vm, mut_op, argc, m_args, &vm->regs[dst]);
-            if (st != CDB_OK) goto cleanup;
+            if (st != CDB_OK)
+                goto cleanup;
             break;
         }
 
         case CDB_BC_OPEN_CURSOR: {
             uint8_t slot;
             uint64_t qlen = 0;
-            if (p >= end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p >= end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             slot = *p++;
-            if (slot >= CDB_PROC_MAX_CURSORS) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (slot >= CDB_PROC_MAX_CURSORS) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             if (cdb_varint_decode(p, (size_t)(end - p), &qlen, &vlen) != CDB_OK) {
-                st = CDB_E_MALFORMED; goto cleanup;
+                st = CDB_E_MALFORMED;
+                goto cleanup;
             }
             p += vlen;
-            if ((size_t)(end - p) < qlen) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if ((size_t)(end - p) < qlen) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
 
             if (vm->cursor_active[slot]) {
                 cdb_exec_close(&vm->cursors[slot]);
@@ -1154,7 +1471,8 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
 
             st = cdb_exec_open(&vm->cursors[slot], vm->db, p, (size_t)qlen, NULL, 0,
                                vm->cursor_scratch[slot], sizeof(vm->cursor_scratch[slot]));
-            if (st != CDB_OK) goto cleanup;
+            if (st != CDB_OK)
+                goto cleanup;
             vm->cursor_active[slot] = 1;
             p += qlen;
             break;
@@ -1164,17 +1482,26 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
             uint8_t has_row_reg, row_dst_reg, slot;
             cdb_exec_row row;
             int has_row = 0;
-            if (p + 3 > end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p + 3 > end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             has_row_reg = *p++;
             row_dst_reg = *p++;
             slot = *p++;
-            if (has_row_reg >= vm->n_regs || row_dst_reg >= vm->n_regs || slot >= CDB_PROC_MAX_CURSORS) {
-                st = CDB_E_MALFORMED; goto cleanup;
+            if (has_row_reg >= vm->n_regs || row_dst_reg >= vm->n_regs
+                || slot >= CDB_PROC_MAX_CURSORS) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
             }
-            if (!vm->cursor_active[slot]) { st = CDB_E_STATE; goto cleanup; }
+            if (!vm->cursor_active[slot]) {
+                st = CDB_E_STATE;
+                goto cleanup;
+            }
 
             st = cdb_exec_next(&vm->cursors[slot], &row, &has_row);
-            if (st != CDB_OK) goto cleanup;
+            if (st != CDB_OK)
+                goto cleanup;
 
             cdb_eval_make_bool(&vm->regs[has_row_reg], has_row);
             if (has_row) {
@@ -1190,9 +1517,15 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
 
         case CDB_BC_CURSOR_CLOSE: {
             uint8_t slot;
-            if (p >= end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p >= end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             slot = *p++;
-            if (slot >= CDB_PROC_MAX_CURSORS) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (slot >= CDB_PROC_MAX_CURSORS) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             if (vm->cursor_active[slot]) {
                 cdb_exec_close(&vm->cursors[slot]);
                 vm->cursor_active[slot] = 0;
@@ -1202,9 +1535,15 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
 
         case CDB_BC_RETURN: {
             uint8_t src;
-            if (p >= end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p >= end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             src = *p++;
-            if (src >= vm->n_regs) { st = CDB_E_MALFORMED; goto cleanup; }
+            if (src >= vm->n_regs) {
+                st = CDB_E_MALFORMED;
+                goto cleanup;
+            }
             vm->ret_val = vm->regs[src];
             vm->has_returned = 1;
             st = CDB_OK;
@@ -1216,17 +1555,27 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         case CDB_BC_SAVEPOINT: {
             uint8_t sp_id;
             int sidx;
-            if (p >= end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p >= end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             sp_id = *p++;
-            if (vm->db == NULL || !vm->db->in_tx) { st = CDB_E_STATE; goto cleanup; }
+            if (vm->db == NULL || !vm->db->in_tx) {
+                st = CDB_E_STATE;
+                goto cleanup;
+            }
             /* Setting an ID that is already set moves it to this point. */
             sidx = find_savepoint(vm, sp_id);
             if (sidx >= 0) {
                 memmove(&vm->savepoints[sidx], &vm->savepoints[sidx + 1],
-                        (size_t)(vm->n_savepoints - (unsigned)sidx - 1u) * sizeof vm->savepoints[0]);
+                        (size_t)(vm->n_savepoints - (unsigned)sidx - 1u)
+                            * sizeof vm->savepoints[0]);
                 vm->n_savepoints--;
             }
-            if (vm->n_savepoints >= CDB_PROC_MAX_SAVEPOINTS) { st = CDB_E_OUT_OF_BUDGET; goto cleanup; }
+            if (vm->n_savepoints >= CDB_PROC_MAX_SAVEPOINTS) {
+                st = CDB_E_OUT_OF_BUDGET;
+                goto cleanup;
+            }
             if ((st = cdb_tx_savepoint(vm->db, &vm->savepoints[vm->n_savepoints].mark)) != CDB_OK)
                 goto cleanup;
             vm->savepoints[vm->n_savepoints++].id = sp_id;
@@ -1236,9 +1585,15 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         case CDB_BC_ROLLBACK_TO: {
             uint8_t sp_id;
             int sidx;
-            if (p >= end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p >= end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             sp_id = *p++;
-            if ((sidx = find_savepoint(vm, sp_id)) < 0) { st = CDB_E_NOT_FOUND; goto cleanup; }
+            if ((sidx = find_savepoint(vm, sp_id)) < 0) {
+                st = CDB_E_NOT_FOUND;
+                goto cleanup;
+            }
             if ((st = cdb_tx_rollback_to(vm->db, &vm->savepoints[sidx].mark)) != CDB_OK)
                 goto cleanup;
             vm->n_savepoints = (uint8_t)(sidx + 1);
@@ -1248,20 +1603,22 @@ cdb_status cdb_proc_exec(cdb_proc_vm *vm, const uint8_t *bytecode, size_t len, c
         case CDB_BC_RELEASE_SP: {
             uint8_t sp_id;
             int sidx;
-            if (p >= end) { st = CDB_E_TRUNCATED; goto cleanup; }
+            if (p >= end) {
+                st = CDB_E_TRUNCATED;
+                goto cleanup;
+            }
             sp_id = *p++;
-            if ((sidx = find_savepoint(vm, sp_id)) < 0) { st = CDB_E_NOT_FOUND; goto cleanup; }
+            if ((sidx = find_savepoint(vm, sp_id)) < 0) {
+                st = CDB_E_NOT_FOUND;
+                goto cleanup;
+            }
             vm->n_savepoints = (uint8_t)sidx;
             break;
         }
 
-        case CDB_BC_HALT:
-            st = CDB_OK;
-            goto cleanup;
+        case CDB_BC_HALT: st = CDB_OK; goto cleanup;
 
-        default:
-            st = CDB_E_UNSUPPORTED;
-            goto cleanup;
+        default: st = CDB_E_UNSUPPORTED; goto cleanup;
         }
     }
 
@@ -1294,8 +1651,10 @@ static void update_len(cdb_proc_writer *w)
 
 static cdb_status w_b(cdb_proc_writer *w, uint8_t b)
 {
-    if (w->error != CDB_OK) return w->error;
-    if (w->len >= w->cap) return (w->error = CDB_E_BUFFER_TOO_SMALL);
+    if (w->error != CDB_OK)
+        return w->error;
+    if (w->len >= w->cap)
+        return (w->error = CDB_E_BUFFER_TOO_SMALL);
     w->buf[w->len++] = b;
     update_len(w);
     return CDB_OK;
@@ -1303,8 +1662,10 @@ static cdb_status w_b(cdb_proc_writer *w, uint8_t b)
 
 static cdb_status w_bytes(cdb_proc_writer *w, const uint8_t *data, size_t n)
 {
-    if (w->error != CDB_OK) return w->error;
-    if (w->len + n > w->cap) return (w->error = CDB_E_BUFFER_TOO_SMALL);
+    if (w->error != CDB_OK)
+        return w->error;
+    if (w->len + n > w->cap)
+        return (w->error = CDB_E_BUFFER_TOO_SMALL);
     memcpy(w->buf + w->len, data, n);
     w->len += n;
     update_len(w);
@@ -1318,9 +1679,11 @@ static cdb_status w_var(cdb_proc_writer *w, uint64_t v)
     return w_bytes(w, enc, n);
 }
 
-void cdb_proc_writer_init(cdb_proc_writer *w, uint8_t *buf, size_t cap, uint8_t n_regs, uint8_t n_params)
+void cdb_proc_writer_init(cdb_proc_writer *w, uint8_t *buf, size_t cap, uint8_t n_regs,
+                          uint8_t n_params)
 {
-    if (w == NULL) return;
+    if (w == NULL)
+        return;
     w->buf = buf;
     w->cap = cap;
     w->len = 0;
@@ -1348,7 +1711,8 @@ size_t cdb_proc_writer_len(const cdb_proc_writer *w)
     return (w != NULL) ? w->len : 0;
 }
 
-cdb_status cdb_proc_write_load_const(cdb_proc_writer *w, uint8_t dst, const uint8_t *val_bytes, size_t val_len)
+cdb_status cdb_proc_write_load_const(cdb_proc_writer *w, uint8_t dst, const uint8_t *val_bytes,
+                                     size_t val_len)
 {
     w_b(w, CDB_BC_LOAD_CONST);
     w_b(w, dst);
@@ -1399,7 +1763,8 @@ cdb_status cdb_proc_write_jump_if_false(cdb_proc_writer *w, uint8_t cond_reg, in
     return w->error;
 }
 
-cdb_status cdb_proc_write_call_math(cdb_proc_writer *w, uint8_t dst, uint16_t fn_id, uint8_t argc, const uint8_t *args)
+cdb_status cdb_proc_write_call_math(cdb_proc_writer *w, uint8_t dst, uint16_t fn_id, uint8_t argc,
+                                    const uint8_t *args)
 {
     uint8_t a;
     w_b(w, CDB_BC_CALL_MATH);
@@ -1413,7 +1778,8 @@ cdb_status cdb_proc_write_call_math(cdb_proc_writer *w, uint8_t dst, uint16_t fn
     return w->error;
 }
 
-cdb_status cdb_proc_write_call_mutation(cdb_proc_writer *w, uint8_t dst, uint8_t op, uint8_t store, uint8_t entry, uint8_t payload)
+cdb_status cdb_proc_write_call_mutation(cdb_proc_writer *w, uint8_t dst, uint8_t op, uint8_t store,
+                                        uint8_t entry, uint8_t payload)
 {
     w_b(w, CDB_BC_CALL_MUTATION);
     w_b(w, dst);
@@ -1424,7 +1790,8 @@ cdb_status cdb_proc_write_call_mutation(cdb_proc_writer *w, uint8_t dst, uint8_t
     return w->error;
 }
 
-cdb_status cdb_proc_write_call_mutation_ex(cdb_proc_writer *w, uint8_t dst, uint8_t op, uint8_t argc, const uint8_t *args)
+cdb_status cdb_proc_write_call_mutation_ex(cdb_proc_writer *w, uint8_t dst, uint8_t op,
+                                           uint8_t argc, const uint8_t *args)
 {
     uint8_t i;
     w_b(w, CDB_BC_CALL_MUTATION_EX);
@@ -1437,7 +1804,8 @@ cdb_status cdb_proc_write_call_mutation_ex(cdb_proc_writer *w, uint8_t dst, uint
     return w->error;
 }
 
-cdb_status cdb_proc_write_open_cursor(cdb_proc_writer *w, uint8_t slot, const uint8_t *query_wire, size_t query_len)
+cdb_status cdb_proc_write_open_cursor(cdb_proc_writer *w, uint8_t slot, const uint8_t *query_wire,
+                                      size_t query_len)
 {
     w_b(w, CDB_BC_OPEN_CURSOR);
     w_b(w, slot);
@@ -1446,7 +1814,8 @@ cdb_status cdb_proc_write_open_cursor(cdb_proc_writer *w, uint8_t slot, const ui
     return w->error;
 }
 
-cdb_status cdb_proc_write_cursor_next(cdb_proc_writer *w, uint8_t has_row_reg, uint8_t dst_row_reg, uint8_t slot)
+cdb_status cdb_proc_write_cursor_next(cdb_proc_writer *w, uint8_t has_row_reg, uint8_t dst_row_reg,
+                                      uint8_t slot)
 {
     w_b(w, CDB_BC_CURSOR_NEXT);
     w_b(w, has_row_reg);
