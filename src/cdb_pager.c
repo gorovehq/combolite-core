@@ -34,8 +34,9 @@
 #define NODE_HDR 8u
 #define ROOT_AREA 32u
 #define NODE_FLAG_ROOT 0x01u
-#define MAX_DEPTH 8u /* most levels the anchor map may have; deeper trees are treated as corrupt \
-                      */
+#define MAX_DEPTH                                                                  \
+    8u /* most levels the anchor map may have; deeper trees are treated as corrupt \
+        */
 
 /* Free-space page payload: count, reserved, next page, then extents
  * (spec 14.7.7). */
