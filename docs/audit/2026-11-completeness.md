@@ -38,11 +38,21 @@ CRDT convergence) and a set of documented deferrals.
 | MED | ~18 | crypto/audit (#37), CRDT (#38), query limits (#36), TS DECIMAL (#40), storage/coord limits (#42), TS/model robustness (#40/#41) |
 | LOW / INFO | remainder | per-model robustness, tuning, docs (#40–#43) |
 
+> **Update 2026-11-21 — #33 resolved (not reproducible).** The CRITICAL "unopenable archive"
+> was investigated two ways and found to be not a reachable defect: a deterministic proof + 180
+> adversarial crash points, and a real multi-process stress campaign (1,079 kill-rounds / 6,355
+> SIGKILLs / 0 false rejects). The fail-closed at `cdb_db.c:1762-1766` is correct; the symptom
+> is a likely-since-fixed state (predates the sync-before-remove cleanup ordering), now locked
+> behind a regression oracle (`tests/test_multiwriter_open.c`). See
+> `docs/audit/2026-11-33-multiwriter-investigation.md`. #33 closed; the create-race + concurrency
+> sub-items it had grouped remain valid and move to a follow-up. (Caveat: the saved
+> `pipeline-4w-unopenable.cdbarch` artifact was not on this machine to re-open directly.)
+
 ## Issue index (EPIC #32)
 
 | # | Theme | Triage |
 |---|---|---|
-| #33 | **[CRITICAL]** multi-writer coordination (unopenable archive, create race, concurrency) | remediate |
+| ~~#33~~ | ~~**[CRITICAL]** multi-writer coordination~~ — **resolved not-reproducible** (oracle landed); create-race/concurrency → follow-up | closed |
 | #34 | query executor: search/graph operators are stubs (TEXT/VECTOR/TRAVERSE/HYBRID) | implement |
 | #35 | query engine: 8 ops unreachable from CMBQL text + triggers no-op/never-dispatched | implement |
 | #36 | query executor correctness + fixed limits | implement |
