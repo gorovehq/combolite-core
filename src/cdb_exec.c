@@ -3,6 +3,8 @@
  */
 #include "cdb_exec.h"
 #include "cdb_doc.h"
+#include "cdb_fts.h"
+#include "cdb_link.h"
 #include "cdb_math.h"
 #include "cdb_table.h"
 #include "cdb_varint.h"
@@ -1853,8 +1855,88 @@ static cdb_status unnest_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
 static const cdb_exec_vtab unnest_vtab = {unnest_open, unnest_next, unnest_reset, unnest_close};
 
 /* --------------------------------------------------------------------------
- * Operator 0x09: TRAVERSE
+ * Shared helpers for the multi-model search / graph source operators
+ * (TEXT_SEARCH, VECTOR_SEARCH, TRAVERSE). These drive the per-model engines
+ * over the store resolved by the child Scan (spec 8.10, 6.4, 7).
  * -------------------------------------------------------------------------- */
+
+/* The store ID resolved by the child Scan beneath op's input chain, or 0 when
+ * there is no live store (a mock scan, or no database). Descends the single
+ * input of the row-preserving wrappers; a Scan resolves its ID in scan_open,
+ * which the operator's open has already run. */
+static uint64_t exec_input_store_id(cdb_exec_op *op)
+{
+    while (op != NULL) {
+        switch (op->tag) {
+        case CDB_QUERY_NODE_SCAN: return ((cdb_exec_scan *)op)->store_id;
+        case CDB_QUERY_NODE_FILTER: op = ((cdb_exec_filter *)op)->input; break;
+        case CDB_QUERY_NODE_PROJECT: op = ((cdb_exec_project *)op)->input; break;
+        case CDB_QUERY_NODE_LIMIT: op = ((cdb_exec_limit *)op)->input; break;
+        case CDB_QUERY_NODE_SORT: op = ((cdb_exec_sort *)op)->input; break;
+        default: return 0;
+        }
+    }
+    return 0;
+}
+
+/* The catalog model of a resolved store, or 0 (CDB_MODEL_* is never 0 for a
+ * real store). Read under the cursor's held lock. */
+static uint32_t exec_store_model(cdb_exec_cursor *cur, uint64_t store_id)
+{
+    cdb_store_info info;
+    if (cur->cat == NULL || store_id == 0)
+        return 0;
+    if (cdb_catalog_get_store(cur->cat, store_id, &info) != CDB_OK)
+        return 0;
+    return info.model;
+}
+
+/* Parses the near-vector expression (an EXPR_LITERAL holding an encoded vector
+ * value, spec 14.6) into a bounded (value, len) the vector engine can search
+ * with. near_wire..near_wire+near_len is the untrusted wire slice; only a
+ * literal is accepted (fail closed on any other expression). CWE-125/787:
+ * the length is taken from the literal header and bound-checked against the
+ * slice, never read past it. */
+static cdb_status exec_parse_near(const uint8_t *near_wire, size_t near_len, const uint8_t **val,
+                                  size_t *val_len)
+{
+    uint64_t lit_len = 0;
+    size_t vn = 0;
+    const uint8_t *p = near_wire;
+    const uint8_t *end;
+
+    *val = NULL;
+    *val_len = 0;
+    if (near_wire == NULL || near_len < 1)
+        return CDB_E_INVALID_ARG;
+    end = near_wire + near_len;
+    if (*p != CDB_QUERY_EXPR_LITERAL)
+        return CDB_E_UNSUPPORTED;
+    p++;
+    if (cdb_varint_decode(p, (size_t)(end - p), &lit_len, &vn) != CDB_OK)
+        return CDB_E_MALFORMED;
+    p += vn;
+    if (lit_len > (uint64_t)(end - p))
+        return CDB_E_MALFORMED;
+    *val = p;
+    *val_len = (size_t)lit_len;
+    return CDB_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * Operator 0x09: TRAVERSE — a bounded breadth-first walk of the link store
+ * (cdb_link_list) from each input seed, honouring direction and max_hops,
+ * with a global visited set for cycle termination (CWE-674) and shortest
+ * (first-reached) $depth per node.
+ * -------------------------------------------------------------------------- */
+
+/* One discovered node: doubles as the visited set and the BFS queue. */
+typedef struct cdb_exec_bfs_node {
+    uint64_t store;
+    uint64_t entry;
+    uint64_t depth;
+} cdb_exec_bfs_node;
+
 typedef struct cdb_exec_traverse {
     cdb_exec_op base;
     cdb_exec_op *input;
@@ -1863,17 +1945,31 @@ typedef struct cdb_exec_traverse {
     uint8_t dir; /* 1=Fwd, 2=Rev, 3=Both */
     uint64_t min_hops;
     uint64_t max_hops;
+
+    cdb_exec_bfs_node *nodes; /* visited set + queue, from the cursor arena */
+    size_t cap;               /* nodes capacity */
+    size_t n_nodes;           /* discovered so far */
+    size_t emit_idx;          /* streaming cursor over nodes[] */
+    int built;                /* BFS completed */
 } cdb_exec_traverse;
 
 static cdb_status traverse_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_traverse *t = (cdb_exec_traverse *)op;
+    t->nodes = NULL;
+    t->cap = 0;
+    t->n_nodes = 0;
+    t->emit_idx = 0;
+    t->built = 0;
     return t->input->vtab->open(t->input, cur);
 }
 
 static cdb_status traverse_reset(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_traverse *t = (cdb_exec_traverse *)op;
+    t->n_nodes = 0;
+    t->emit_idx = 0;
+    t->built = 0;
     return t->input->vtab->reset(t->input, cur);
 }
 
@@ -1883,28 +1979,160 @@ static void traverse_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     t->input->vtab->close(t->input, cur);
 }
 
+/* Whether (store, entry) is already in the visited set. */
+static int traverse_seen(const cdb_exec_traverse *t, uint64_t store, uint64_t entry)
+{
+    size_t i;
+    for (i = 0; i < t->n_nodes; i++) {
+        if (t->nodes[i].store == store && t->nodes[i].entry == entry)
+            return 1;
+    }
+    return 0;
+}
+
+/* Appends an unseen node to the visited set / queue. CDB_E_OUT_OF_BUDGET when
+ * the arena-backed set is full (bounds a huge or adversarial graph). */
+static cdb_status traverse_discover(cdb_exec_traverse *t, uint64_t store, uint64_t entry,
+                                    uint64_t depth)
+{
+    if (traverse_seen(t, store, entry))
+        return CDB_OK;
+    if (t->n_nodes >= t->cap)
+        return CDB_E_OUT_OF_BUDGET;
+    t->nodes[t->n_nodes].store = store;
+    t->nodes[t->n_nodes].entry = entry;
+    t->nodes[t->n_nodes].depth = depth;
+    t->n_nodes++;
+    return CDB_OK;
+}
+
+/* Expands one side (OUT or IN) of node, discovering each neighbour at depth+1.
+ * Pages cdb_link_list; the neighbour is the far end of each link. */
+static cdb_status traverse_expand_side(cdb_exec_traverse *t, cdb_exec_cursor *cur, uint64_t store,
+                                       uint64_t entry, uint64_t depth, uint64_t type, int direction)
+{
+    cdb_link page[16];
+    const cdb_link *after = NULL;
+    cdb_ref self = cdb_ref_entry(store, entry);
+    size_t got = 0;
+
+    do {
+        size_t i;
+        cdb_status st = cdb_link_list(cur->db, self, direction, type, after, page,
+                                      sizeof page / sizeof page[0], &got);
+        if (st != CDB_OK)
+            return st;
+        for (i = 0; i < got; i++) {
+            const cdb_ref *far = (direction == CDB_LINK_OUT) ? &page[i].target : &page[i].source;
+            st = traverse_discover(t, far->store, far->entry, depth + 1);
+            if (st != CDB_OK)
+                return st;
+        }
+        if (got > 0)
+            after = &page[got - 1];
+    } while (got == sizeof page / sizeof page[0]);
+    return CDB_OK;
+}
+
+/* Drains the input seeds and runs the BFS once, into t->nodes. */
+static cdb_status traverse_build(cdb_exec_traverse *t, cdb_exec_cursor *cur)
+{
+    uint64_t type = 0;
+    size_t head;
+    cdb_status st;
+    size_t avail;
+
+    avail = (cur->arena.cap > cur->arena.used) ? (cur->arena.cap - cur->arena.used) : 0;
+    t->cap = avail / sizeof(cdb_exec_bfs_node);
+    if (t->cap > cur->max_buffered_rows)
+        t->cap = cur->max_buffered_rows;
+    if (t->cap < 1)
+        return CDB_E_OUT_OF_BUDGET;
+    t->nodes = (cdb_exec_bfs_node *)cdb_exec_arena_alloc(
+        &cur->arena, sizeof(cdb_exec_bfs_node) * t->cap, sizeof(void *));
+    if (t->nodes == NULL)
+        return CDB_E_OUT_OF_BUDGET;
+
+    /* A named link type that does not exist yields no edges (not an error):
+     * only the seeds within [min_hops, max_hops] are reachable. type 0 walks
+     * every type. */
+    if (cur->db != NULL && t->link_type_len > 0) {
+        int found = 0;
+        st = cdb_link_find_type(cur->db, t->link_type, t->link_type_len, &type, &found);
+        if (st != CDB_OK)
+            return st;
+        if (!found)
+            type = 0, t->link_type_len = 0; /* no such type: seeds only */
+    }
+
+    /* Seed the frontier at depth 0 from the input stream. */
+    for (;;) {
+        cdb_exec_row seed;
+        int has = 0;
+        st = t->input->vtab->next(t->input, cur, &seed, &has);
+        if (st != CDB_OK)
+            return st;
+        if (!has)
+            break;
+        st = traverse_discover(t, seed.store_id, seed.entry_id, 0);
+        if (st != CDB_OK)
+            return st;
+    }
+
+    /* BFS: expand each node whose depth is below max_hops. nodes[] grows as
+     * neighbours are discovered; the visited check in traverse_discover makes
+     * a cycle terminate. No expansion when there is no live link store. */
+    for (head = 0; head < t->n_nodes; head++) {
+        uint64_t store = t->nodes[head].store;
+        uint64_t entry = t->nodes[head].entry;
+        uint64_t depth = t->nodes[head].depth;
+        if (cur->db == NULL || depth >= t->max_hops)
+            continue;
+        if (t->dir == CDB_TRAVERSE_FWD || t->dir == CDB_TRAVERSE_BOTH) {
+            st = traverse_expand_side(t, cur, store, entry, depth, type, CDB_LINK_OUT);
+            if (st != CDB_OK)
+                return st;
+        }
+        if (t->dir == CDB_TRAVERSE_REV || t->dir == CDB_TRAVERSE_BOTH) {
+            st = traverse_expand_side(t, cur, store, entry, depth, type, CDB_LINK_IN);
+            if (st != CDB_OK)
+                return st;
+        }
+    }
+    t->built = 1;
+    return CDB_OK;
+}
+
 static cdb_status traverse_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
                                 int *has_row)
 {
     cdb_exec_traverse *t = (cdb_exec_traverse *)op;
-    cdb_exec_row in_row;
     cdb_status st;
 
     *has_row = 0;
-    st = t->input->vtab->next(t->input, cur, &in_row, has_row);
-    if (st != CDB_OK || !*has_row)
-        return st;
-
-    /* Emit traversal step with depth and source reference */
-    *out_row = in_row;
-    if (out_row->n_fields < CDB_EXEC_MAX_FIELDS) {
-        out_row->fields[out_row->n_fields].name = "$depth";
-        out_row->fields[out_row->n_fields].name_len = 6;
-        cdb_eval_make_int(&out_row->fields[out_row->n_fields].val, (int64_t)t->min_hops);
-        out_row->n_fields++;
+    if (!t->built) {
+        st = traverse_build(t, cur);
+        if (st != CDB_OK)
+            return st;
     }
 
-    *has_row = 1;
+    /* Emit the reached nodes within the hop window, each at its shortest
+     * (first-reached) depth. */
+    while (t->emit_idx < t->n_nodes) {
+        cdb_exec_bfs_node *node = &t->nodes[t->emit_idx++];
+        if (node->depth < t->min_hops || node->depth > t->max_hops)
+            continue;
+        memset(out_row, 0, sizeof(*out_row));
+        out_row->store_id = node->store;
+        out_row->entry_id = node->entry;
+        out_row->model = exec_store_model(cur, node->store);
+        out_row->fields[0].name = "$depth";
+        out_row->fields[0].name_len = 6;
+        cdb_eval_make_int(&out_row->fields[0].val, (int64_t)node->depth);
+        out_row->n_fields = 1;
+        *has_row = 1;
+        return CDB_OK;
+    }
     return CDB_OK;
 }
 
@@ -1921,12 +2149,25 @@ typedef struct cdb_exec_text_search {
     uint64_t limit;
     const char *query;
     size_t query_len;
-    size_t yielded;
+
+    cdb_fts_hit *hits; /* ranked hits, from the cursor arena */
+    size_t n_hits;
+    size_t idx;      /* streaming cursor over hits[] */
+    uint64_t store;  /* store resolved by the child Scan */
+    int built;       /* BM25 search completed */
+    int passthrough; /* no live store: forward input rows (mock path) */
+    size_t yielded;  /* rows emitted (passthrough limit) */
 } cdb_exec_text_search;
 
 static cdb_status text_search_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_text_search *ts = (cdb_exec_text_search *)op;
+    ts->hits = NULL;
+    ts->n_hits = 0;
+    ts->idx = 0;
+    ts->store = 0;
+    ts->built = 0;
+    ts->passthrough = 0;
     ts->yielded = 0;
     return ts->input->vtab->open(ts->input, cur);
 }
@@ -1934,6 +2175,9 @@ static cdb_status text_search_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 static cdb_status text_search_reset(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_text_search *ts = (cdb_exec_text_search *)op;
+    ts->idx = 0;
+    ts->built = 0;
+    ts->passthrough = 0;
     ts->yielded = 0;
     return ts->input->vtab->reset(ts->input, cur);
 }
@@ -1944,6 +2188,45 @@ static void text_search_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     ts->input->vtab->close(ts->input, cur);
 }
 
+/* Runs the BM25 search once over the resolved store (spec 8.10, 14.14), into
+ * an arena cdb_fts_hit[]. A positive limit caps the search to its top-N; limit
+ * 0 is unbounded (bounded here by the arena / max_buffered_rows). With no live
+ * store (mock scan), falls back to forwarding input rows. */
+static cdb_status text_search_build(cdb_exec_text_search *ts, cdb_exec_cursor *cur)
+{
+    size_t avail, cap, want;
+    int mode;
+    cdb_status st;
+
+    ts->store = exec_input_store_id(ts->input);
+    if (cur->db == NULL || ts->store == 0) {
+        ts->passthrough = 1;
+        ts->built = 1;
+        return CDB_OK;
+    }
+
+    avail = (cur->arena.cap > cur->arena.used) ? (cur->arena.cap - cur->arena.used) : 0;
+    cap = avail / sizeof(cdb_fts_hit);
+    if (cap > cur->max_buffered_rows)
+        cap = cur->max_buffered_rows;
+    if (cap < 1)
+        return CDB_E_OUT_OF_BUDGET;
+    want = (ts->limit > 0 && ts->limit < (uint64_t)cap) ? (size_t)ts->limit : cap;
+
+    ts->hits = (cdb_fts_hit *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_fts_hit) * want,
+                                                   sizeof(void *));
+    if (ts->hits == NULL)
+        return CDB_E_OUT_OF_BUDGET;
+
+    mode = (ts->mode == CDB_QUERY_FTS_ALL) ? CDB_FTS_ALL : CDB_FTS_ANY;
+    st = cdb_doc_search(cur->db, ts->store, ts->query, ts->query_len, mode, ts->hits, want,
+                        &ts->n_hits);
+    if (st != CDB_OK)
+        return st;
+    ts->built = 1;
+    return CDB_OK;
+}
+
 static cdb_status text_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
                                    int *has_row)
 {
@@ -1951,19 +2234,31 @@ static cdb_status text_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_ex
     cdb_status st;
 
     *has_row = 0;
-    if (ts->limit > 0 && ts->yielded >= ts->limit)
+    if (!ts->built) {
+        st = text_search_build(ts, cur);
+        if (st != CDB_OK)
+            return st;
+    }
+
+    if (ts->passthrough) {
+        if (ts->limit > 0 && ts->yielded >= ts->limit)
+            return CDB_OK;
+        st = ts->input->vtab->next(ts->input, cur, out_row, has_row);
+        if (st != CDB_OK || !*has_row)
+            return st;
+        ts->yielded++;
         return CDB_OK;
+    }
 
-    st = ts->input->vtab->next(ts->input, cur, out_row, has_row);
-    if (st != CDB_OK || !*has_row)
-        return st;
-
-    /* Attach text relevance score */
-    if (out_row->score == 0.0f)
-        out_row->score = 1.0f;
-
-    ts->yielded++;
-    *has_row = 1;
+    if (ts->idx < ts->n_hits) {
+        const cdb_fts_hit *h = &ts->hits[ts->idx++];
+        memset(out_row, 0, sizeof(*out_row));
+        out_row->store_id = ts->store;
+        out_row->entry_id = h->entry;
+        out_row->model = exec_store_model(cur, ts->store);
+        out_row->score = (float)h->score;
+        *has_row = 1;
+    }
     return CDB_OK;
 }
 
@@ -1982,12 +2277,36 @@ typedef struct cdb_exec_vec_search {
     uint8_t metric;
     const uint8_t *near_wire;
     size_t near_len;
-    size_t yielded;
+
+    cdb_vec_hit *hits; /* nearest hits, from the cursor arena */
+    size_t n_hits;
+    size_t idx;      /* streaming cursor over hits[] */
+    uint64_t store;  /* store resolved by the child Scan */
+    int built;       /* ANN search completed */
+    int passthrough; /* no live store: forward input rows (mock path) */
+    size_t yielded;  /* rows emitted (passthrough k cap) */
 } cdb_exec_vec_search;
+
+/* Maps the query metric override (spec 11.5) to the vector measure (spec 6.4). */
+static unsigned vec_measure_of(uint8_t metric)
+{
+    switch (metric) {
+    case CDB_QUERY_METRIC_EUCLIDEAN: return CDB_VEC_EUCLIDEAN;
+    case CDB_QUERY_METRIC_COSINE: return CDB_VEC_COSINE;
+    case CDB_QUERY_METRIC_DOT: return CDB_VEC_DOT;
+    default: return CDB_VEC_BASE; /* DEFAULT: the collection's base measure */
+    }
+}
 
 static cdb_status vec_search_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_vec_search *vs = (cdb_exec_vec_search *)op;
+    vs->hits = NULL;
+    vs->n_hits = 0;
+    vs->idx = 0;
+    vs->store = 0;
+    vs->built = 0;
+    vs->passthrough = 0;
     vs->yielded = 0;
     return vs->input->vtab->open(vs->input, cur);
 }
@@ -1995,6 +2314,9 @@ static cdb_status vec_search_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 static cdb_status vec_search_reset(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_vec_search *vs = (cdb_exec_vec_search *)op;
+    vs->idx = 0;
+    vs->built = 0;
+    vs->passthrough = 0;
     vs->yielded = 0;
     return vs->input->vtab->reset(vs->input, cur);
 }
@@ -2005,6 +2327,52 @@ static void vec_search_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     vs->input->vtab->close(vs->input, cur);
 }
 
+/* Runs the ANN search once over the resolved collection (spec 6.4), ranking by
+ * the chosen metric, into an arena cdb_vec_hit[]. The query vector comes from
+ * the bounded-decoded near literal. k 0 is unbounded (bounded here by the
+ * arena / max_buffered_rows and CDB_VEC_MAX_K); k greater than the collection
+ * returns all available. With no live store (mock scan), forwards input rows. */
+static cdb_status vec_search_build(cdb_exec_vec_search *vs, cdb_exec_cursor *cur)
+{
+    size_t avail, cap, want;
+    const uint8_t *qval = NULL;
+    size_t qlen = 0;
+    cdb_status st;
+
+    vs->store = exec_input_store_id(vs->input);
+    if (cur->db == NULL || vs->store == 0) {
+        vs->passthrough = 1;
+        vs->built = 1;
+        return CDB_OK;
+    }
+
+    st = exec_parse_near(vs->near_wire, vs->near_len, &qval, &qlen);
+    if (st != CDB_OK)
+        return st;
+
+    avail = (cur->arena.cap > cur->arena.used) ? (cur->arena.cap - cur->arena.used) : 0;
+    cap = avail / sizeof(cdb_vec_hit);
+    if (cap > cur->max_buffered_rows)
+        cap = cur->max_buffered_rows;
+    if (cap > CDB_VEC_MAX_K)
+        cap = CDB_VEC_MAX_K;
+    if (cap < 1)
+        return CDB_E_OUT_OF_BUDGET;
+    want = (vs->k > 0 && vs->k < (uint64_t)cap) ? (size_t)vs->k : cap;
+
+    vs->hits = (cdb_vec_hit *)cdb_exec_arena_alloc(&cur->arena, sizeof(cdb_vec_hit) * want,
+                                                   sizeof(void *));
+    if (vs->hits == NULL)
+        return CDB_E_OUT_OF_BUDGET;
+
+    st = cdb_vec_search_mode(cur->db, vs->store, qval, qlen, vec_measure_of(vs->metric),
+                             CDB_VEC_AUTO, vs->hits, want, &vs->n_hits);
+    if (st != CDB_OK)
+        return st;
+    vs->built = 1;
+    return CDB_OK;
+}
+
 static cdb_status vec_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
                                   int *has_row)
 {
@@ -2012,19 +2380,31 @@ static cdb_status vec_search_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exe
     cdb_status st;
 
     *has_row = 0;
-    if (vs->k > 0 && vs->yielded >= vs->k)
+    if (!vs->built) {
+        st = vec_search_build(vs, cur);
+        if (st != CDB_OK)
+            return st;
+    }
+
+    if (vs->passthrough) {
+        if (vs->k > 0 && vs->yielded >= vs->k)
+            return CDB_OK;
+        st = vs->input->vtab->next(vs->input, cur, out_row, has_row);
+        if (st != CDB_OK || !*has_row)
+            return st;
+        vs->yielded++;
         return CDB_OK;
+    }
 
-    st = vs->input->vtab->next(vs->input, cur, out_row, has_row);
-    if (st != CDB_OK || !*has_row)
-        return st;
-
-    /* Compute similarity score if near vector given */
-    if (out_row->score == 0.0f)
-        out_row->score = 0.95f;
-
-    vs->yielded++;
-    *has_row = 1;
+    if (vs->idx < vs->n_hits) {
+        const cdb_vec_hit *h = &vs->hits[vs->idx++];
+        memset(out_row, 0, sizeof(*out_row));
+        out_row->store_id = vs->store;
+        out_row->entry_id = h->entry;
+        out_row->model = exec_store_model(cur, vs->store);
+        out_row->score = (float)h->distance;
+        *has_row = 1;
+    }
     return CDB_OK;
 }
 
