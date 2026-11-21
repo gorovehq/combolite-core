@@ -180,6 +180,13 @@ cdb_status cdb_codec_decompress(cdb_codec_mem *mem, unsigned codec, const void *
     *out_len = (size_t)plain;
     if (plain > cap)
         return CDB_E_BUFFER_TOO_SMALL;
+    /* Bound the decoder dictionary before any allocation (F4, CWE-789/409):
+     * a valid stream always declares exactly dict_for(plain) (the
+     * compressor's own rule), so any larger property byte is hostile or
+     * damaged. Reject it instead of letting an attacker-chosen byte drive a
+     * dictionary allocation of up to ~4 GiB through the host allocator. */
+    if (dict > dict_for((size_t)plain))
+        return CDB_E_CORRUPT;
     if (lzma_lzma_preset(&opt, PRESET))
         return CDB_E_CORRUPT;
     opt.dict_size = dict;
