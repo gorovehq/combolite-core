@@ -38,6 +38,13 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 - Bumped the vendored Mbed TLS submodule from 3.6.2 to **3.6.5**, picking up the
   upstream maintenance and security fixes for the crypto primitives the engine
   relies on (AES-256-GCM, ChaCha20-Poly1305, SHA-256, HMAC, HKDF, ECDSA). (#1)
+- **Key-wrap (nonce reuse, CWE-323)** — `cdb_crypto_wrap_key` / `cdb_crypto_unwrap_key`
+  previously encrypted every wrapped enclave key under a **fixed** AES-256-GCM nonce, so a
+  single master key reused the same `(key, nonce)` pair across wraps and key rotations —
+  defeating GCM confidentiality and integrity. The wrap now draws a fresh random nonce per
+  wrap and stores it with the ciphertext (`CDB_WRAPPED_KEY_SIZE` grew to nonce ∥ tag ∥
+  ciphertext); unwrap reads it back. Held to a committed regression test.
+  (GHSA-2xx7-85rc-w3q8)
 
 ### Fixed
 
@@ -69,8 +76,9 @@ that file exactly — in-progress and planned work is **not** flattened to done.
 - **M27–M32 — Enclaves, held logs, joined stores, principals & grants** — *planned.*
   Enclave directory and per-enclave catalogs, stores inside enclaves, the held
   log, joined stores and cross-domain links, moving stores between enclaves, and
-  stored procedures / principals / roles / grants as catalog records. The
-  key-wrap nonce fix (see the README "Known Issues") lands first, in M27.
+  stored procedures / principals / roles / grants as catalog records. These build
+  atop the now-corrected key-wrap primitive (per-wrap random nonce, GHSA-2xx7-85rc-w3q8),
+  which is where wrapped enclave keys first persist to disk.
 - **M26 — Enclave format foundation** — *in progress: format and salts done.*
   Store-ID slot on every page, hidden IDs on encrypted pages and delta records,
   HKDF subkeys with the Section 12.2 labels, and per-session salts (salt table,

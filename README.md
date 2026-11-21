@@ -181,10 +181,11 @@ int main(void)
 
 ## Known Issues
 
-1. **Key-Wrap Fixed Nonce Reuse (`BACKLOG.md`)**: `cdb_crypto_wrap_key` currently utilizes a fixed AES-GCM nonce under the master key. No wrapped keys are stored on disk in current milestone builds; full remediation via AES Key Wrap (RFC 3394 / NIST SP 800-38F) is scheduled for M27 before encrypted keystores land.
-2. **Concurrent Database Creation**: If two processes simultaneously attempt to create a non-existent database file at the same instant without an external lock, an archive race can occur prior to slot initialization.
-3. **Transaction ID Block Allocation Ceiling**: A single process is currently capped at 21 held ID blocks (21,504 new records) across open stores prior to transaction commit / catalog reconciliation (`CDB_E_OUT_OF_BUDGET`).
-4. **Graph Refresh Walk Scalability**: For large vector collections (>15,000 vectors), CPU-bound reachability index walks in `check_entry` scale quadratically without hardware acceleration.
+1. **Concurrent Database Creation**: If two processes simultaneously attempt to create a non-existent database file at the same instant without an external lock, an archive race can occur prior to slot initialization.
+2. **Transaction ID Block Allocation Ceiling**: A single process is currently capped at 21 held ID blocks (21,504 new records) across open stores prior to transaction commit / catalog reconciliation (`CDB_E_OUT_OF_BUDGET`).
+3. **Graph Refresh Walk Scalability**: For large vector collections (>15,000 vectors), CPU-bound reachability index walks in `check_entry` scale quadratically without hardware acceleration.
+
+> The key-wrap nonce issue previously listed here is **resolved**: `cdb_crypto_wrap_key` now draws a fresh random AES-GCM nonce per wrap and stores it in the wrapped-key blob (`CDB_WRAPPED_KEY_SIZE` = nonce ∥ tag ∥ ciphertext), so one master key never reuses a `(key, nonce)` pair (advisory GHSA-2xx7-85rc-w3q8, CWE-323).
 
 ---
 
@@ -195,6 +196,7 @@ int main(void)
 - Implement catalog-level procedures, principals, and access grants (M32).
 - Optimize graph refresh walks via batched index seeks.
 - Add ARM64 NEON and CRC32 assembly optimizations to hardware acceleration path.
+- Optional: evaluate deterministic AES Key Wrap (RFC 3394 / NIST SP 800-38F) for the key-wrap path as defence-in-depth before M27 persists wrapped keys on disk (the current random-nonce AES-GCM wrap is correct; this would remove reliance on nonce randomness entirely).
 
 ---
 
