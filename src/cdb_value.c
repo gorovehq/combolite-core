@@ -824,8 +824,15 @@ static cdb_status read_varint(const uint8_t **p, const uint8_t *end, uint64_t *v
  * longer than needed (cdb_varint_decode). */
 cdb_status cdb_value_read(const uint8_t *buf, size_t len, cdb_byte_order order, cdb_value *out)
 {
-    const uint8_t *p = buf + 1;
-    const uint8_t *end = buf + len;
+    /*
+     * #23/F5b (sibling of #15): validate buf (and len) BEFORE forming any
+     * pointer offset from buf. Computing buf + 1 / buf + len on a NULL buf is
+     * undefined behaviour ("applying non-zero offset to null pointer", UBSan
+     * trap under -fno-sanitize-recover). Guard first; error ordering preserved
+     * (NULL -> CDB_E_INVALID_ARG before len<1 -> CDB_E_TRUNCATED).
+     */
+    const uint8_t *p;
+    const uint8_t *end;
     const uint8_t *pend;
     uint64_t v;
     cdb_status s;
@@ -834,6 +841,8 @@ cdb_status cdb_value_read(const uint8_t *buf, size_t len, cdb_byte_order order, 
         return CDB_E_INVALID_ARG;
     if (len < 1)
         return CDB_E_TRUNCATED;
+    p = buf + 1;
+    end = buf + len;
     memset(out, 0, sizeof *out);
     out->tag = buf[0];
     out->start = buf;

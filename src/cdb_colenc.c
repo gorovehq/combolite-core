@@ -281,6 +281,14 @@ static cdb_status parse_item(uint8_t tag, cdb_byte_order order, cdb_decimal_mode
     size_t n, n2;
     cdb_status st;
 
+    /*
+     * #23/F5c (sibling of #15): guard p before p[0] / cdb_varint_decode(p, ..)
+     * dereference it. A NULL p here would be an undefined dereference; fail
+     * closed with a typed error, consistent with cdb_value_read / unwrap_key.
+     */
+    if (p == NULL)
+        return CDB_E_INVALID_ARG;
+
     if (IS_BOOL(tag)) {
         if (avail < 1)
             return CDB_E_TRUNCATED;
