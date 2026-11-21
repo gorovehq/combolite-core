@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a defect in combolite-core (NOT a security vulnerability).
+title: "bug: <concise summary>"
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Do not** use this for security vulnerabilities — use the private
+        advisory flow (see SECURITY.md). Search existing issues first.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One line — what is wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal steps / code that triggers it. The smallest input or call sequence.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs actual
+      description: What you expected, and what happened (exact `cdb_status` / error, assertion, or crash).
+    validations:
+      required: true
+  - type: textarea
+    id: sanitizer
+    attributes:
+      label: Sanitizer output (if any)
+      description: The shortest decisive ASan/UBSan report. Redact paths/secrets.
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Git commit SHA or release tag.
+    validations:
+      required: true
+  - type: dropdown
+    id: preset
+    attributes:
+      label: Build preset
+      options:
+        - core-both-debug (ASan+UBSan+CUDA+Vulkan)
+        - core-cpu-debug
+        - core-cpu-release
+        - other (describe in Environment)
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, compiler + version, architecture (and whether host or MCU profile).
+    validations:
+      required: true
