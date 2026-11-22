@@ -6,7 +6,7 @@ The core engine is clean-room, strictly crash-safe, and designed with zero exter
 - **Relational Tables**: Row-oriented with compound keys, secondary B-tree indexes, foreign keys, and catalog-driven schema migrations.
 - **Document Pools**: Variable-length JSON documents with revision histories, delta patches, schema validation, and integrated full-text search (BM25 ranking).
 - **Vector Collections**: Dense float32, int8, and 1-bit binary vectors with exact distance computation and an HNSW-like navigable small-world neighbour graph for sub-linear approximate nearest neighbour (ANN) search.
-- **Graph Links**: Directed, weighted edges connecting entries across models with cardinality constraints, CASCADE/SET NULL delete rules, and fast bidirectional edge lookups.
+- **Graph Links**: Directed, weighted edges connecting entries across models with cardinality constraints, CASCADE / REFUSE / tombstone delete rules, and fast bidirectional edge lookups.
 - **Time Series**: Append-only temporal metrics with bit-packed columnar blocks, millisecond/nanosecond timestamps, late-arrival policies, and downsampling rollups.
 - **Content-Addressed Blobs**: Streaming zero-copy large object storage backed by incremental SHA-256 / HMAC-SHA-256 chunking across overflow page extents.
 
