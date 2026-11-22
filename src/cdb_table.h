@@ -67,8 +67,8 @@ typedef struct cdb_table_def {
     unsigned npk;
     uint32_t keep; /* 0: every revision; N: the last N (spec 9.11) */
     /* Column-oriented tables (spec 9.12; cdb_rowgroup.h). They need
-     * cdb_db_config.col_work. Row calls on them are not built yet and
-     * return CDB_E_UNSUPPORTED. */
+     * cdb_db_config.col_work. Row calls (insert/replace/get/scan/find) are
+     * fully supported on them, same as the row-oriented layout. */
     unsigned layout;     /* CDB_TABLE_LAYOUT_* */
     uint32_t group_rows; /* 0: CDB_RG_ROWS_DEFAULT */
     uint32_t chunk_cap;  /* 0: CDB_RG_CAP_DEFAULT; also the largest row the table takes */
