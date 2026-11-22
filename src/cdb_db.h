@@ -31,6 +31,35 @@
 #define CDB_STAGE_NIL 0xFFFFFFFFu
 #define CDB_CRDT_PEND_CAP 64u /* (import call, origin) pairs one transaction may apply */
 
+/* #38: per-record deterministic-convergence state, bounded (no heap in core)
+ * and session-scoped — mirrors the existing in-memory db->hlc / db->crdt_vector
+ * model. Durable per-record/per-peer persistence is a stated residual (spec 19);
+ * the on-disk format is unchanged, so old images open unaffected. */
+#define CDB_CRDT_REC_CAP 32u   /* distinct (store,entry) convergence records tracked */
+#define CDB_CRDT_CLASS_CAP 16u /* per-store merge-class registrations */
+
+/* The convergence state of one (store,entry): its winning clock (LWW and the
+ * metadata clock for every class), the AWORSet add/remove observation clocks,
+ * and the PN-counter per-peer P/N sums with the peer_id at each slot. */
+typedef struct cdb_crdt_rec {
+    uint64_t store_id;
+    uint64_t entry_id;
+    cdb_hlc hlc;
+    cdb_hlc add_hlc;
+    cdb_hlc rem_hlc;
+    cdb_pn_counter pn;
+    uint32_t pn_peer[CDB_CRDT_MAX_PEERS];
+    uint32_t pn_count;
+    uint8_t klass;
+    uint8_t in_use;
+} cdb_crdt_rec;
+
+/* A per-store merge-class registration (cdb_db_crdt_set_store_merge). */
+typedef struct cdb_crdt_store_class {
+    uint64_t store_id;
+    uint8_t klass;
+} cdb_crdt_store_class;
+
 #define CDB_DB_PATH_MAX 200 /* longest path, including the terminating zero */
 
 /* Durability levels (spec 3.1). */
@@ -543,6 +572,20 @@ typedef struct cdb_db {
     cdb_crdt_peer_entry crdt_pend[CDB_CRDT_PEND_CAP];
     uint32_t crdt_pend_ord[CDB_CRDT_PEND_CAP];
     uint32_t n_crdt_pend;
+    /* #38 deterministic convergence state. crdt_recs is the committed table;
+     * crdt_rec_pend holds an open transaction's staged records (flushed to
+     * crdt_recs at commit, trimmed on a savepoint rollback, like crdt_pend);
+     * crdt_call_recs holds the records of the import call in progress (discarded
+     * on import failure). crdt_classes maps a store to its merge class. */
+    cdb_crdt_rec crdt_recs[CDB_CRDT_REC_CAP];
+    uint32_t n_crdt_recs;
+    cdb_crdt_rec crdt_rec_pend[CDB_CRDT_REC_CAP];
+    uint32_t crdt_rec_pend_ord[CDB_CRDT_REC_CAP];
+    uint32_t n_crdt_rec_pend;
+    cdb_crdt_rec crdt_call_recs[CDB_CRDT_REC_CAP];
+    uint32_t n_crdt_call_recs;
+    cdb_crdt_store_class crdt_classes[CDB_CRDT_CLASS_CAP];
+    uint32_t n_crdt_classes;
     /* Event triggers (spec 11.6). */
     cdb_trigger_registry triggers;
     /* Post-commit trigger firing (#35, spec 11.9: triggers run after commit).
@@ -768,6 +811,10 @@ cdb_status cdb_db_set_peer_id(cdb_db *db, uint32_t peer_id);
 cdb_status cdb_db_get_peer_id(const cdb_db *db, uint32_t *peer_id);
 cdb_status cdb_db_get_hlc(const cdb_db *db, cdb_hlc *hlc);
 cdb_status cdb_db_get_crdt_vector(const cdb_db *db, cdb_crdt_vector *vector);
+/* Registers the CRDT merge class (CDB_CRDT_MERGE_*) for a store, so import
+ * resolves its records with the right convergence semantics (#38). Default is
+ * LWW. Fails closed (CDB_E_OUT_OF_BUDGET) when the bounded registry is full. */
+cdb_status cdb_db_crdt_set_store_merge(cdb_db *db, uint64_t store_id, uint8_t merge_class);
 
 cdb_status cdb_db_crdt_export_slice(cdb_db *db, const cdb_crdt_vector *since_vector,
                                     uint8_t *out_buf, size_t cap, size_t *out_len);
