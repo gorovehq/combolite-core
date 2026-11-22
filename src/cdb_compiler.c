@@ -15,6 +15,10 @@
 
 #define MAX_AST_NODES 128
 #define MAX_AST_EXPRS 512
+/* Maximum byte length of a field path/identifier. A path that would exceed
+ * this is a fail-closed compile error (CDB_E_OVERFLOW), never a silently
+ * truncated path that selects the wrong field (#36 FR3). */
+#define CDB_QUERY_MAX_PATH 255u
 #define MAX_OUTPUTS 32
 #define MAX_KEYS 16
 #define MAX_STRING_POOL 8192
@@ -222,6 +226,11 @@ typedef struct compiler_ctx {
      * flag letting cdb_compile_query map the failure to CDB_E_DEPTH. */
     size_t depth;
     int depth_exceeded;
+
+    /* Sticky flag: a field path/identifier exceeded CDB_QUERY_MAX_PATH. Lets
+     * cdb_compile_query map the failure to CDB_E_OVERFLOW instead of silently
+     * truncating the path (#36 FR3). */
+    int path_overflow;
 } compiler_ctx;
 
 static void set_error(compiler_ctx *ctx, const cdb_token *tok, const char *msg)
@@ -457,6 +466,15 @@ static uint16_t lookup_function_id(const char *name, size_t len)
     return 0;
 }
 
+/* Records a fail-closed over-length path error and returns NULL so the caller
+ * stops without emitting a truncated path (#36 FR3). */
+static ast_expr *field_path_overflow(compiler_ctx *ctx, const cdb_token *tok)
+{
+    ctx->path_overflow = 1;
+    set_error(ctx, tok, "field path exceeds 255 bytes");
+    return NULL;
+}
+
 /* Automated 4-tier dotted path resolution (Spec 11.11.2) */
 static ast_expr *resolve_field_identifier(compiler_ctx *ctx, const cdb_token *tok)
 {
@@ -465,11 +483,16 @@ static ast_expr *resolve_field_identifier(compiler_ctx *ctx, const cdb_token *to
         return NULL;
     e->tag = CDB_QUERY_EXPR_FIELD;
 
-    /* Tier 1: Quoted identifier */
+    /* Tier 1: Quoted identifier. A backtick-quoted identifier preserves its
+     * exact bytes, including any literal dot (no 0x1F substitution). The
+     * oversized buffer lets an over-255 path be detected and rejected rather
+     * than silently truncated (#36 FR3). */
     if (tok->is_quoted) {
-        char buf[256];
+        char buf[2 * CDB_QUERY_MAX_PATH + 2];
         size_t len = 0;
         cdb_token_unescape_string(tok, buf, sizeof(buf), &len);
+        if (len > CDB_QUERY_MAX_PATH)
+            return field_path_overflow(ctx, tok);
         e->as.field.path = pool_strdup(ctx, buf, len);
         e->as.field.len = len;
         return e;
@@ -526,8 +549,13 @@ static ast_expr *resolve_field_identifier(compiler_ctx *ctx, const cdb_token *to
         return e;
     }
 
-    /* Tier 4: Schemaless document fallback: replace dots with 0x1F Unit Separator */
-    char buf[256];
+    /* Tier 4: Schemaless document fallback: replace dots with 0x1F Unit
+     * Separator. Output length equals input length (each byte maps 1:1), so an
+     * over-255 path is a fail-closed error rather than a silent truncation
+     * that would select the wrong field (#36 FR3). */
+    if (len > CDB_QUERY_MAX_PATH)
+        return field_path_overflow(ctx, tok);
+    char buf[CDB_QUERY_MAX_PATH + 1];
     size_t out_idx = 0;
     for (size_t i = 0; i < len && out_idx + 1 < sizeof(buf); ++i) {
         if (text[i] == '.') {
@@ -593,6 +621,13 @@ static ast_expr *parse_primary(compiler_ctx *ctx)
         size_t elen = encode_null_val(e->as.literal.bytes, sizeof(e->as.literal.bytes));
         e->as.literal.len = elen;
         return e;
+    }
+
+    /* Backtick-quoted identifier: a field reference that preserves a literal
+     * dot in the field name, distinct from '…'/"…" string literals (#36 FR3).
+     * Routes through the quoted-identifier (Tier 1) path. */
+    if (tok.kind == CDB_TOK_STRING && tok.quote_char == '`') {
+        return resolve_field_identifier(ctx, &tok);
     }
 
     /* String literal */
@@ -709,21 +744,24 @@ static ast_expr *parse_primary(compiler_ctx *ctx)
         /* Check for dotted identifier: ident.ident */
         cdb_token dot;
         if (cdb_lexer_peek(&ctx->lex, &dot) == CDB_OK && dot.kind == CDB_TOK_DOT) {
-            /* Assemble dotted identifier into single string */
-            char dpath[256];
-            size_t dlen = (size_t)tok.len < sizeof(dpath) - 1 ? (size_t)tok.len : sizeof(dpath) - 1;
+            /* Assemble a dotted identifier into a single string. Over-255
+             * total length is a fail-closed error, not a silent truncation
+             * that would resolve the wrong field (#36 FR3). */
+            char dpath[CDB_QUERY_MAX_PATH + 1];
+            size_t dlen;
+            if ((size_t)tok.len > CDB_QUERY_MAX_PATH)
+                return field_path_overflow(ctx, &tok);
+            dlen = (size_t)tok.len;
             memcpy(dpath, tok.start, dlen);
             while (match(ctx, CDB_TOK_DOT, NULL)) {
                 cdb_token part;
                 if (cdb_lexer_next(&ctx->lex, &part) != CDB_OK)
                     return NULL;
-                if (dlen + 1 < sizeof(dpath))
-                    dpath[dlen++] = '.';
-                size_t plen = (size_t)part.len < sizeof(dpath) - 1 - dlen
-                                  ? (size_t)part.len
-                                  : sizeof(dpath) - 1 - dlen;
-                memcpy(&dpath[dlen], part.start, plen);
-                dlen += plen;
+                if (dlen + 1 + (size_t)part.len > CDB_QUERY_MAX_PATH)
+                    return field_path_overflow(ctx, &part);
+                dpath[dlen++] = '.';
+                memcpy(&dpath[dlen], part.start, (size_t)part.len);
+                dlen += (size_t)part.len;
             }
             dpath[dlen] = '\0';
             cdb_token synthetic;
@@ -2603,6 +2641,10 @@ cdb_status cdb_compile_query(const char *src, size_t len, cdb_catalog *cat, uint
         if (!err || err->msg[0] == '\0') {
             set_error(&ctx, NULL, "Failed to parse query syntax");
         }
+        /* An over-255 field path fails closed with a dedicated status rather
+         * than silently truncating to the wrong field (#36 FR3). */
+        if (ctx.path_overflow)
+            return CDB_E_OVERFLOW;
         /* Over-depth input fails closed with the dedicated status (CWE-674, F2). */
         if (ctx.depth_exceeded)
             return CDB_E_DEPTH;

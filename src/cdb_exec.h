@@ -21,10 +21,25 @@
 #include "cdb_profile.h"
 #include "cdb_query.h"
 
-#define CDB_EXEC_MAX_FIELDS 16u
+/* Maximum named fields a single executed row can carry. Compile-time
+ * overridable (within the no-heap/caller-buffer model: a wider row only
+ * enlarges stack locals and pool copies, it never allocates). Raised from
+ * the original 16 so a projection of up to this many columns is returned in
+ * full; a row that would still exceed the cap is a fail-closed CDB_E_OVERFLOW,
+ * never a silent field drop (#36 FR5). */
+#ifndef CDB_EXEC_MAX_FIELDS
+#define CDB_EXEC_MAX_FIELDS 32u
+#endif
 #define CDB_EXEC_MAX_BRANCHES 8u
 #define CDB_EXEC_MAX_SORT_KEYS 8u
 #define CDB_EXEC_MAX_AGGS 16u
+/* Maximum GROUP BY keys an Aggregate carries. Kept distinct from (and
+ * smaller than) CDB_EXEC_MAX_FIELDS so raising the row field cap does not
+ * inflate the per-group accumulator struct (which the caller buffers one of
+ * per group) and regress the query memory budget (#36 FR5, risk R1). */
+#ifndef CDB_EXEC_MAX_GROUP_KEYS
+#define CDB_EXEC_MAX_GROUP_KEYS 16u
+#endif
 #define CDB_EXEC_DEFAULT_BUFFERED_ROWS 256u
 /* A live Scan's record buffer, in pages, taken from the cursor's scratch */
 #define CDB_EXEC_SCAN_RECORD_PAGES 4u
@@ -158,5 +173,11 @@ void cdb_exec_row_copy(cdb_exec_row *dst, const cdb_exec_row *src);
 /* Binds an array of mock rows to a named store scan (for testing and pipeline validation) */
 cdb_status cdb_exec_set_mock_scan(cdb_exec_cursor *cur, const char *store_name, size_t name_len,
                                   const cdb_exec_row *rows, size_t n_rows);
+
+/* Number of right-input rows scanned by the most recent AsofJoin open.
+ * The right pipeline is materialized exactly once, so this equals the right
+ * row count (m), never left_rows * right_rows (n*m). Exposed so tests can
+ * verify the join does not rescan the right input per left row (#36 FR2). */
+uint64_t cdb_exec_asof_right_scan_count(void);
 
 #endif /* CDB_EXEC_H */
