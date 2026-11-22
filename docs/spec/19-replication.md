@@ -82,6 +82,73 @@ A replicated delete leaves a tombstone, so that an old change arriving late can'
 - **Rotation across the group.** Rotating a domain key on one copy is a replicated event that adds the version. A copy that has no key reference for that version yet holds the changes sealed under it until its operator adds one.
 - **Carried domains.** Each copy declares, in its handshakes, the domains it carries: those it holds keys for, and those it relays without keys. A sender sends a copy only changes of the public domain and of the domains it carries. A copy that does not carry a domain neither holds nor relays it, so a small device carries only what it needs. A domain's changes reach every copy that carries it as long as a chain of carriers connects them.
 
+### 19.9 Implementation status (#38 — deterministic convergence)
+
+This records what the core implements today, against the design above. The goal of
+#38 was the correctness invariant in 19.5 ("all copies end up identical, whatever
+order the syncs happen in"); the prior code merged deltas by **arrival order**, so
+concurrent writes to one `(store, entry)` could converge to different values
+depending on import order.
+
+**Implemented.**
+
+- **Real HLC on export.** A copy's own replicated changes are stamped at commit
+  from the maintained hybrid logical clock (`db->hlc`), each record in a
+  transaction getting a **distinct sub-tick** (19.4 "stamped at commit"). Export
+  carries that real clock, not the transaction counter / record sequence it used
+  before.
+- **Order-independent resolve on import.** Import compares an incoming delta's HLC
+  against the target record's stored convergence clock and resolves
+  deterministically, so the merged result is independent of the order deltas
+  arrive — the 19.5 invariant, now enforced by a replay oracle
+  (`test_convergence_order_independent`).
+- **Per-class merge (19.5).** The merge class travels on the wire in the **high
+  nibble of the op byte** (the "merge nibble"; the base `CDB_OP_*` in the low
+  nibble), so a receiver converges correctly even without a local registration.
+  A store's class may also be set with `cdb_db_crdt_set_store_merge`. Classes:
+  - **LWW** (`CDB_CRDT_MERGE_LWW`, default): higher HLC wins, stable peer-id
+    tiebreak on equal clocks.
+  - **PN-counter** (`CDB_CRDT_MERGE_COUNTER`): concurrent increments **net** via
+    per-peer P/N sums (`+100@A` and `+50@B` converge to `150` in either order) —
+    never a last-write-wins fall-through that would silently drop one.
+  - **AWORSet** (`CDB_CRDT_MERGE_AWORSET`): a link add wins over a concurrent
+    older remove (add-wins), both orders.
+  - **Commutative time series** (`CDB_CRDT_MERGE_TS`): duplicate `(origin, clock)`
+    points dedup to a single application.
+- **Both commit branches stamp.** The normal commit path and the baton-expiry
+  replay path both advance the clock and stamp each record, so a multi-record
+  transaction under replication never collapses to equal clocks and drops records
+  on import (`test_baton_expiry_multirecord_survives`).
+- **Untrusted delta validation.** Imported deltas are validated before use
+  (`cdb_crdt_delta_validate`): the base op and merge nibble must be known, the
+  payload length bounded (`CDB_CRDT_MAX_DELTA_LEN`, CWE-190), a non-empty payload
+  non-NULL. A malformed delta is rejected fail-closed with no partial apply.
+
+**Residuals (not yet implemented).**
+
+- **Convergence state is in-memory and session-scoped.** The per-`(store,entry)`
+  convergence clock, the per-peer PN-counter state, and the per-store class live
+  in a bounded in-core table (no heap), exactly like the existing `db->hlc` and
+  version vector — they are rebuilt per session and are **not yet persisted**
+  across reopen. The on-disk format is unchanged, so old images open unaffected.
+  Durable value codecs are provided (`cdb_crdt_hlc_encode` / `cdb_crdt_pn_encode`
+  and their inverses) so a backward-compatible side store (the 19.5 "clock index"
+  / a `marks_root`-style tagged keyspace) can be layered on without a format bump.
+- **Record-level, not per-field.** Convergence is resolved at `(store, entry)`
+  granularity (record-level HLC-LWW), not per leaf path. The per-path "clock
+  index" of 19.5/19.6 is the next step; one merge class applies per record today.
+- **Bounded tables.** The convergence and class tables are fixed-capacity; a
+  workload exceeding the bound fails closed (`CDB_E_OUT_OF_BUDGET`) rather than
+  silently diverging.
+
+**Deferred (need a transport; still draft).**
+
+- **CD3 — two-way vector-handshake codec wiring.** The handshake/slice codecs
+  exist (19.7) but are not wired into an exchange protocol.
+- **CD4 — automated P2P gossip, peer discovery and sockets.** No transport,
+  discovery, or gossip is implemented; replication is driven by the embedding
+  application calling export/import.
+
 ## Open questions (do not specify until answered)
 
 From the second review of this section; each needs a design decision, not a patch:

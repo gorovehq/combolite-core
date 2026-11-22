@@ -44,12 +44,21 @@ static uint8_t cat_page2[PAGE];
 static cdb_db_config cfg2;
 static cdb_db db2;
 
+/* #38 F2: one-shot fault, set by the baton-expiry test. The first apply call
+ * after it is set returns CDB_E_BUSY once, forcing the baton-expiry commit
+ * branch; the clock remains the synchronous logical counter. */
+static int g_apply_fail_busy = 0;
+
 static cdb_status kv_apply(void *ctx, cdb_pager *p, const cdb_delta *d)
 {
     cdb_page_header t;
     uint64_t lid;
     cdb_status s;
     (void)ctx;
+    if (g_apply_fail_busy) {
+        g_apply_fail_busy = 0;
+        return CDB_E_BUSY;
+    }
     TEST_ASSERT_TRUE(d->entry_id < KV_PAGES);
     if (d->op == CDB_OP_DELETE) {
         s = cdb_pager_free(p, d->entry_id);
@@ -90,6 +99,7 @@ static void init_env(void)
 
 void setUp(void)
 {
+    g_apply_fail_busy = 0;
     init_env();
 
     memset(&cfg1, 0, sizeof cfg1);
@@ -581,6 +591,423 @@ static void test_import_vector_advances_at_commit(void)
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db2));
 }
 
+/* ------------------------------------------------------------ 8. #38 convergence */
+
+/* Opens db on name with peer_id set and replication enabled. */
+static void open_peer(cdb_db *db, cdb_db_config *cfg, const char *name, uint32_t peer)
+{
+    cdb_header h = settings();
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_open(db, &env, name, cfg, &h));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_set_peer_id(db, peer));
+}
+
+/* Builds a delta record for store STORE. */
+static cdb_crdt_delta_rec mk(uint64_t entry, uint8_t op, cdb_hlc hlc, const void *data, size_t len)
+{
+    cdb_crdt_delta_rec r;
+    memset(&r, 0, sizeof r);
+    r.store_id = STORE;
+    r.entry_id = entry;
+    r.op = op;
+    r.hlc = hlc;
+    r.data = (const uint8_t *)data;
+    r.len = len;
+    return r;
+}
+
+/* Reads outlen payload bytes of a page; 1 when present, 0 when absent. */
+static int read_val(cdb_db *db, uint64_t entry, uint8_t *out, size_t outlen)
+{
+    uint8_t pb[PAGE];
+    cdb_page_header ph;
+    if (cdb_pager_read(&db->pager, entry, pb, &ph) != CDB_OK)
+        return 0;
+    memcpy(out, pb + cdb_page_payload_offset(CDB_PAGE_FMT_FULL64), outlen);
+    return 1;
+}
+
+static void import_pair(cdb_db *db, cdb_crdt_delta_rec a, cdb_crdt_delta_rec b, size_t *applied)
+{
+    cdb_crdt_delta_rec recs[2];
+    recs[0] = a;
+    recs[1] = b;
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_import_deltas(db, 0u, recs, 2, applied));
+}
+
+/* AC1: two peers' concurrent writes to the same (store,entry) converge to the
+ * SAME value regardless of import order (pre-fix: order-dependent divergence). */
+static void test_convergence_order_independent(void)
+{
+    cdb_hlc ha = {10u, 0u, 1u};
+    cdb_hlc hb = {20u, 0u, 2u};
+    cdb_crdt_delta_rec a = mk(40u, CDB_OP_INSERT, ha, "AAAA", 4u);
+    cdb_crdt_delta_rec b = mk(40u, CDB_OP_INSERT, hb, "BBBB", 4u);
+    uint8_t v1[4], v2[4];
+    size_t applied = 0;
+
+    open_peer(&db1, &cfg1, "rA", 100u);
+    import_pair(&db1, a, b, &applied); /* order A, B */
+    TEST_ASSERT_TRUE(read_val(&db1, 40u, v1, sizeof v1));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+
+    open_peer(&db2, &cfg2, "rB", 200u);
+    import_pair(&db2, b, a, &applied); /* order B, A */
+    TEST_ASSERT_TRUE(read_val(&db2, 40u, v2, sizeof v2));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db2));
+
+    TEST_ASSERT_EQUAL_MEMORY(v1, v2, 4);  /* order-independent convergence */
+    TEST_ASSERT_EQUAL_MEMORY("BBBB", v1, 4); /* higher HLC wins */
+}
+
+/* AC3: LWW resolves to the higher-HLC write, with a stable peer-id tiebreak on
+ * equal physical/logical clocks. */
+static void test_lww_resolves_higher_hlc(void)
+{
+    cdb_hlc lo = {10u, 0u, 1u};
+    cdb_hlc hi = {10u, 0u, 2u}; /* equal clock, higher peer wins */
+    cdb_crdt_delta_rec a = mk(45u, CDB_OP_INSERT, lo, "LLLL", 4u);
+    cdb_crdt_delta_rec b = mk(45u, CDB_OP_INSERT, hi, "HHHH", 4u);
+    uint8_t v[4];
+    size_t applied = 0;
+
+    open_peer(&db1, &cfg1, "lww", 100u);
+    import_pair(&db1, a, b, &applied);
+    TEST_ASSERT_TRUE(read_val(&db1, 45u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("HHHH", v, 4);
+    /* Reverse order converges to the same winner. */
+    import_pair(&db1, b, a, &applied);
+    TEST_ASSERT_TRUE(read_val(&db1, 45u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("HHHH", v, 4);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+}
+
+/* AC4 / F1: concurrent PN-counter increments NET (sum), not last-write-wins,
+ * and converge to the same net independent of import order. */
+static void test_pn_counter_apply_nets(void)
+{
+    cdb_hlc ha = {10u, 0u, 1u};
+    cdb_hlc hb = {20u, 0u, 2u};
+    uint8_t da[8], dbuf[8], v[8];
+    cdb_crdt_delta_rec a, b;
+    size_t applied = 0;
+
+    cdb_store_u64(da, 100u, CDB_ORDER_BIG);
+    cdb_store_u64(dbuf, 50u, CDB_ORDER_BIG);
+    a = mk(42u, CDB_OP_INSERT, ha, da, 8u);
+    b = mk(42u, CDB_OP_INSERT, hb, dbuf, 8u);
+
+    open_peer(&db1, &cfg1, "cA", 100u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_db_crdt_set_store_merge(&db1, STORE, CDB_CRDT_MERGE_COUNTER));
+    import_pair(&db1, a, b, &applied); /* +100@1 then +50@2 */
+    TEST_ASSERT_TRUE(read_val(&db1, 42u, v, sizeof v));
+    TEST_ASSERT_EQUAL_INT64(150, (int64_t)cdb_load_u64(v, CDB_ORDER_BIG));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+
+    open_peer(&db2, &cfg2, "cB", 200u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_db_crdt_set_store_merge(&db2, STORE, CDB_CRDT_MERGE_COUNTER));
+    import_pair(&db2, b, a, &applied); /* +50@2 then +100@1 */
+    TEST_ASSERT_TRUE(read_val(&db2, 42u, v, sizeof v));
+    TEST_ASSERT_EQUAL_INT64(150, (int64_t)cdb_load_u64(v, CDB_ORDER_BIG));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db2));
+}
+
+/* QA F1-strengthening: PN netting with a SIGNED decrement. +100@peerA and
+ * -30@peerB must NET to 70 (not last-write-wins), and converge to the same net
+ * regardless of import order — proves PN semantics, not merely additive sums. */
+static void test_pn_counter_apply_nets_with_decrement(void)
+{
+    cdb_hlc ha = {10u, 0u, 1u};
+    cdb_hlc hb = {20u, 0u, 2u};
+    uint8_t da[8], dbuf[8], v[8];
+    cdb_crdt_delta_rec a, b;
+    size_t applied = 0;
+
+    cdb_store_u64(da, (uint64_t)(int64_t)100, CDB_ORDER_BIG);  /* +100 */
+    cdb_store_u64(dbuf, (uint64_t)(int64_t)-30, CDB_ORDER_BIG); /* -30 (two's complement) */
+    a = mk(46u, CDB_OP_INSERT, ha, da, 8u);
+    b = mk(46u, CDB_OP_INSERT, hb, dbuf, 8u);
+
+    open_peer(&db1, &cfg1, "dA", 100u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_db_crdt_set_store_merge(&db1, STORE, CDB_CRDT_MERGE_COUNTER));
+    import_pair(&db1, a, b, &applied); /* +100@1 then -30@2 */
+    TEST_ASSERT_TRUE(read_val(&db1, 46u, v, sizeof v));
+    TEST_ASSERT_EQUAL_INT64(70, (int64_t)cdb_load_u64(v, CDB_ORDER_BIG));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+
+    open_peer(&db2, &cfg2, "dB", 200u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_db_crdt_set_store_merge(&db2, STORE, CDB_CRDT_MERGE_COUNTER));
+    import_pair(&db2, b, a, &applied); /* -30@2 then +100@1, same net */
+    TEST_ASSERT_TRUE(read_val(&db2, 46u, v, sizeof v));
+    TEST_ASSERT_EQUAL_INT64(70, (int64_t)cdb_load_u64(v, CDB_ORDER_BIG));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db2));
+}
+
+/* QA abuse: a COUNTER-class store treats the payload as a signed 8-byte
+ * increment; a wrong-length payload is untrusted input and must be rejected
+ * fail-closed (no crash, no silent mis-net), leaving the database usable. */
+static void test_counter_rejects_bad_payload_len(void)
+{
+    cdb_hlc h = {10u, 0u, 1u};
+    cdb_crdt_delta_rec bad, good;
+    uint8_t gd[8], v[8];
+    size_t applied = 0;
+
+    open_peer(&db1, &cfg1, "cbad", 100u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_db_crdt_set_store_merge(&db1, STORE, CDB_CRDT_MERGE_COUNTER));
+
+    /* 4-byte payload on a COUNTER store: rejected, nothing applied. */
+    bad = mk(47u, CDB_OP_INSERT, h, "\x00\x00\x00\x01", 4u);
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED,
+                          cdb_db_crdt_import_deltas(&db1, 0u, &bad, 1, &applied));
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)applied);
+    TEST_ASSERT_EQUAL_INT(0, read_val(&db1, 47u, v, sizeof v)); /* not written */
+
+    /* Still usable: a correct 8-byte increment nets normally afterwards. */
+    cdb_store_u64(gd, (uint64_t)(int64_t)5, CDB_ORDER_BIG);
+    good = mk(47u, CDB_OP_INSERT, h, gd, 8u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_import_deltas(&db1, 0u, &good, 1, &applied));
+    TEST_ASSERT_EQUAL_UINT32(1u, (uint32_t)applied);
+    TEST_ASSERT_TRUE(read_val(&db1, 47u, v, sizeof v));
+    TEST_ASSERT_EQUAL_INT64(5, (int64_t)cdb_load_u64(v, CDB_ORDER_BIG));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+}
+
+/* QA abuse: the delta-slice wire is untrusted. Truncated, magic-corrupted, and
+ * under-capacity decodes are rejected (non-OK) without crashing or reading OOB
+ * (ASan/UBSan clean), and a valid slice still decodes afterwards. */
+static void test_slice_decode_rejects_corrupt_wire(void)
+{
+    uint8_t buf[512];
+    size_t len = 0, count_out = 0;
+    uint32_t peer_out = 0;
+    cdb_crdt_delta_rec sin[2], sout[4];
+
+    sin[0] = mk(10u, CDB_OP_INSERT, (cdb_hlc){100u, 0u, 1u}, "hello", 5u);
+    sin[1] = mk(11u, CDB_OP_REPLACE, (cdb_hlc){105u, 1u, 1u}, "world", 5u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crdt_slice_encode(1u, sin, 2, buf, sizeof buf, &len));
+    TEST_ASSERT_TRUE(len > 12u);
+
+    /* Truncated to a few bytes: must not decode, must not crash. */
+    TEST_ASSERT_NOT_EQUAL(CDB_OK,
+                          cdb_crdt_slice_decode(buf, 6u, &peer_out, sout, 4, &count_out));
+
+    /* Corrupt magic: rejected. */
+    {
+        uint8_t corrupt[512];
+        memcpy(corrupt, buf, len);
+        corrupt[0] ^= 0xFFu;
+        TEST_ASSERT_NOT_EQUAL(CDB_OK,
+                              cdb_crdt_slice_decode(corrupt, len, &peer_out, sout, 4, &count_out));
+    }
+
+    /* Output capacity too small for the record count: rejected, no OOB write. */
+    TEST_ASSERT_NOT_EQUAL(CDB_OK,
+                          cdb_crdt_slice_decode(buf, len, &peer_out, sout, 1, &count_out));
+
+    /* The genuine slice still decodes cleanly after the abuse. */
+    count_out = 0;
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_crdt_slice_decode(buf, len, &peer_out, sout, 4, &count_out));
+    TEST_ASSERT_EQUAL_UINT32(1u, peer_out);
+    TEST_ASSERT_EQUAL_UINT32(2u, (uint32_t)count_out);
+}
+
+/* AC5: an AWORSet link add wins over a concurrent (older) remove, both orders. */
+static void test_aworset_add_wins(void)
+{
+    cdb_hlc hadd = {30u, 0u, 1u};
+    cdb_hlc hrem = {20u, 0u, 2u};
+    cdb_crdt_delta_rec add = mk(43u, CDB_OP_INSERT, hadd, "LINK", 4u);
+    cdb_crdt_delta_rec rem = mk(43u, CDB_OP_DELETE, hrem, NULL, 0u);
+    uint8_t v[4];
+    size_t applied = 0;
+
+    open_peer(&db1, &cfg1, "aA", 100u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_db_crdt_set_store_merge(&db1, STORE, CDB_CRDT_MERGE_AWORSET));
+    import_pair(&db1, add, rem, &applied);
+    TEST_ASSERT_TRUE(read_val(&db1, 43u, v, sizeof v)); /* link survives */
+    TEST_ASSERT_EQUAL_MEMORY("LINK", v, 4);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+
+    open_peer(&db2, &cfg2, "aB", 200u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK,
+                          cdb_db_crdt_set_store_merge(&db2, STORE, CDB_CRDT_MERGE_AWORSET));
+    import_pair(&db2, rem, add, &applied);
+    TEST_ASSERT_TRUE(read_val(&db2, 43u, v, sizeof v)); /* same result */
+    TEST_ASSERT_EQUAL_MEMORY("LINK", v, 4);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db2));
+}
+
+/* AC6: duplicate commutative-TS points dedup to a single application. */
+static void test_ts_dedup(void)
+{
+    cdb_hlc ht = {10u, 0u, 7u};
+    cdb_crdt_delta_rec d = mk(44u, CDB_OP_INSERT, ht, "P", 1u);
+    cdb_crdt_delta_rec recs[2];
+    uint8_t v[1];
+    size_t applied = 0;
+
+    recs[0] = d;
+    recs[1] = d; /* identical (series, ts, peer) */
+    open_peer(&db1, &cfg1, "ts", 100u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_set_store_merge(&db1, STORE, CDB_CRDT_MERGE_TS));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_import_deltas(&db1, 0u, recs, 2, &applied));
+    TEST_ASSERT_EQUAL_UINT32(1u, (uint32_t)applied); /* deduped to one */
+    TEST_ASSERT_TRUE(read_val(&db1, 44u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("P", v, 1);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+}
+
+/* AC2 / FR1: an exported delta carries the real db->hlc, not the tx counter. */
+static void test_emit_carries_real_hlc(void)
+{
+    uint8_t slice[1024];
+    size_t slice_len = 0;
+    cdb_hlc hlc1;
+    cdb_hlc emitted;
+
+    open_peer(&db1, &cfg1, "emit", 1u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_begin(&db1, CDB_DURABILITY_FULL));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_put(&db1, STORE, 5u, CDB_OP_INSERT, "data", 4u));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_commit(&db1));
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_get_hlc(&db1, &hlc1));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_export_slice(&db1, NULL, slice, sizeof slice, &slice_len));
+    TEST_ASSERT_TRUE(slice_len >= 12u + 37u);
+
+    /* Decode the first record's HLC (record starts at 12; hlc at +17/+25/+29). */
+    emitted.physical = cdb_load_u64(slice + 12u + 17u, CDB_ORDER_BIG);
+    emitted.logical = cdb_load_u32(slice + 12u + 25u, CDB_ORDER_BIG);
+    emitted.peer_id = cdb_load_u32(slice + 12u + 29u, CDB_ORDER_BIG);
+
+    TEST_ASSERT_EQUAL_INT(0, cdb_hlc_compare(emitted, hlc1)); /* real HLC, not faked */
+    TEST_ASSERT_EQUAL_UINT32(1u, emitted.peer_id);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+}
+
+/* AC7 / F2: a multi-record transaction committed via the baton-expiry branch,
+ * under replication, keeps every record on export+import (no collapsed clocks). */
+static void test_baton_expiry_multirecord_survives(void)
+{
+    uint8_t slice[1024];
+    size_t slice_len = 0, applied = 0;
+    uint8_t v[4];
+
+    open_peer(&db1, &cfg1, "batonA", 1u);
+    open_peer(&db2, &cfg2, "batonB", 2u);
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_begin(&db1, CDB_DURABILITY_FULL));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_put(&db1, STORE, 50u, CDB_OP_INSERT, "R0__", 4u));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_put(&db1, STORE, 51u, CDB_OP_INSERT, "R1__", 4u));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_put(&db1, STORE, 52u, CDB_OP_INSERT, "R2__", 4u));
+    g_apply_fail_busy = 1; /* force the baton-expiry commit branch */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_commit(&db1));
+
+    /* F2: the baton-expiry branch advanced the clock and the local version
+     * vector (without the stamp it would stay at the open-time zero). */
+    {
+        cdb_crdt_vector vv;
+        cdb_crdt_peer_entry pe;
+        cdb_hlc hlc;
+        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_get_hlc(&db1, &hlc));
+        TEST_ASSERT_TRUE(hlc.physical > 0 || hlc.logical >= 3u); /* three sub-ticks */
+        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_get_crdt_vector(&db1, &vv));
+        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crdt_vector_get(&vv, 1u, &pe));
+        TEST_ASSERT_TRUE(pe.counter > 0u); /* advanced by the committed tx */
+    }
+
+    /* All three records are present locally after the rebase replay. */
+    TEST_ASSERT_TRUE(read_val(&db1, 50u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("R0__", v, 4);
+    TEST_ASSERT_TRUE(read_val(&db1, 52u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("R2__", v, 4);
+
+    /* And all three survive export + import into a fresh peer (distinct clocks). */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_export_slice(&db1, NULL, slice, sizeof slice, &slice_len));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_import_slice(&db2, slice, slice_len, &applied));
+    TEST_ASSERT_EQUAL_UINT32(3u, (uint32_t)applied);
+    TEST_ASSERT_TRUE(read_val(&db2, 50u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("R0__", v, 4);
+    TEST_ASSERT_TRUE(read_val(&db2, 51u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("R1__", v, 4);
+    TEST_ASSERT_TRUE(read_val(&db2, 52u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("R2__", v, 4);
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db2));
+}
+
+/* AC12 / FR8: an imported delta is untrusted; malformed deltas are rejected
+ * fail-closed (no crash, no OOB), and the database stays usable. */
+static void test_import_rejects_malformed_delta(void)
+{
+    cdb_hlc h = {10u, 0u, 1u};
+    cdb_crdt_delta_rec bad;
+    cdb_crdt_delta_rec good;
+    uint8_t v[4];
+    size_t applied = 0;
+    static uint8_t tiny[1];
+
+    /* Unit-level: validation screens op, merge nibble, length, and NULL data. */
+    bad = mk(60u, 7u, h, "x", 1u); /* base op 7 is not a known CDB_OP_* */
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED, cdb_crdt_delta_validate(&bad));
+    bad = mk(60u, CDB_CRDT_OP_PACK(CDB_OP_INSERT, 7u), h, "x", 1u); /* merge nibble 7 */
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED, cdb_crdt_delta_validate(&bad));
+    bad = mk(60u, CDB_OP_INSERT, h, tiny, (size_t)CDB_CRDT_MAX_DELTA_LEN + 1u); /* oversized */
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED, cdb_crdt_delta_validate(&bad));
+    bad = mk(60u, CDB_OP_INSERT, h, NULL, 4u); /* non-empty but NULL payload */
+    TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, cdb_crdt_delta_validate(&bad));
+
+    /* Engine-level: a malformed delta is rejected on import, fail-closed. */
+    open_peer(&db1, &cfg1, "bad", 100u);
+    bad = mk(60u, 7u, h, "x", 1u);
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED, cdb_db_crdt_import_deltas(&db1, 0u, &bad, 1, &applied));
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)applied);
+
+    /* The database is still usable: a well-formed delta applies afterwards. */
+    good = mk(61u, CDB_OP_INSERT, h, "OK__", 4u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_crdt_import_deltas(&db1, 0u, &good, 1, &applied));
+    TEST_ASSERT_EQUAL_UINT32(1u, (uint32_t)applied);
+    TEST_ASSERT_TRUE(read_val(&db1, 61u, v, sizeof v));
+    TEST_ASSERT_EQUAL_MEMORY("OK__", v, 4);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db1));
+}
+
+/* Durable-state value codecs round-trip (persistence-ready side store, #38). */
+static void test_durable_state_codecs(void)
+{
+    cdb_hlc h = {0x1122334455667788ull, 0xAABBCCDDu, 0x01020304u};
+    cdb_hlc back;
+    uint8_t hbuf[CDB_CRDT_HLC_ENC_LEN];
+    uint8_t pbuf[CDB_CRDT_PN_ENC_LEN];
+    size_t len = 0;
+    cdb_pn_counter c, dec;
+
+    cdb_crdt_hlc_encode(h, hbuf);
+    back = cdb_crdt_hlc_decode(hbuf);
+    TEST_ASSERT_EQUAL_INT(0, cdb_hlc_compare(h, back));
+
+    cdb_pn_counter_init(&c);
+    cdb_pn_counter_inc(&c, 0u, 100u);
+    cdb_pn_counter_inc(&c, 3u, 7u);
+    cdb_pn_counter_dec(&c, 3u, 2u);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crdt_pn_encode(&c, pbuf, sizeof pbuf, &len));
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)CDB_CRDT_PN_ENC_LEN, (uint32_t)len);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crdt_pn_decode(pbuf, len, &dec));
+    TEST_ASSERT_EQUAL_INT64(cdb_pn_counter_val(&c), cdb_pn_counter_val(&dec));
+    TEST_ASSERT_EQUAL_MEMORY(&c, &dec, sizeof c);
+
+    /* Fail-closed on a short buffer / wrong length. */
+    TEST_ASSERT_EQUAL_INT(CDB_E_BUFFER_TOO_SMALL, cdb_crdt_pn_encode(&c, pbuf, 4u, &len));
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED, cdb_crdt_pn_decode(pbuf, 4u, &dec));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -593,5 +1020,17 @@ int main(void)
     RUN_TEST(test_db_multi_peer_replication_sync);
     RUN_TEST(test_export_skips_aborted_and_rolled_back);
     RUN_TEST(test_import_vector_advances_at_commit);
+    RUN_TEST(test_convergence_order_independent);
+    RUN_TEST(test_lww_resolves_higher_hlc);
+    RUN_TEST(test_pn_counter_apply_nets);
+    RUN_TEST(test_pn_counter_apply_nets_with_decrement);
+    RUN_TEST(test_counter_rejects_bad_payload_len);
+    RUN_TEST(test_slice_decode_rejects_corrupt_wire);
+    RUN_TEST(test_aworset_add_wins);
+    RUN_TEST(test_ts_dedup);
+    RUN_TEST(test_emit_carries_real_hlc);
+    RUN_TEST(test_baton_expiry_multirecord_survives);
+    RUN_TEST(test_import_rejects_malformed_delta);
+    RUN_TEST(test_durable_state_codecs);
     return UNITY_END();
 }

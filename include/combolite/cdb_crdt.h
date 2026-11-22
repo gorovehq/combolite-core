@@ -20,6 +20,27 @@
 #define CDB_CRDT_MAX_PEERS 32u
 #define CDB_CRDT_WIRE_MAGIC 0x43524454u /* 'CRDT' */
 
+/* Merge classification (#38). Each replicated record carries a merge class so
+ * import can converge per the CRDT semantics instead of blind last-arrival
+ * overwrite. The class travels on the wire in the high nibble of the op byte
+ * (the "merge nibble"), the base operation (CDB_OP_*) in the low nibble, so a
+ * remote importer converges correctly even without a local store registration. */
+#define CDB_CRDT_MERGE_LWW 0u     /* field/record Last-Write-Wins by HLC */
+#define CDB_CRDT_MERGE_COUNTER 1u /* PN-counter: net concurrent increments */
+#define CDB_CRDT_MERGE_AWORSET 2u /* graph link Add-Wins Observed-Remove set */
+#define CDB_CRDT_MERGE_TS 3u      /* commutative time-series append (dedup) */
+
+/* Pack/unpack the base op (low nibble) and merge class (high nibble). */
+#define CDB_CRDT_OP_BASE(op) ((uint8_t)((op) & 0x0Fu))
+#define CDB_CRDT_OP_MERGE(op) ((uint8_t)(((op) >> 4) & 0x0Fu))
+#define CDB_CRDT_OP_PACK(base, merge) \
+    ((uint8_t)((((uint8_t)(merge) & 0x0Fu) << 4) | ((uint8_t)(base) & 0x0Fu)))
+
+/* Upper bound on an imported delta payload (fail-closed validation, CWE-190).
+ * Generous: the journal record buffer rejects anything it cannot hold with
+ * CDB_E_INVALID_ARG; this only screens absurd/oversized lengths early. */
+#define CDB_CRDT_MAX_DELTA_LEN (1u << 24)
+
 /* Hybrid Logical Clock (HLC) timestamp. Total ordering across nodes. */
 typedef struct cdb_hlc {
     uint64_t physical; /* epoch timestamp (e.g. microseconds or logical counter) */
@@ -127,6 +148,24 @@ typedef struct cdb_crdt_delta_rec {
     const uint8_t *data;
     size_t len;
 } cdb_crdt_delta_rec;
+
+/* Validates an imported delta as untrusted input (#38, fail-closed): the base
+ * op must be a known CDB_OP_*, the merge nibble a known CDB_CRDT_MERGE_*, the
+ * payload length bounded, and a non-empty payload non-NULL. Returns CDB_OK when
+ * the delta is safe to apply, CDB_E_MALFORMED / CDB_E_INVALID_ARG otherwise. */
+cdb_status cdb_crdt_delta_validate(const cdb_crdt_delta_rec *r);
+
+/* Durable-state value codecs (#38). Serialize the per-record convergence state
+ * (HLC and PN-counter) for a backward-compatible side store. The in-core engine
+ * keeps this state in a bounded session table today; these codecs define the
+ * durable wire so persistence can be layered on without a format change. */
+#define CDB_CRDT_HLC_ENC_LEN 16u
+#define CDB_CRDT_PN_ENC_LEN (CDB_CRDT_MAX_PEERS * 16u)
+
+void cdb_crdt_hlc_encode(cdb_hlc h, uint8_t out[CDB_CRDT_HLC_ENC_LEN]);
+cdb_hlc cdb_crdt_hlc_decode(const uint8_t in[CDB_CRDT_HLC_ENC_LEN]);
+cdb_status cdb_crdt_pn_encode(const cdb_pn_counter *c, uint8_t *out, size_t cap, size_t *len);
+cdb_status cdb_crdt_pn_decode(const uint8_t *in, size_t len, cdb_pn_counter *c);
 
 /* Encodes a delta slice containing delta records. */
 cdb_status cdb_crdt_slice_encode(uint32_t sender_peer_id, const cdb_crdt_delta_rec *recs,

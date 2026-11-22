@@ -48,6 +48,43 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Fixed
 
+- **CRDT replication convergence (silent divergence / data loss)** — multi-master
+  replication merged deltas by **arrival order**, not causality, so two peers'
+  concurrent writes to the same `(store, entry)` could converge to **different
+  values depending on import order**, and the real merge primitives in
+  `src/cdb_crdt.c` had **zero callers**. Convergence is now deterministic and
+  import-order independent (spec 19.5/19.9):
+  - **Real HLC on export** — `crdt_emit` carries the clock stamped at commit from
+    the maintained `db->hlc` (each record in a transaction gets a distinct
+    sub-tick), not the transaction counter / record sequence it faked before.
+  - **Order-independent resolve** — import compares an incoming delta's HLC against
+    the target record's stored convergence clock and dispatches by merge class:
+    **LWW** (higher HLC wins, stable peer-id tiebreak), **PN-counter** (concurrent
+    increments **net** — `+100@A` and `+50@B` converge to `150` either order,
+    never last-write-wins, F1), **AWORSet** (link add-wins over a concurrent older
+    remove), and **commutative time series** (duplicate points dedup). The merge
+    class travels on the wire in the op byte's high nibble (the "merge nibble") and
+    may be registered per store with `cdb_db_crdt_set_store_merge`.
+  - **Both commit branches stamp** — the normal and the baton-expiry replay paths
+    both advance the clock and stamp each record, so a multi-record transaction
+    under replication never collapses to equal clocks and drops records on import
+    (F2).
+  - **Untrusted-delta validation** — imported deltas are validated fail-closed
+    (`cdb_crdt_delta_validate`: known op/merge nibble, bounded length CWE-190,
+    non-NULL non-empty payload); a malformed delta is rejected with no partial
+    apply.
+  - **Residuals** — the convergence state (per-record clock, per-peer PN state,
+    per-store class) is a bounded in-core, **session-scoped** table like the
+    existing `db->hlc` / version vector; record-level (not per-field) granularity;
+    durable per-record persistence is deferred (value codecs
+    `cdb_crdt_hlc_encode` / `cdb_crdt_pn_encode` provided for a backward-compatible
+    side store). The on-disk format is unchanged, so old images open unaffected.
+    **CD3** (vector-handshake codec wiring) and **CD4** (P2P gossip / discovery /
+    sockets) remain deferred — they need a transport. Held to committed
+    deterministic regression tests (`tests/test_crdt.c`:
+    `test_convergence_order_independent`, `test_pn_counter_apply_nets`,
+    `test_baton_expiry_multirecord_survives`, and per-type/validation tests,
+    red→green under ASan+UBSan). (#38)
 - **Time-series downsampling (silent wrong result over money, CWE-682)** — SUM,
   MIN, MAX and AVG over a `DECIMAL` field in a downsample recipe previously emitted
   **0 with no error** (the aggregation loop filled only the INT/F32/F64

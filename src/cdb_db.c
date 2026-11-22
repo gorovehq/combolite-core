@@ -632,6 +632,10 @@ static int drops_has(const cdb_tx_drop *d, uint32_t n, uint32_t ord)
     return 0;
 }
 
+/* #38 convergence helpers, defined with the CRDT section below. */
+static void crdt_rec_commit_one(cdb_db *db, const cdb_crdt_rec *rec);
+static cdb_status crdt_stamp_commit(cdb_db *db, uint64_t counter, uint64_t record_at);
+
 /* Advances the version vector to the replicated changes the transaction
  * that just committed applied (spec 19.4). */
 static void crdt_commit_pending(cdb_db *db)
@@ -645,6 +649,10 @@ static void crdt_commit_pending(cdb_db *db)
             cdb_crdt_vector_set(&db->crdt_vector, h.peer_id, h.physical, h);
     }
     db->n_crdt_pend = 0;
+    /* #38: the transaction's staged convergence records become committed. */
+    for (i = 0; i < db->n_crdt_rec_pend; i++)
+        crdt_rec_commit_one(db, &db->crdt_rec_pend[i]);
+    db->n_crdt_rec_pend = 0;
 }
 
 int cdb_tx_dropped(const cdb_db *db, uint64_t off)
@@ -2099,6 +2107,7 @@ static cdb_status tx_begin_locked(cdb_db *db, cdb_durability durability)
     db->tx_data = 0;
     db->tx_ndrops = 0;
     db->n_crdt_pend = 0;
+    db->n_crdt_rec_pend = 0; /* #38: staged convergence records are per transaction */
     db->stage_used = 0;
     db->stage_overflow = 0;
     db->stage_removals = 0;
@@ -2884,6 +2893,15 @@ static cdb_status tx_commit_locked(cdb_db *db)
         /* A standing baton expired while applying: give it up and replay
          * onto the overlay instead (spec 5.9.8). */
         db->last_tx = counter;
+        /* #38 F2: stamp distinct per-record clocks here too, exactly as the
+         * normal commit path does, before flushing — otherwise a multi-record
+         * replicated transaction committed via this branch would export equal
+         * clocks and import would drop all but one record. */
+        if (db->peer_id != 0 && !db->in_crdt_import && (s = crdt_stamp_commit(db, counter, record_at))
+                                                            != CDB_OK) {
+            db->failed = 1;
+            return s;
+        }
         crdt_commit_pending(db);
         if ((s = cdb_coord_baton_release(&db->coord)) == CDB_OK)
             s = rebase(db);
@@ -2899,12 +2917,10 @@ static cdb_status tx_commit_locked(cdb_db *db)
         db->applied++;
     db->last_tx = counter;
     crdt_commit_pending(db);
-    if (db->peer_id != 0 && !db->in_crdt_import) {
-        int64_t now_ns = 0;
-        int have_ns = 0;
-        cdb_db_now(db, &now_ns, &have_ns);
-        cdb_hlc_tick(&db->hlc, have_ns ? (uint64_t)now_ns : (db->hlc.physical + 1u));
-        cdb_crdt_vector_set(&db->crdt_vector, db->peer_id, counter, db->hlc);
+    if (db->peer_id != 0 && !db->in_crdt_import && (s = crdt_stamp_commit(db, counter, record_at))
+                                                        != CDB_OK) {
+        db->failed = 1;
+        return s;
     }
     return CDB_OK;
 }
@@ -3065,6 +3081,9 @@ cdb_status cdb_tx_rollback_to(cdb_db *db, const cdb_tx_mark *mark)
         stage_idx_rewind(db, mark->stage_idx_used, mark->stage_idx_overflow);
     while (db->n_crdt_pend > 0 && db->crdt_pend_ord[db->n_crdt_pend - 1u] >= mark->data)
         db->n_crdt_pend--;
+    /* #38: drop staged convergence records at or past the savepoint too. */
+    while (db->n_crdt_rec_pend > 0 && db->crdt_rec_pend_ord[db->n_crdt_rec_pend - 1u] >= mark->data)
+        db->n_crdt_rec_pend--;
     db_unlock(db);
     return CDB_OK;
 }
@@ -4527,6 +4546,190 @@ static cdb_status db_get_crdt_vector_in(const cdb_db *db, cdb_crdt_vector *vecto
     return CDB_OK;
 }
 
+/* ---------------------------------------------- #38 convergence state helpers */
+
+/* The merge class registered for a store, or CDB_CRDT_MERGE_LWW by default. */
+static uint8_t crdt_class_of_store(const cdb_db *db, uint64_t store_id)
+{
+    uint32_t i;
+    for (i = 0; i < db->n_crdt_classes; i++)
+        if (db->crdt_classes[i].store_id == store_id)
+            return db->crdt_classes[i].klass;
+    return (uint8_t)CDB_CRDT_MERGE_LWW;
+}
+
+/* The committed convergence record for (store,entry), or NULL. */
+static const cdb_crdt_rec *crdt_rec_find_committed(const cdb_db *db, uint64_t store_id,
+                                                   uint64_t entry_id)
+{
+    uint32_t i;
+    for (i = 0; i < db->n_crdt_recs; i++)
+        if (db->crdt_recs[i].in_use && db->crdt_recs[i].store_id == store_id
+            && db->crdt_recs[i].entry_id == entry_id)
+            return &db->crdt_recs[i];
+    return NULL;
+}
+
+/* Upserts a committed convergence record. Bounded: when the table is full a new
+ * key overwrites the oldest slot (a stated residual — bounded session state). */
+static void crdt_rec_commit_one(cdb_db *db, const cdb_crdt_rec *rec)
+{
+    uint32_t i;
+    for (i = 0; i < db->n_crdt_recs; i++) {
+        if (db->crdt_recs[i].in_use && db->crdt_recs[i].store_id == rec->store_id
+            && db->crdt_recs[i].entry_id == rec->entry_id) {
+            db->crdt_recs[i] = *rec;
+            db->crdt_recs[i].in_use = 1u;
+            return;
+        }
+    }
+    if (db->n_crdt_recs < CDB_CRDT_REC_CAP) {
+        db->crdt_recs[db->n_crdt_recs] = *rec;
+        db->crdt_recs[db->n_crdt_recs].in_use = 1u;
+        db->n_crdt_recs++;
+        return;
+    }
+    db->crdt_recs[0] = *rec;
+    db->crdt_recs[0].in_use = 1u;
+}
+
+/* The effective current convergence record for (store,entry): the record staged
+ * by the import call in progress, else an open transaction's staged record, else
+ * the committed one, else a zeroed record seeded for class. Returns 1 on a hit. */
+static int crdt_rec_effective(const cdb_db *db, uint64_t store_id, uint64_t entry_id,
+                              uint8_t klass, cdb_crdt_rec *out)
+{
+    uint32_t i;
+    const cdb_crdt_rec *src = NULL;
+    for (i = db->n_crdt_call_recs; i > 0; i--)
+        if (db->crdt_call_recs[i - 1u].store_id == store_id
+            && db->crdt_call_recs[i - 1u].entry_id == entry_id) {
+            src = &db->crdt_call_recs[i - 1u];
+            break;
+        }
+    if (src == NULL)
+        for (i = db->n_crdt_rec_pend; i > 0; i--)
+            if (db->crdt_rec_pend[i - 1u].store_id == store_id
+                && db->crdt_rec_pend[i - 1u].entry_id == entry_id) {
+                src = &db->crdt_rec_pend[i - 1u];
+                break;
+            }
+    if (src == NULL)
+        src = crdt_rec_find_committed(db, store_id, entry_id);
+    if (src != NULL) {
+        *out = *src;
+        return 1;
+    }
+    memset(out, 0, sizeof *out);
+    out->store_id = store_id;
+    out->entry_id = entry_id;
+    out->klass = klass;
+    return 0;
+}
+
+/* Stages a convergence record for the import call in progress (crdt_call_recs).
+ * Fails closed when the bounded per-call table is full. */
+static cdb_status crdt_rec_stage_call(cdb_db *db, const cdb_crdt_rec *rec)
+{
+    uint32_t i;
+    for (i = 0; i < db->n_crdt_call_recs; i++)
+        if (db->crdt_call_recs[i].store_id == rec->store_id
+            && db->crdt_call_recs[i].entry_id == rec->entry_id) {
+            db->crdt_call_recs[i] = *rec;
+            db->crdt_call_recs[i].in_use = 1u;
+            return CDB_OK;
+        }
+    if (db->n_crdt_call_recs >= CDB_CRDT_REC_CAP)
+        return CDB_E_OUT_OF_BUDGET;
+    db->crdt_call_recs[db->n_crdt_call_recs] = *rec;
+    db->crdt_call_recs[db->n_crdt_call_recs].in_use = 1u;
+    db->n_crdt_call_recs++;
+    return CDB_OK;
+}
+
+/* The PN-counter slot for a peer within a record, assigning a fresh slot on
+ * first sight. Returns CDB_CRDT_MAX_PEERS when the record's slots are exhausted. */
+static uint32_t crdt_pn_slot(cdb_crdt_rec *rec, uint32_t peer_id)
+{
+    uint32_t i;
+    for (i = 0; i < rec->pn_count; i++)
+        if (rec->pn_peer[i] == peer_id)
+            return i;
+    if (rec->pn_count >= CDB_CRDT_MAX_PEERS)
+        return CDB_CRDT_MAX_PEERS;
+    rec->pn_peer[rec->pn_count] = peer_id;
+    return rec->pn_count++;
+}
+
+cdb_status cdb_db_crdt_set_store_merge(cdb_db *db, uint64_t store_id, uint8_t merge_class)
+{
+    uint32_t i;
+    cdb_status s = CDB_OK;
+    if (db == NULL || merge_class > CDB_CRDT_MERGE_TS)
+        return CDB_E_INVALID_ARG;
+    db_lock(db);
+    for (i = 0; i < db->n_crdt_classes; i++)
+        if (db->crdt_classes[i].store_id == store_id) {
+            db->crdt_classes[i].klass = merge_class;
+            db_unlock(db);
+            return CDB_OK;
+        }
+    if (db->n_crdt_classes >= CDB_CRDT_CLASS_CAP) {
+        s = CDB_E_OUT_OF_BUDGET;
+    } else {
+        db->crdt_classes[db->n_crdt_classes].store_id = store_id;
+        db->crdt_classes[db->n_crdt_classes].klass = merge_class;
+        db->n_crdt_classes++;
+    }
+    db_unlock(db);
+    return s;
+}
+
+/* Stamps each data record of the just-committed local transaction (in the
+ * journal between tx_start and record_at) with a distinct, sub-ticked HLC drawn
+ * from the real db->hlc, recording the per-record convergence clock so export
+ * carries the real clock and later imports compare against it. Replicated-in
+ * records are skipped (they keep their origin clock). Both commit branches call
+ * this so a multi-record transaction never collapses equal clocks (#38 F2). */
+static cdb_status crdt_stamp_commit(cdb_db *db, uint64_t counter, uint64_t record_at)
+{
+    cdb_tx_drop drops[CDB_TX_MAX_DROPS];
+    uint32_t ndrops = 0, ord = 0;
+    uint64_t off = db->tx_start;
+    cdb_status s;
+
+    if (db->tx_ndrops > 0
+        && (s = collect_drops(db, &db->journal, db->tx_id, db->tx_start, record_at, drops, &ndrops))
+               != CDB_OK)
+        return s;
+
+    while (off < record_at) {
+        cdb_record d;
+        uint64_t dnext;
+        if ((s = read_record(db, &db->journal, off, db->cfg.record_buf, db->cfg.record_buf_size, &d,
+                             &dnext))
+            != CDB_OK)
+            return s;
+        if (d.kind == CDB_RECORD_DATA && d.tx_id == db->tx_id) {
+            if (!drops_has(drops, ndrops, ord++) && !(d.flags & CDB_RECORD_FLAG_REPLICATED)) {
+                cdb_crdt_rec rec;
+                int64_t now_ns = 0;
+                int have_ns = 0;
+                cdb_db_now(db, &now_ns, &have_ns);
+                cdb_hlc_tick(&db->hlc, have_ns ? (uint64_t)now_ns : (db->hlc.physical + 1u));
+                (void)crdt_rec_effective(db, d.store_id, d.entry_id,
+                                         crdt_class_of_store(db, d.store_id), &rec);
+                rec.klass = crdt_class_of_store(db, d.store_id);
+                rec.hlc = db->hlc;
+                crdt_rec_commit_one(db, &rec);
+            }
+        }
+        off = dnext;
+    }
+    cdb_crdt_vector_set(&db->crdt_vector, db->peer_id, counter, db->hlc);
+    return CDB_OK;
+}
+
 /* One exported delta: measured into *off when out is NULL, written at
  * out + *off otherwise. */
 static void crdt_emit(const cdb_db *db, const cdb_record *r, uint8_t *out, size_t *off,
@@ -4534,12 +4737,26 @@ static void crdt_emit(const cdb_db *db, const cdb_record *r, uint8_t *out, size_
 {
     size_t dlen = r->payload_len > 0 ? (size_t)(r->payload_len - 1u) : 0u;
     if (out != NULL) {
+        /* #38 FR1: carry the real per-record HLC and the merge nibble. The clock
+         * is the one stamped at commit (crdt_stamp_commit); a record older than
+         * the bounded table falls back to a distinct (counter, seq) clock. */
+        uint8_t base = r->payload_len > 0 ? r->payload[0] : 0u;
+        const cdb_crdt_rec *rec = crdt_rec_find_committed(db, r->store_id, r->entry_id);
+        uint8_t klass = rec != NULL ? rec->klass : crdt_class_of_store(db, r->store_id);
+        cdb_hlc h;
+        if (rec != NULL) {
+            h = rec->hlc;
+        } else {
+            h.physical = r->tx_id & TX_COUNTER_MASK;
+            h.logical = (uint32_t)r->seq;
+            h.peer_id = db->peer_id;
+        }
         cdb_store_u64(out + *off, r->store_id, CDB_ORDER_BIG);
         cdb_store_u64(out + *off + 8, r->entry_id, CDB_ORDER_BIG);
-        out[*off + 16] = r->payload_len > 0 ? r->payload[0] : 0;
-        cdb_store_u64(out + *off + 17, r->tx_id & TX_COUNTER_MASK, CDB_ORDER_BIG);
-        cdb_store_u32(out + *off + 25, (uint32_t)r->seq, CDB_ORDER_BIG);
-        cdb_store_u32(out + *off + 29, db->peer_id, CDB_ORDER_BIG);
+        out[*off + 16] = CDB_CRDT_OP_PACK(base, klass);
+        cdb_store_u64(out + *off + 17, h.physical, CDB_ORDER_BIG);
+        cdb_store_u32(out + *off + 25, h.logical, CDB_ORDER_BIG);
+        cdb_store_u32(out + *off + 29, h.peer_id, CDB_ORDER_BIG);
         cdb_store_u32(out + *off + 33, (uint32_t)dlen, CDB_ORDER_BIG);
         if (dlen > 0)
             memcpy(out + *off + 37, r->payload + 1, dlen);
@@ -4673,6 +4890,7 @@ static cdb_status crdt_import_begin(cdb_db *db, crdt_import *im)
     }
     im->ord0 = db->tx_data;
     db->in_crdt_import = 1;
+    db->n_crdt_call_recs = 0; /* #38: fresh convergence staging for this import call */
     return CDB_OK;
 }
 
@@ -4694,35 +4912,161 @@ static int crdt_seen(const cdb_db *db, const crdt_import *im, cdb_hlc h)
     return 0;
 }
 
-static cdb_status crdt_import_one(cdb_db *db, crdt_import *im, const cdb_crdt_delta_rec *r)
+/* Resolves one validated delta against the current convergence state of its
+ * (store,entry), deterministically and independent of import order (#38): the
+ * outcome depends only on the delta's clock/class, never on arrival order. The
+ * resulting page write (if any) and the updated convergence record are staged
+ * for the import call. op carries the base operation (merge nibble stripped). */
+static cdb_status crdt_resolve(cdb_db *db, crdt_import *im, const cdb_crdt_delta_rec *r,
+                               uint8_t klass)
 {
+    cdb_crdt_rec cur;
+    cdb_status s;
+
+    (void)crdt_rec_effective(db, r->store_id, r->entry_id, klass, &cur);
+    cur.klass = klass;
+
+    switch (klass) {
+    case CDB_CRDT_MERGE_COUNTER: {
+        int64_t delta, net;
+        uint8_t nv[8];
+        uint32_t slot;
+        /* A PN-counter delta is a signed 8-byte big-endian increment. Concurrent
+         * increments from different peers NET via per-peer P/N sums (F1): never a
+         * last-write-wins fall-through that would silently drop one. */
+        if (r->len != 8u)
+            return CDB_E_MALFORMED;
+        delta = (int64_t)cdb_load_u64(r->data, CDB_ORDER_BIG);
+        slot = crdt_pn_slot(&cur, r->hlc.peer_id);
+        if (slot >= CDB_CRDT_MAX_PEERS)
+            return CDB_E_OUT_OF_BUDGET;
+        if (delta >= 0)
+            cdb_pn_counter_inc(&cur.pn, slot, (uint64_t)delta);
+        else
+            cdb_pn_counter_dec(&cur.pn, slot, (uint64_t)(-(delta + 1)) + 1u);
+        net = cdb_pn_counter_val(&cur.pn);
+        cdb_store_u64(nv, (uint64_t)net, CDB_ORDER_BIG);
+        if ((s = cdb_tx_put(db, r->store_id, r->entry_id, r->op, nv, sizeof nv)) != CDB_OK)
+            return s;
+        if (cdb_hlc_compare(r->hlc, cur.hlc) > 0)
+            cur.hlc = r->hlc;
+        im->applied++;
+        break;
+    }
+    case CDB_CRDT_MERGE_AWORSET: {
+        int is_add = (r->op == CDB_OP_INSERT || r->op == CDB_OP_REPLACE || r->op == CDB_OP_LINK);
+        int add_seen, rem_seen, alive;
+        if (is_add) {
+            if (cdb_hlc_compare(r->hlc, cur.add_hlc) > 0)
+                cur.add_hlc = r->hlc;
+        } else if (cdb_hlc_compare(r->hlc, cur.rem_hlc) > 0) {
+            cur.rem_hlc = r->hlc;
+        }
+        add_seen = cur.add_hlc.physical != 0 || cur.add_hlc.logical != 0 || cur.add_hlc.peer_id != 0;
+        rem_seen = cur.rem_hlc.physical != 0 || cur.rem_hlc.logical != 0 || cur.rem_hlc.peer_id != 0;
+        if (!add_seen)
+            alive = 0;
+        else if (!rem_seen)
+            alive = 1;
+        else {
+            cdb_crdt_link_token a, b;
+            memset(&a, 0, sizeof a);
+            memset(&b, 0, sizeof b);
+            a.hlc = cur.add_hlc;
+            a.tombstoned = 0;
+            b.hlc = cur.rem_hlc;
+            b.tombstoned = 1;
+            alive = cdb_crdt_link_resolve(a, b);
+        }
+        /* Add-wins: writing the add's data only on an add delta or when a remove
+         * finally kills the link; a remove that loses to a newer add is a no-op
+         * (the add's value already stands on the page). */
+        if (is_add) {
+            if (alive)
+                s = cdb_tx_put(db, r->store_id, r->entry_id, CDB_OP_INSERT, r->data, r->len);
+            else
+                s = cdb_tx_put(db, r->store_id, r->entry_id, CDB_OP_DELETE, NULL, 0);
+            if (s != CDB_OK)
+                return s;
+            im->applied++;
+        } else if (!alive) {
+            if ((s = cdb_tx_put(db, r->store_id, r->entry_id, CDB_OP_DELETE, NULL, 0)) != CDB_OK)
+                return s;
+            im->applied++;
+        }
+        if (cdb_hlc_compare(r->hlc, cur.hlc) > 0)
+            cur.hlc = r->hlc;
+        break;
+    }
+    case CDB_CRDT_MERGE_TS: {
+        /* Commutative append: duplicate (origin, clock) points are already
+         * screened by the causal dedup above, so each distinct point applies
+         * once, order-independently. */
+        if ((s = cdb_tx_put(db, r->store_id, r->entry_id, r->op, r->data, r->len)) != CDB_OK)
+            return s;
+        if (cdb_hlc_compare(r->hlc, cur.hlc) > 0)
+            cur.hlc = r->hlc;
+        im->applied++;
+        break;
+    }
+    default: {
+        /* LWW: the higher HLC wins, with a stable peer-id tiebreak baked into
+         * cdb_hlc_compare. A losing write leaves the page untouched, so both
+         * import orders converge to the same (highest-clock) value. A delta with
+         * no origin (peer_id 0) carries no causality to converge on, so it keeps
+         * the existing contract of always re-applying. */
+        int wins = cdb_hlc_compare(r->hlc, cur.hlc) > 0;
+        if (wins || r->hlc.peer_id == 0) {
+            if ((s = cdb_tx_put(db, r->store_id, r->entry_id, r->op, r->data, r->len)) != CDB_OK)
+                return s;
+            if (wins)
+                cur.hlc = r->hlc;
+            im->applied++;
+        }
+        break;
+    }
+    }
+    return crdt_rec_stage_call(db, &cur);
+}
+
+static cdb_status crdt_import_one(cdb_db *db, crdt_import *im, const cdb_crdt_delta_rec *wire)
+{
+    cdb_crdt_delta_rec r = *wire;
+    uint8_t klass;
     int64_t now_ns = 0;
     int have_ns = 0;
     uint32_t i;
     cdb_status s;
 
-    if (r->hlc.peer_id == db->peer_id && db->peer_id != 0)
+    /* #38 FR8/AC12: an imported delta is untrusted — validate before use. */
+    if ((s = cdb_crdt_delta_validate(&r)) != CDB_OK)
+        return s;
+    klass = CDB_CRDT_OP_MERGE(r.op);
+    r.op = CDB_CRDT_OP_BASE(r.op); /* strip the merge nibble for the apply layer */
+    if (klass == CDB_CRDT_MERGE_LWW)
+        klass = crdt_class_of_store(db, r.store_id);
+
+    if (r.hlc.peer_id == db->peer_id && db->peer_id != 0)
         return CDB_OK;
-    if (r->hlc.peer_id != 0 && crdt_seen(db, im, r->hlc))
+    if (r.hlc.peer_id != 0 && crdt_seen(db, im, r.hlc))
         return CDB_OK;
-    if (r->hlc.peer_id != 0) {
-        for (i = 0; i < im->nadv && im->adv[i].peer_id != r->hlc.peer_id; i++)
+    if (r.hlc.peer_id != 0) {
+        for (i = 0; i < im->nadv && im->adv[i].peer_id != r.hlc.peer_id; i++)
             ;
         if (i == im->nadv && im->nadv == CDB_CRDT_MAX_PEERS)
             return CDB_E_OUT_OF_BUDGET;
     }
 
     cdb_db_now(db, &now_ns, &have_ns);
-    cdb_hlc_update(&db->hlc, r->hlc, have_ns ? (uint64_t)now_ns : (db->hlc.physical + 1u));
-    if ((s = cdb_tx_put(db, r->store_id, r->entry_id, r->op, r->data, r->len)) != CDB_OK)
+    cdb_hlc_update(&db->hlc, r.hlc, have_ns ? (uint64_t)now_ns : (db->hlc.physical + 1u));
+    if ((s = crdt_resolve(db, im, &r, klass)) != CDB_OK)
         return s;
-    im->applied++;
-    if (r->hlc.peer_id != 0) {
+    if (r.hlc.peer_id != 0) {
         if (i == im->nadv)
             im->nadv++;
-        im->adv[i].peer_id = r->hlc.peer_id;
-        im->adv[i].counter = r->hlc.physical;
-        im->adv[i].hlc = r->hlc;
+        im->adv[i].peer_id = r.hlc.peer_id;
+        im->adv[i].counter = r.hlc.physical;
+        im->adv[i].hlc = r.hlc;
     }
     return CDB_OK;
 }
@@ -4731,6 +5075,7 @@ static cdb_status crdt_import_one(cdb_db *db, crdt_import *im, const cdb_crdt_de
 static void crdt_import_fail(cdb_db *db, crdt_import *im)
 {
     db->in_crdt_import = 0;
+    db->n_crdt_call_recs = 0; /* #38: discard the failed call's staged records */
     if (im->own_tx)
         (void)cdb_tx_abort(db);
     else if (cdb_tx_rollback_to(db, &im->mark) != CDB_OK)
@@ -4741,7 +5086,8 @@ static cdb_status crdt_import_end(cdb_db *db, crdt_import *im, uint32_t remote_p
 {
     cdb_status s;
     uint32_t i;
-    if (db->n_crdt_pend + im->nadv > CDB_CRDT_PEND_CAP) {
+    if (db->n_crdt_pend + im->nadv > CDB_CRDT_PEND_CAP
+        || db->n_crdt_rec_pend + db->n_crdt_call_recs > CDB_CRDT_REC_CAP) {
         crdt_import_fail(db, im);
         return CDB_E_OUT_OF_BUDGET;
     }
@@ -4750,6 +5096,14 @@ static cdb_status crdt_import_end(cdb_db *db, crdt_import *im, uint32_t remote_p
         db->crdt_pend_ord[db->n_crdt_pend] = im->ord0;
         db->n_crdt_pend++;
     }
+    /* #38: the call's convergence records move to the transaction's staged set,
+     * tagged with the call's first ordinal so a savepoint rollback drops them. */
+    for (i = 0; i < db->n_crdt_call_recs; i++) {
+        db->crdt_rec_pend[db->n_crdt_rec_pend] = db->crdt_call_recs[i];
+        db->crdt_rec_pend_ord[db->n_crdt_rec_pend] = im->ord0;
+        db->n_crdt_rec_pend++;
+    }
+    db->n_crdt_call_recs = 0;
     if (im->own_tx) {
         s = im->applied > 0 ? cdb_tx_commit(db) : cdb_tx_abort(db);
         db->in_crdt_import = 0;
