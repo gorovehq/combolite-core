@@ -1,13 +1,23 @@
 /* Streaming API & Content-Addressed Blob Storage (spec 8.4, 14.15).
  *
  * Overflow chains of type 0x0007, content-addressed with SHA-256 or HMAC-SHA-256. */
+#include <stdint.h>
 #include <string.h>
 
 #include "combolite/cdb_blob.h"
+#include "cdb_db.h"
 #include "cdb_endian.h"
+#include "cdb_index.h"
 #include "cdb_overflow.h"
 #include "cdb_page.h"
 #include "cdb_pager.h"
+
+/* Dedup index entry layout (issue #39): key = domain(8, big-endian) ||
+ * content hash(32); value = refcount, first_page, page_count, total_len
+ * (u64 each), then flags (u32), in the pager's byte order. Fixed sizes so the
+ * value always stays inline in the leaf. */
+#define BLOB_DEDUP_KEY_LEN (8u + CDB_CRYPTO_HASH_SIZE)
+#define BLOB_DEDUP_VAL_LEN 36u
 
 static uint64_t load_lid(const cdb_pager *p, const uint8_t *b)
 {
@@ -180,24 +190,52 @@ cdb_status cdb_blob_write_abort(cdb_blob_writer *w)
     return CDB_OK;
 }
 
+/* Loads and validates the chain page lid into r->page_buf. The expected part
+ * length and end-of-chain flag follow from bytes_remaining (the content left
+ * from this page onward), exactly as the overflow reader derives them, so a
+ * malformed interior page is rejected whether or not hashing is enabled. */
+static cdb_status blob_load_page(cdb_blob_reader *r, uint64_t lid)
+{
+    cdb_pager *p = r->pager;
+    size_t room = cdb_overflow_room(p);
+    uint64_t rem = r->bytes_remaining;
+    size_t part = (rem < (uint64_t)room) ? (size_t)rem : room;
+    int last = rem <= (uint64_t)room;
+    uint64_t next = 0;
+    const uint8_t *body;
+    cdb_status s =
+        cdb_overflow_chain_page(p, lid, r->store_id, part, last, r->page_buf, &next, &body);
+    if (s != CDB_OK)
+        return s;
+    r->curr_page = lid;
+    r->next_page = next;
+    r->curr_page_bytes = part;
+    r->curr_offset_in_page = 0;
+    return CDB_OK;
+}
+
 cdb_status cdb_blob_read_begin(cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref,
                                uint8_t *page_buf, int verify_hash, const uint8_t *enclave_key,
                                cdb_blob_reader *r)
 {
     cdb_status s;
+    int do_verify;
     if (p == NULL || ref == NULL || page_buf == NULL || r == NULL)
         return CDB_E_INVALID_ARG;
+
+    /* Verify-by-default: only the explicit opt-out sentinel skips it. */
+    do_verify = (verify_hash != CDB_BLOB_NO_VERIFY);
 
     memset(r, 0, sizeof *r);
     r->pager = p;
     r->store_id = store_id;
     r->ref = *ref;
     r->page_buf = page_buf;
-    r->verify_hash = verify_hash;
+    r->verify_hash = do_verify;
     r->bytes_remaining = ref->total_len;
     r->curr_page = ref->first_page;
 
-    if (verify_hash) {
+    if (do_verify) {
         if (enclave_key != NULL)
             s = cdb_crypto_hash_init_hmac(&r->hash_ctx, enclave_key);
         else
@@ -207,7 +245,7 @@ cdb_status cdb_blob_read_begin(cdb_pager *p, uint64_t store_id, const cdb_blob_r
     }
 
     if (ref->total_len == 0) {
-        if (verify_hash) {
+        if (do_verify) {
             uint8_t h[CDB_CRYPTO_HASH_SIZE];
             r->verify_hash = 0;
             if ((s = cdb_crypto_hash_final(&r->hash_ctx, h)) != CDB_OK)
@@ -222,21 +260,9 @@ cdb_status cdb_blob_read_begin(cdb_pager *p, uint64_t store_id, const cdb_blob_r
     if (ref->first_page == 0)
         return CDB_E_CORRUPT;
 
-    /* Read first page of the chain */
-    cdb_page_header h;
-    s = cdb_pager_read(p, r->curr_page, page_buf, &h);
-    if (s != CDB_OK)
-        return s == CDB_E_NOT_FOUND ? CDB_E_CORRUPT : s;
-    if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW)
-        || h.store_id != store_id)
-        return CDB_E_CORRUPT;
-    if (h.payload_len < p->addr_width)
-        return CDB_E_CORRUPT;
-
-    const uint8_t *pl = page_buf + cdb_page_payload_offset(p->fmt);
-    r->next_page = load_lid(p, pl);
-    r->curr_page_bytes = h.payload_len - p->addr_width;
-    r->curr_offset_in_page = 0;
+    /* Read and validate the first page of the chain (tight length + link). */
+    if ((s = blob_load_page(r, ref->first_page)) != CDB_OK)
+        return s;
     r->is_open = 1;
     return CDB_OK;
 }
@@ -268,22 +294,8 @@ cdb_status cdb_blob_read_chunk(cdb_blob_reader *r, void *dest, size_t cap, size_
         if (r->curr_offset_in_page == r->curr_page_bytes) {
             if (r->next_page == 0)
                 return CDB_E_CORRUPT; /* truncated chain */
-
-            r->curr_page = r->next_page;
-            cdb_page_header h;
-            s = cdb_pager_read(r->pager, r->curr_page, r->page_buf, &h);
-            if (s != CDB_OK)
-                return s == CDB_E_NOT_FOUND ? CDB_E_CORRUPT : s;
-            if (h.type != CDB_PAGE_TYPE_OVERFLOW || !(h.flags & CDB_PAGE_FLAG_OVERFLOW)
-                || h.store_id != r->store_id)
-                return CDB_E_CORRUPT;
-            if (h.payload_len < r->pager->addr_width)
-                return CDB_E_CORRUPT;
-
-            const uint8_t *pl = r->page_buf + cdb_page_payload_offset(r->pager->fmt);
-            r->next_page = load_lid(r->pager, pl);
-            r->curr_page_bytes = h.payload_len - r->pager->addr_width;
-            r->curr_offset_in_page = 0;
+            if ((s = blob_load_page(r, r->next_page)) != CDB_OK)
+                return s;
         }
 
         size_t avail = r->curr_page_bytes - r->curr_offset_in_page;
@@ -329,13 +341,202 @@ cdb_status cdb_blob_read_end(cdb_blob_reader *r)
     return CDB_OK;
 }
 
+/* Rejects a total_len that would not fit a size_t, guarding the uint64 ->
+ * size_t conversion against silent truncation (issue #39, FR5). size_max is a
+ * runtime argument so the comparison is between two uint64 values (no
+ * tautological-constant warning on an LP64 host) and the guard is testable on
+ * any platform via cdb_blob_len_within_for_test. */
+static cdb_status blob_len_within(uint64_t total_len, uint64_t size_max)
+{
+    return total_len > size_max ? CDB_E_OVERFLOW : CDB_OK;
+}
+
+cdb_status cdb_blob_len_within_for_test(uint64_t total_len, uint64_t size_max)
+{
+    return blob_len_within(total_len, size_max);
+}
+
 cdb_status cdb_blob_free(cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref,
                          uint8_t *page_buf)
 {
+    cdb_status s;
     if (p == NULL || ref == NULL || page_buf == NULL)
         return CDB_E_INVALID_ARG;
     if (ref->first_page == 0 || ref->total_len == 0)
         return CDB_OK;
+    if ((s = blob_len_within(ref->total_len, SIZE_MAX)) != CDB_OK)
+        return s;
 
     return cdb_overflow_free(p, ref->first_page, store_id, (size_t)ref->total_len, page_buf);
+}
+
+/* ---------------------------------- content-addressed dedup index (#39) --- */
+
+/* Builds the 40-byte dedup key: domain (8, big-endian) || content hash. */
+static void blob_dedup_key(uint64_t domain, const uint8_t hash[CDB_CRYPTO_HASH_SIZE], uint8_t *key)
+{
+    cdb_store_u64(key, domain, CDB_ORDER_BIG);
+    memcpy(key + 8, hash, CDB_CRYPTO_HASH_SIZE);
+}
+
+/* Encodes a dedup value: refcount then the canonical chain locator. */
+static void blob_dedup_val_encode(uint8_t *v, uint64_t refc, uint64_t first_page,
+                                  uint64_t page_count, uint64_t total_len, uint32_t flags,
+                                  cdb_byte_order o)
+{
+    cdb_store_u64(v, refc, o);
+    cdb_store_u64(v + 8, first_page, o);
+    cdb_store_u64(v + 16, page_count, o);
+    cdb_store_u64(v + 24, total_len, o);
+    cdb_store_u32(v + 32, flags, o);
+}
+
+/* Opens the per-database dedup index rooted at catroot.dedup_root, creating it
+ * (and recording its root in the catalog root slot) when create is set and it
+ * does not exist yet. *have is 0 when there is none and create is 0. Mirrors
+ * the lazy-provision pattern of the salt table. */
+static cdb_status blob_dedup_open(cdb_db *db, cdb_index *ix, int create, int *have)
+{
+    cdb_status s;
+    *have = 0;
+    if (db->cfg.catalog_work.bytes == NULL)
+        return CDB_E_STATE; /* the dedup index needs catalog work memory */
+    if (db->pager.catroot.dedup_root != 0) {
+        if ((s = cdb_index_open(ix, &db->pager, db->pager.catroot.dedup_root,
+                                &db->cfg.catalog_work))
+            != CDB_OK)
+            return s;
+        *have = 1;
+        return CDB_OK;
+    }
+    if (!create)
+        return CDB_OK;
+    if ((s = cdb_index_create(ix, &db->pager, 0, CDB_INDEX_FLAG_UNIQUE, &db->cfg.catalog_work))
+        != CDB_OK)
+        return s;
+    {
+        cdb_catroot r = db->pager.catroot;
+        r.dedup_root = ix->root; /* durable with the next pager commit */
+        cdb_pager_set_catroot(&db->pager, &r);
+    }
+    *have = 1;
+    return CDB_OK;
+}
+
+cdb_status cdb_blob_write_end_db(cdb_db *db, cdb_blob_writer *w, uint64_t domain,
+                                 cdb_blob_ref *out_ref)
+{
+    cdb_status s;
+    cdb_index ix;
+    int have, found;
+    uint8_t key[BLOB_DEDUP_KEY_LEN], val[BLOB_DEDUP_VAL_LEN];
+    size_t vlen;
+    uint64_t store_id, refc;
+    uint8_t *page;
+
+    if (db == NULL || w == NULL || out_ref == NULL)
+        return CDB_E_INVALID_ARG;
+
+    store_id = w->store_id;
+    page = w->scratch; /* reusable as a page buffer once the stream is finalized */
+
+    /* Finalize the transient chain and compute the content hash. */
+    if ((s = cdb_blob_write_end(w, out_ref)) != CDB_OK)
+        return s;
+    if (out_ref->total_len == 0)
+        return CDB_OK; /* empty blobs are not deduplicated */
+
+    blob_dedup_key(domain, out_ref->hash, key);
+    if ((s = blob_dedup_open(db, &ix, 1, &have)) != CDB_OK)
+        return s;
+    if ((s = cdb_index_get(&ix, key, sizeof key, val, sizeof val, &vlen, &found)) != CDB_OK)
+        return s;
+
+    if (found) {
+        uint64_t stored_first, stored_count;
+        if (vlen != BLOB_DEDUP_VAL_LEN)
+            return CDB_E_CORRUPT;
+        refc = cdb_load_u64(val, db->pager.order);
+        stored_first = cdb_load_u64(val + 8, db->pager.order);
+        stored_count = cdb_load_u64(val + 16, db->pager.order);
+        if (refc == 0 || stored_first == 0)
+            return CDB_E_CORRUPT; /* a corrupt dedup entry */
+        if (refc == UINT64_MAX)
+            return CDB_E_OVERFLOW; /* saturate, never wrap (fail closed) */
+
+        /* Bump and persist the refcount BEFORE releasing the duplicate chain,
+         * so a failure between the two leaks storage rather than losing data. */
+        blob_dedup_val_encode(val, refc + 1u, stored_first, stored_count,
+                              cdb_load_u64(val + 24, db->pager.order),
+                              cdb_load_u32(val + 32, db->pager.order), db->pager.order);
+        if ((s = cdb_index_put(&ix, key, sizeof key, val, sizeof val)) != CDB_OK)
+            return s;
+
+        /* Release the just-written duplicate chain and return the stored ref. */
+        if ((s = blob_len_within(out_ref->total_len, SIZE_MAX)) != CDB_OK)
+            return s;
+        if ((s = cdb_overflow_free(&db->pager, out_ref->first_page, store_id,
+                                   (size_t)out_ref->total_len, page))
+            != CDB_OK)
+            return s;
+        out_ref->first_page = stored_first;
+        out_ref->page_count = stored_count;
+        return CDB_OK;
+    }
+
+    /* First copy of this content in the domain: record refcount 1. */
+    blob_dedup_val_encode(val, 1u, out_ref->first_page, out_ref->page_count, out_ref->total_len,
+                          out_ref->flags, db->pager.order);
+    return cdb_index_put(&ix, key, sizeof key, val, sizeof val);
+}
+
+cdb_status cdb_blob_free_db(cdb_db *db, uint64_t store_id, uint64_t domain, const cdb_blob_ref *ref,
+                            uint8_t *page_buf)
+{
+    cdb_status s;
+    cdb_index ix;
+    int have, found;
+    uint8_t key[BLOB_DEDUP_KEY_LEN], val[BLOB_DEDUP_VAL_LEN];
+    size_t vlen;
+    uint64_t refc;
+
+    if (db == NULL || ref == NULL || page_buf == NULL)
+        return CDB_E_INVALID_ARG;
+    if (ref->first_page == 0 || ref->total_len == 0)
+        return CDB_OK;
+    if ((s = blob_len_within(ref->total_len, SIZE_MAX)) != CDB_OK)
+        return s; /* guard the size_t conversion (FR5) */
+
+    blob_dedup_key(domain, ref->hash, key);
+    if ((s = blob_dedup_open(db, &ix, 0, &have)) != CDB_OK)
+        return s;
+
+    if (have) {
+        if ((s = cdb_index_get(&ix, key, sizeof key, val, sizeof val, &vlen, &found)) != CDB_OK)
+            return s;
+        if (found) {
+            if (vlen != BLOB_DEDUP_VAL_LEN)
+                return CDB_E_CORRUPT;
+            refc = cdb_load_u64(val, db->pager.order);
+            if (refc == 0)
+                return CDB_E_CORRUPT; /* a corrupt dedup entry */
+            if (refc > 1u) {
+                /* Still referenced: decrement and keep the pages. */
+                blob_dedup_val_encode(val, refc - 1u, cdb_load_u64(val + 8, db->pager.order),
+                                      cdb_load_u64(val + 16, db->pager.order),
+                                      cdb_load_u64(val + 24, db->pager.order),
+                                      cdb_load_u32(val + 32, db->pager.order), db->pager.order);
+                return cdb_index_put(&ix, key, sizeof key, val, sizeof val);
+            }
+            /* Last reference: drop the entry and release the chain. */
+            if ((s = cdb_index_delete(&ix, key, sizeof key, &found)) != CDB_OK)
+                return s;
+            return cdb_overflow_free(&db->pager, ref->first_page, store_id, (size_t)ref->total_len,
+                                     page_buf);
+        }
+    }
+
+    /* No dedup record (legacy or non-deduplicated ref): release directly. */
+    return cdb_overflow_free(&db->pager, ref->first_page, store_id, (size_t)ref->total_len,
+                             page_buf);
 }
