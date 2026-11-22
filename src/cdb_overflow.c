@@ -116,9 +116,11 @@ cdb_status cdb_overflow_write(cdb_pager *p, uint64_t store, const void *data, si
 /* Reads one page of a chain and checks it is what the chain needs next.
  * part is the number of value bytes this page must hold; last says whether
  * it must end the chain (next ID 0) or continue it (next ID not 0). Any
- * mismatch in type, flag, store, length or link is CDB_E_CORRUPT. */
-static cdb_status chain_page(cdb_pager *p, uint64_t lid, uint64_t store, size_t part, int last,
-                             uint8_t *page, uint64_t *next, const uint8_t **body)
+ * mismatch in type, flag, store, length or link is CDB_E_CORRUPT. Promoted
+ * from a static helper (#39) so the content-addressed blob reader can reuse
+ * the exact same page validation. */
+cdb_status cdb_overflow_chain_page(cdb_pager *p, uint64_t lid, uint64_t store, size_t part,
+                                   int last, uint8_t *page, uint64_t *next, const uint8_t **body)
 {
     cdb_page_header h;
     const uint8_t *pl;
@@ -166,7 +168,8 @@ cdb_status cdb_overflow_read_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64
             size_t part = len < room ? len : room;
             const uint8_t *body;
             uint64_t next;
-            if ((s = chain_page(p, lid, store, part, len == part, page, &next, &body)) != CDB_OK)
+            if ((s = cdb_overflow_chain_page(p, lid, store, part, len == part, page, &next, &body))
+                != CDB_OK)
                 return s;
             memcpy(dst, body, part);
             dst += part;
@@ -206,7 +209,8 @@ cdb_status cdb_overflow_free_db(cdb_db *db, cdb_pager *p, uint64_t first, uint64
             size_t part = len < room ? len : room;
             const uint8_t *body;
             uint64_t next;
-            if ((s = chain_page(p, lid, store, part, len == part, page, &next, &body)) != CDB_OK)
+            if ((s = cdb_overflow_chain_page(p, lid, store, part, len == part, page, &next, &body))
+                != CDB_OK)
                 return s;
             if ((s = cdb_pager_free(p, lid)) != CDB_OK)
                 return s;
