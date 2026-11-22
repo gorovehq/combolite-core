@@ -99,6 +99,10 @@ static inline void cdb_storage_close(const cdb_storage *s)
 
 #define CDB_HOSTFILE_CREATE 0x1u   /* create the file if it does not exist */
 #define CDB_HOSTFILE_READONLY 0x2u /* open read-only; writes return CDB_E_READ_ONLY */
+/* With CDB_HOSTFILE_CREATE, create the file atomically and return CDB_E_EXISTS
+ * if it already exists (O_EXCL; issue #46). Without CDB_HOSTFILE_CREATE it is
+ * rejected with CDB_E_INVALID_ARG. */
+#define CDB_HOSTFILE_EXCL 0x4u
 
 /* Caller-owned state for one open host file. */
 typedef struct cdb_hostfile {

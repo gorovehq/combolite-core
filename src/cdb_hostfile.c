@@ -138,7 +138,9 @@ static const cdb_storage_ops hostfile_ops = {hf_read,     hf_program, hf_erase, 
                                              hf_geometry, hf_size,    hf_close, hf_truncate};
 
 /* Read-only together with create is refused (CDB_E_INVALID_ARG). A missing
- * file without create is CDB_E_NOT_FOUND. */
+ * file without create is CDB_E_NOT_FOUND. Exclusive create (CDB_HOSTFILE_EXCL)
+ * is a create-or-claim: it needs CDB_HOSTFILE_CREATE, and returns CDB_E_EXISTS
+ * when the file already exists so exactly one racing creator wins (#46). */
 cdb_status cdb_hostfile_open(cdb_hostfile *hf, const char *path, unsigned flags, cdb_storage *out)
 {
     int oflags;
@@ -147,16 +149,25 @@ cdb_status cdb_hostfile_open(cdb_hostfile *hf, const char *path, unsigned flags,
         return CDB_E_INVALID_ARG;
     if ((flags & CDB_HOSTFILE_READONLY) && (flags & CDB_HOSTFILE_CREATE))
         return CDB_E_INVALID_ARG;
+    if ((flags & CDB_HOSTFILE_EXCL) && !(flags & CDB_HOSTFILE_CREATE))
+        return CDB_E_INVALID_ARG;
     oflags = (flags & CDB_HOSTFILE_READONLY) ? O_RDONLY : O_RDWR;
     if (flags & CDB_HOSTFILE_CREATE)
         oflags |= O_CREAT;
+    if (flags & CDB_HOSTFILE_EXCL)
+        oflags |= O_EXCL;
     oflags |= O_CLOEXEC;
 
     do {
         hf->fd = open(path, oflags, S_IRUSR | S_IWUSR);
     } while (hf->fd < 0 && errno == EINTR);
-    if (hf->fd < 0)
+    if (hf->fd < 0) {
+        /* O_EXCL turns a pre-existing file into EEXIST: report it as the
+         * typed "already claimed" status the create path relies on. */
+        if ((flags & CDB_HOSTFILE_EXCL) && errno == EEXIST)
+            return CDB_E_EXISTS;
         return hf_errno_status();
+    }
     hf->flags = flags;
     out->ops = &hostfile_ops;
     out->ctx = hf;
