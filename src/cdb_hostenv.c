@@ -43,6 +43,8 @@ static cdb_status he_open(void *ctx, const char *path, unsigned flags, cdb_stora
         hf_flags |= CDB_HOSTFILE_CREATE;
     if (flags & CDB_ENV_READONLY)
         hf_flags |= CDB_HOSTFILE_READONLY;
+    if (flags & CDB_ENV_EXCL)
+        hf_flags |= CDB_HOSTFILE_EXCL; /* create-or-claim, maps to O_EXCL (#46) */
     if ((s = cdb_hostfile_open(&he->files[i], path, hf_flags, out)) != CDB_OK)
         return s;
     he->used[i] = 1;
