@@ -3,6 +3,7 @@
 #include "combolite/cdb_crdt.h"
 #include "cdb_crdt.h"
 #include "cdb_endian.h"
+#include "cdb_journal.h" /* CDB_OP_* for delta validation */
 
 /* ------------------------------------------------------------ HLC */
 
@@ -285,6 +286,82 @@ int cdb_crdt_link_resolve(cdb_crdt_link_token a, cdb_crdt_link_token b)
 int cdb_crdt_ts_same_point(cdb_crdt_ts_point a, cdb_crdt_ts_point b)
 {
     return a.series_id == b.series_id && a.ts == b.ts && a.peer_id == b.peer_id;
+}
+
+/* ------------------------------------------------------------ Delta Validation */
+
+cdb_status cdb_crdt_delta_validate(const cdb_crdt_delta_rec *r)
+{
+    uint8_t base, merge;
+    if (r == NULL)
+        return CDB_E_INVALID_ARG;
+    base = CDB_CRDT_OP_BASE(r->op);
+    merge = CDB_CRDT_OP_MERGE(r->op);
+    if (base < CDB_OP_INSERT || base > CDB_OP_UNLINK)
+        return CDB_E_MALFORMED;
+    if (merge > CDB_CRDT_MERGE_TS)
+        return CDB_E_MALFORMED;
+    if (r->len > (size_t)CDB_CRDT_MAX_DELTA_LEN)
+        return CDB_E_MALFORMED;
+    if (r->len > 0 && r->data == NULL)
+        return CDB_E_INVALID_ARG;
+    return CDB_OK;
+}
+
+/* ------------------------------------------------------------ Durable-State Codecs */
+
+void cdb_crdt_hlc_encode(cdb_hlc h, uint8_t out[CDB_CRDT_HLC_ENC_LEN])
+{
+    if (out == NULL)
+        return;
+    cdb_store_u64(out, h.physical, CDB_ORDER_BIG);
+    cdb_store_u32(out + 8, h.logical, CDB_ORDER_BIG);
+    cdb_store_u32(out + 12, h.peer_id, CDB_ORDER_BIG);
+}
+
+cdb_hlc cdb_crdt_hlc_decode(const uint8_t in[CDB_CRDT_HLC_ENC_LEN])
+{
+    cdb_hlc h;
+    memset(&h, 0, sizeof h);
+    if (in == NULL)
+        return h;
+    h.physical = cdb_load_u64(in, CDB_ORDER_BIG);
+    h.logical = cdb_load_u32(in + 8, CDB_ORDER_BIG);
+    h.peer_id = cdb_load_u32(in + 12, CDB_ORDER_BIG);
+    return h;
+}
+
+cdb_status cdb_crdt_pn_encode(const cdb_pn_counter *c, uint8_t *out, size_t cap, size_t *len)
+{
+    uint32_t i;
+    size_t off = 0;
+    if (c == NULL || len == NULL)
+        return CDB_E_INVALID_ARG;
+    *len = (size_t)CDB_CRDT_PN_ENC_LEN;
+    if (out == NULL || cap < (size_t)CDB_CRDT_PN_ENC_LEN)
+        return CDB_E_BUFFER_TOO_SMALL;
+    for (i = 0; i < CDB_CRDT_MAX_PEERS; i++) {
+        cdb_store_u64(out + off, c->p[i], CDB_ORDER_BIG);
+        cdb_store_u64(out + off + 8, c->n[i], CDB_ORDER_BIG);
+        off += 16u;
+    }
+    return CDB_OK;
+}
+
+cdb_status cdb_crdt_pn_decode(const uint8_t *in, size_t len, cdb_pn_counter *c)
+{
+    uint32_t i;
+    size_t off = 0;
+    if (in == NULL || c == NULL)
+        return CDB_E_INVALID_ARG;
+    if (len != (size_t)CDB_CRDT_PN_ENC_LEN)
+        return CDB_E_MALFORMED;
+    for (i = 0; i < CDB_CRDT_MAX_PEERS; i++) {
+        c->p[i] = cdb_load_u64(in + off, CDB_ORDER_BIG);
+        c->n[i] = cdb_load_u64(in + off + 8, CDB_ORDER_BIG);
+        off += 16u;
+    }
+    return CDB_OK;
 }
 
 /* ------------------------------------------------------------ Wire Protocol */
