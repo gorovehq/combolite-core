@@ -236,3 +236,10 @@ cdb_add_test(test_compile_proc_cov)
 cdb_add_test(test_crypto_cov2)
 cdb_add_test(test_table_cov3)
 cdb_add_test(test_robustness_f56)
+
+# --- #35: query-engine front-end ---
+cdb_add_test(test_cmbql_operators_text)
+cdb_add_test(test_db_query)
+cdb_add_test(test_cmbql_grammar_abuse)
+cdb_add_test(test_trigger_dispatch_edge)
+cdb_add_test(test_db_query_edge)

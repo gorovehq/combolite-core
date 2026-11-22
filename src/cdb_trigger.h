@@ -21,6 +21,11 @@ struct cdb_db;
 #define CDB_TRIGGER_MAX_NAME 32u
 #define CDB_TRIGGER_DEFAULT_MAX_DEPTH 8u
 
+/* Trigger procedure registry (#35, spec 11.6): the sandboxed bytecode a trigger
+ * runs, resolved by proc_name at dispatch. No-heap: bytecode is stored inline. */
+#define CDB_TRIGGER_MAX_PROCS 8u
+#define CDB_TRIGGER_PROC_BYTECODE_CAP 512u
+
 typedef struct cdb_trigger_def {
     char name[CDB_TRIGGER_MAX_NAME];
     size_t name_len;
@@ -30,6 +35,14 @@ typedef struct cdb_trigger_def {
     size_t proc_len;
     uint8_t max_depth;
 } cdb_trigger_def;
+
+/* A compiled trigger procedure keyed by name (spec 11.2/11.6). */
+typedef struct cdb_trigger_proc {
+    char name[CDB_TRIGGER_MAX_NAME];
+    size_t name_len;
+    uint8_t bytecode[CDB_TRIGGER_PROC_BYTECODE_CAP];
+    size_t bytecode_len;
+} cdb_trigger_proc;
 
 typedef struct cdb_schedule_def {
     char name[CDB_TRIGGER_MAX_NAME];
@@ -47,10 +60,19 @@ typedef struct cdb_trigger_registry {
     cdb_schedule_def schedules[CDB_MAX_SCHEDULED_TASKS];
     size_t n_schedules;
 
+    cdb_trigger_proc procs[CDB_TRIGGER_MAX_PROCS];
+    size_t n_procs;
+
     cdb_worker_pool *pool;
     uint64_t cascade_threshold;
     uint64_t total_dispatched;
     int cascade_warning_issued;
+
+    /* Observability of the most recent trigger procedure actually executed
+     * (spec 11.6). last_proc_ran distinguishes a real dispatch+exec from the
+     * old no-op; last_proc_ret is the procedure's return value. */
+    int last_proc_ran;
+    cdb_value last_proc_ret;
 } cdb_trigger_registry;
 
 /* Initializes the trigger and scheduled task registry */
@@ -64,6 +86,14 @@ cdb_status cdb_trigger_register(cdb_trigger_registry *reg, const char *name, siz
 
 /* Unregisters a trigger by name */
 cdb_status cdb_trigger_unregister(cdb_trigger_registry *reg, const char *name, size_t name_len);
+
+/* Registers (or replaces) a compiled trigger procedure's bytecode under a name
+ * so cdb_trigger_dispatch can resolve and execute it (spec 11.2/11.6). The
+ * bytecode is copied into the registry (no-heap, caller retains ownership).
+ * CDB_E_INVALID_ARG on bad arguments; CDB_E_BUFFER_TOO_SMALL when the bytecode
+ * exceeds CDB_TRIGGER_PROC_BYTECODE_CAP or the proc table is full. */
+cdb_status cdb_trigger_register_proc(cdb_trigger_registry *reg, const char *name, size_t name_len,
+                                     const uint8_t *bytecode, size_t bytecode_len);
 
 /* Dispatches matching event triggers for a committed store mutation */
 cdb_status cdb_trigger_dispatch(cdb_trigger_registry *reg, struct cdb_db *db, uint64_t store_id,

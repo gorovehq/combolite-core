@@ -29,6 +29,8 @@
 #include "cdb_table.h"
 #include "cdb_ts.h"
 #include "cdb_vec.h"
+#include "cdb_compiler.h" /* #35: cdb_db_query compiles CMBQL text */
+#include "cdb_exec.h"     /* #35: cdb_db_query opens a streaming cursor */
 
 #define DEFAULT_SYNC_EVERY 32u /* NORMAL durability: a barrier every 32 commits (spec 14.4.6) */
 #define TX_RESERVE_BLOCK 1024u /* transaction counters reserved per slot write (spec 14.4.3) */
@@ -43,6 +45,7 @@ static void db_unlock(cdb_db *db);
 static void start_heartbeat(cdb_db *db);
 static void stop_heartbeat_thread(cdb_db *db);
 static void cleanup_concurrency(cdb_db *db);
+static cdb_status drain_pending_triggers(cdb_db *db); /* #35: post-commit triggers */
 
 /*
  * #16: type-correct trampoline for the pager guard slot, which is typed
@@ -2025,6 +2028,7 @@ static cdb_status tx_begin_locked(cdb_db *db, cdb_durability durability)
         && (s = cdb_coord_reserve_tx(&db->coord, db->next_tx + TX_RESERVE_BLOCK)) != CDB_OK)
         return s;
     db->in_tx = 1;
+    db->n_pending_triggers = 0; /* #35: fresh post-commit trigger capture per tx */
     db->tx_id = ((uint64_t)db->coord.me.slot << 48) | db->next_tx++;
     /* Remember where this transaction's records start in the journal; the
      * commit applies records from here. */
@@ -2204,6 +2208,37 @@ static cdb_status tx_put_in(cdb_db *db, uint64_t store_id, uint64_t entry_id, ui
     if (s == CDB_OK) {
         db->tx_deltas++;
         db->tx_data++;
+        /* Capture a post-commit trigger event for a matching store mutation
+         * (#35, spec 11.9: triggers run after commit). Only data mutations with
+         * a matching registered trigger are captured; the ring is drained after
+         * the commit is durable. Overflow fails closed (ADR-3). */
+        if (db->triggers.n_triggers > 0) {
+            uint8_t ev = 0;
+            if (op == CDB_OP_INSERT)
+                ev = CDB_TRIGGER_AFTER_INSERT;
+            else if (op == CDB_OP_REPLACE || op == CDB_OP_PATCH)
+                ev = CDB_TRIGGER_AFTER_UPDATE;
+            else if (op == CDB_OP_DELETE)
+                ev = CDB_TRIGGER_AFTER_DELETE;
+            if (ev != 0) {
+                int matched = 0;
+                for (size_t ti = 0; ti < db->triggers.n_triggers; ti++) {
+                    const cdb_trigger_def *t = &db->triggers.triggers[ti];
+                    if (t->store_id == store_id && (t->events & ev) != 0) {
+                        matched = 1;
+                        break;
+                    }
+                }
+                if (matched) {
+                    if (db->n_pending_triggers >= CDB_DB_MAX_PENDING_TRIGGERS)
+                        return CDB_E_OUT_OF_BUDGET; /* never silently drop a trigger */
+                    size_t pi = db->n_pending_triggers++;
+                    db->pending_triggers[pi].store_id = store_id;
+                    db->pending_triggers[pi].entry_id = entry_id;
+                    db->pending_triggers[pi].event = ev;
+                }
+            }
+        }
     }
     return s;
 }
@@ -2814,6 +2849,17 @@ cdb_status cdb_tx_commit(cdb_db *db)
     s = tx_commit_locked(db);
     cdb_coord_status_end(&db->coord, &sv);
     db_unlock(db);
+    /* Fire post-commit triggers (#35, spec 11.6/11.9) now that the commit record
+     * is durable and the lock is released (a trigger proc may open a sub-tx).
+     * ADR-4: a trigger error surfaces as the commit status but does not undo the
+     * already-committed base mutation. On a failed commit, drop captured events.*/
+    if (s == CDB_OK && !db->in_tx && db->n_pending_triggers > 0) {
+        cdb_status ts = drain_pending_triggers(db);
+        if (ts != CDB_OK)
+            s = ts;
+    } else if (s != CDB_OK) {
+        db->n_pending_triggers = 0;
+    }
     /* A used-up entry-ID block is released only once reconciliation has
      * recorded its store's next entry ID (prune_held_blocks), and the slot
      * holds at most CDB_COORD_MAX_BLOCKS (spec 5.9.3). Reconcile when half
@@ -2849,6 +2895,7 @@ cdb_status cdb_tx_abort(cdb_db *db)
     }
     s = append_abort(db);
     db->in_tx = 0;
+    db->n_pending_triggers = 0; /* #35: aborted mutations fire no triggers */
     db_unlock(db);
     return s;
 }
@@ -4107,6 +4154,74 @@ static cdb_status db_trigger_unregister_in(cdb_db *db, const char *name, size_t 
     if (db == NULL)
         return CDB_E_INVALID_ARG;
     return cdb_trigger_unregister(&db->triggers, name, name_len);
+}
+
+cdb_status cdb_db_register_proc(cdb_db *db, const char *name, size_t name_len,
+                                const uint8_t *bytecode, size_t bytecode_len)
+{
+    cdb_status r;
+    if (db == NULL)
+        return CDB_E_INVALID_ARG;
+    cdb_db_lock(db);
+    r = cdb_trigger_register_proc(&db->triggers, name, name_len, bytecode, bytecode_len);
+    cdb_db_unlock(db);
+    return r;
+}
+
+/* Fires any post-commit triggers captured during the just-committed transaction
+ * (#35, spec 11.6/11.9). Called after the commit record is durable and the lock
+ * is released, so a trigger procedure may itself open a sub-transaction. The
+ * base mutation is already committed (ADR-4): a trigger-procedure error is
+ * surfaced to the caller but does not roll the committed data back. The ring is
+ * always cleared, so a failing trigger does not re-fire on the next commit. */
+static cdb_status drain_pending_triggers(cdb_db *db)
+{
+    cdb_status first_err = CDB_OK;
+    size_t n = db->n_pending_triggers;
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        cdb_value new_val;
+        cdb_status s;
+        /* Row-identity marshalling: the mutated entry ID is passed as the new
+         * value (old is NULL). Full row-content marshalling is a later
+         * refinement; the identity is enough to drive and prove dispatch. */
+        cdb_eval_make_int(&new_val, (int64_t)db->pending_triggers[i].entry_id);
+        s = cdb_trigger_dispatch(&db->triggers, db, db->pending_triggers[i].store_id,
+                                 db->pending_triggers[i].event, NULL, &new_val, 0u);
+        if (s != CDB_OK && first_err == CDB_OK)
+            first_err = s;
+    }
+    db->n_pending_triggers = 0;
+    return first_err;
+}
+
+/* -------------------------------------------------- public CMBQL text query */
+
+cdb_status cdb_db_query(cdb_db *db, const char *text, size_t text_len,
+                        const struct cdb_eval_param *params, size_t n_params, uint8_t *wire_scratch,
+                        size_t wire_cap, struct cdb_exec_cursor *out_cursor, uint8_t *exec_scratch,
+                        size_t exec_cap, struct cdb_compile_error *err)
+{
+    size_t wire_len = 0;
+    cdb_status s;
+
+    /* Fail closed on any missing buffer; buffers are caller-owned (no-heap). */
+    if (db == NULL || text == NULL || wire_scratch == NULL || wire_cap == 0 || out_cursor == NULL
+        || exec_scratch == NULL || exec_cap == 0)
+        return CDB_E_INVALID_ARG;
+
+    /* Compile CMBQL text -> CMBQ wire against this database's catalog. A parse
+     * error surfaces here (typed) with position/message in *err. */
+    s = cdb_compile_query(text, text_len, cdb_db_catalog(db), wire_scratch, wire_cap, &wire_len,
+                          err);
+    if (s != CDB_OK)
+        return s;
+
+    /* Open a streaming cursor over the validated plan (mirrors the proc-VM
+     * OPEN_CURSOR path). The caller drives cdb_exec_next / cdb_exec_close. */
+    return cdb_exec_open((cdb_exec_cursor *)out_cursor, db, wire_scratch, wire_len,
+                         (const cdb_eval_param *)params, n_params, exec_scratch, exec_cap);
 }
 
 /* -------------------------------------------------------- streaming blobs */

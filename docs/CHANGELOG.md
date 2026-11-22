@@ -57,12 +57,35 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Added
 
+- **CMBQL-TEXT query-engine front-end** — the eight previously text-unreachable
+  operators (`AGGREGATE`, `UNION`, `TRAVERSE`, `TEXT_SEARCH`, `VECTOR_SEARCH`,
+  `HYBRID_RANK`, `ASOF_JOIN`, `UNNEST`) now have grammar/parser productions in
+  `src/cdb_compiler.c` that compile from CMBQL text to the same CMBQ wire the
+  executor consumes — reachable via the pipeline syntax (`… | text_search(…)`,
+  `… | aggregate(by: […], n: count(*))`, `… | traverse(…)`, …) and the
+  stream-operator constructors (`TextSearch`/`VectorSearch`/`Traverse`/
+  `HybridRank`/`AsofJoin`/`Union`). `count(*)` and the aggregate functions parse
+  inside `aggregate(…)` (closing the "Unknown function call" / "Unknown pipeline
+  stage" backlog items); reserved words are accepted as field names. Malformed
+  clauses fail closed with a typed parse error (CWE-20/-674). (#35)
+- **Public `cdb_db_query(db, text, …)`** (`src/cdb_db.h`) — compiles CMBQL text
+  against the database catalog and opens a streaming execution cursor, with
+  caller-owned, no-heap-in-core buffers; fail-closed on parse/exec error. (#35)
 - `docs/CHANGELOG.md` — this file. (#20)
 - `docs/FAQ.md` — frequently asked questions covering what the engine is, the
   build/toolchain, the data models and CMBQL, cryptography, and coverage posture. (#20)
 
 ### Changed
 
+- **Triggers now fire.** `cdb_trigger_dispatch` resolves a trigger's registered
+  procedure (new `cdb_trigger_register_proc` / `cdb_db_register_proc` no-heap
+  bytecode registry), marshals the mutated row's old/new values as procedure
+  parameters, honours the per-trigger depth/cascade limit, and actually executes
+  the procedure via the proc VM — fail-closed on a procedure error (it no longer
+  `(void)`-discards its arguments and only bumps a counter). The commit path
+  (`cdb_tx_commit`) captures matching-store mutations during a transaction and
+  dispatches their post-commit triggers once the commit is durable
+  (spec 11.6/11.9). (#35)
 - Refreshed the `README.md` quickstart into a copy-pasteable
   clone → configure → build → test → coverage sequence against the real
   `CMakePresets.json` presets. (#20)
