@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "combolite/cdb_value.h"
+#include "cdb_decimal_agg.h"
 #include "cdb_doc.h"
 #include "cdb_endian.h"
 #include "cdb_audit.h"
@@ -2030,7 +2031,17 @@ typedef struct agg_state {
     cdb_value last_val;
     uint8_t last_payload[128];
     int have_last;
+    cdb_decimal_agg dec; /* exact DECIMAL SUM/MIN/MAX/AVG (spec 10.4, #40) */
 } agg_state;
+
+/* Whether an aggregation reduces values numerically (so a field type that
+ * cannot be so reduced must fail closed rather than emit a silent 0). COUNT,
+ * FIRST and LAST work on any type and are not numeric in this sense. */
+static int agg_is_numeric(uint16_t agg)
+{
+    return agg == CDB_TS_AGG_SUM || agg == CDB_TS_AGG_AVG || agg == CDB_TS_AGG_MIN
+           || agg == CDB_TS_AGG_MAX;
+}
 
 static void write_agg_val(cdb_value_writer *w, const cdb_value *v)
 {
@@ -2056,6 +2067,10 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
     cdb_ts_in pin;
     size_t enc_len;
     unsigned df;
+    uint8_t dbe[CDB_DEC_EMIT_MAX]; /* scratch for an emitted DECIMAL aggregate */
+    size_t dlen;
+    uint64_t dsc;
+    cdb_status ds;
 
     cdb_value_writer_init(&w, enc_buf, sizeof enc_buf, db->pager.order, CDB_DECIMAL_UNBOUNDED);
     cdb_value_begin_object(&w);
@@ -2085,7 +2100,13 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
                 cdb_value_write_int(&w, aggs[sf].sum_i64);
             else if (ftype == CDB_TYPE_F32)
                 cdb_value_write_f32(&w, (float)aggs[sf].sum_f64);
-            else
+            else if (ftype == CDB_TYPE_DECIMAL) {
+                ds = cdb_decimal_agg_sum(&aggs[sf].dec, &dsc, dbe, sizeof dbe, &dlen);
+                if (ds != CDB_OK)
+                    return ds;
+                if ((ds = cdb_value_write_decimal(&w, dsc, dbe, dlen)) != CDB_OK)
+                    return ds;
+            } else
                 cdb_value_write_f64(&w, aggs[sf].sum_f64);
             break;
         case CDB_TS_AGG_MIN:
@@ -2093,7 +2114,13 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
                 cdb_value_write_int(&w, aggs[sf].min_i64);
             else if (ftype == CDB_TYPE_F32)
                 cdb_value_write_f32(&w, (float)aggs[sf].min_f64);
-            else
+            else if (ftype == CDB_TYPE_DECIMAL) {
+                ds = cdb_decimal_agg_min(&aggs[sf].dec, &dsc, dbe, sizeof dbe, &dlen);
+                if (ds != CDB_OK)
+                    return ds;
+                if ((ds = cdb_value_write_decimal(&w, dsc, dbe, dlen)) != CDB_OK)
+                    return ds;
+            } else
                 cdb_value_write_f64(&w, aggs[sf].min_f64);
             break;
         case CDB_TS_AGG_MAX:
@@ -2101,7 +2128,13 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
                 cdb_value_write_int(&w, aggs[sf].max_i64);
             else if (ftype == CDB_TYPE_F32)
                 cdb_value_write_f32(&w, (float)aggs[sf].max_f64);
-            else
+            else if (ftype == CDB_TYPE_DECIMAL) {
+                ds = cdb_decimal_agg_max(&aggs[sf].dec, &dsc, dbe, sizeof dbe, &dlen);
+                if (ds != CDB_OK)
+                    return ds;
+                if ((ds = cdb_value_write_decimal(&w, dsc, dbe, dlen)) != CDB_OK)
+                    return ds;
+            } else
                 cdb_value_write_f64(&w, aggs[sf].max_f64);
             break;
         case CDB_TS_AGG_FIRST:
@@ -2118,7 +2151,13 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
                 cdb_value_write_int(&w, aggs[sf].sum_i64 / (int64_t)aggs[sf].count);
             else if (ftype == CDB_TYPE_F32)
                 cdb_value_write_f32(&w, (float)(aggs[sf].sum_f64 / (double)aggs[sf].count));
-            else
+            else if (ftype == CDB_TYPE_DECIMAL) {
+                ds = cdb_decimal_agg_avg(&aggs[sf].dec, &dsc, dbe, sizeof dbe, &dlen);
+                if (ds != CDB_OK)
+                    return ds;
+                if ((ds = cdb_value_write_decimal(&w, dsc, dbe, dlen)) != CDB_OK)
+                    return ds;
+            } else
                 cdb_value_write_f64(&w, aggs[sf].sum_f64 / (double)aggs[sf].count);
             break;
         }
@@ -2229,6 +2268,23 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
                     && found) {
                     int64_t ival = 0;
                     double fval = 0.0;
+                    /* Exact DECIMAL numeric aggregation, and fail closed on a
+                     * type that cannot be numerically aggregated rather than
+                     * emitting a silent 0 (spec 10.4, #40). COUNT/FIRST/LAST
+                     * accept any type and skip this. */
+                    if (agg_is_numeric(spec->field_aggs[sf])) {
+                        if (v.type == CDB_TYPE_DECIMAL) {
+                            if ((s = cdb_decimal_agg_add(&aggs[sf].dec, v.as.decimal.scale,
+                                                         v.as.decimal.unscaled,
+                                                         v.as.decimal.unscaled_len))
+                                != CDB_OK)
+                                goto fail;
+                        } else if (v.type != CDB_TYPE_INT && v.type != CDB_TYPE_F64
+                                   && v.type != CDB_TYPE_F32) {
+                            s = CDB_E_UNSUPPORTED;
+                            goto fail;
+                        }
+                    }
                     if (v.type == CDB_TYPE_INT) {
                         ival = v.as.i64;
                         fval = (double)ival;
