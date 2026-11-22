@@ -374,6 +374,10 @@ typedef struct cdb_tx_mark {
     int stage_idx_overflow;
 } cdb_tx_mark;
 
+/* Maximum store mutations in one transaction that can hold a pending post-commit
+ * trigger (#35). Captures only matching-store mutations; overflow fails closed. */
+#define CDB_DB_MAX_PENDING_TRIGGERS 256u
+
 /* An open database. All fields are internal to the engine. */
 typedef struct cdb_db {
     cdb_env env;
@@ -541,6 +545,16 @@ typedef struct cdb_db {
     uint32_t n_crdt_pend;
     /* Event triggers (spec 11.6). */
     cdb_trigger_registry triggers;
+    /* Post-commit trigger firing (#35, spec 11.9: triggers run after commit).
+     * Matching store mutations captured during the open transaction are held
+     * here and drained after the commit record is durable. Bounded, no heap;
+     * overflow fails the put closed rather than silently dropping a trigger. */
+    struct {
+        uint64_t store_id;
+        uint64_t entry_id;
+        uint8_t event;
+    } pending_triggers[CDB_DB_MAX_PENDING_TRIGGERS];
+    size_t n_pending_triggers;
 } cdb_db;
 
 /* The catalog and pager inside a database, for bindings that call the
@@ -701,6 +715,34 @@ cdb_status cdb_db_trigger_register(cdb_db *db, const char *name, size_t name_len
                                    uint8_t events, const char *proc_name, size_t proc_len,
                                    uint8_t max_depth);
 cdb_status cdb_db_trigger_unregister(cdb_db *db, const char *name, size_t name_len);
+
+/* Registers a compiled trigger procedure's bytecode under a name (#35, spec
+ * 11.2/11.6) so a trigger (cdb_db_trigger_register) resolving that proc_name
+ * actually runs it when it fires. Bytecode is copied (no-heap). */
+cdb_status cdb_db_register_proc(cdb_db *db, const char *name, size_t name_len,
+                                const uint8_t *bytecode, size_t bytecode_len);
+
+/* Public CMBQL text-query entry (#35, spec 11.1/11.5). Compiles the CMBQL text
+ * against this database's catalog and opens a streaming execution cursor over
+ * the compiled plan — the text-driven pairing of the proc-VM OPEN_CURSOR path.
+ *
+ * Fail-closed and no-heap-in-core: all working memory is caller-owned.
+ * wire_scratch/wire_cap hold the compiled CMBQ wire; exec_scratch/exec_cap back
+ * the cursor's operator arena. On a parse error the typed status is returned and
+ * *err carries the position/message (never any row/secret data). On an exec-open
+ * error the typed status is returned. On success CDB_OK is returned and the
+ * caller drives cdb_exec_next / cdb_exec_close on out_cursor.
+ *
+ * Forward-declared struct tags avoid an include cycle (cdb_exec.h includes this
+ * header); callers include cdb_exec.h / cdb_eval.h / cdb_compiler.h for the
+ * concrete types. */
+struct cdb_exec_cursor;
+struct cdb_eval_param;
+struct cdb_compile_error;
+cdb_status cdb_db_query(cdb_db *db, const char *text, size_t text_len,
+                        const struct cdb_eval_param *params, size_t n_params, uint8_t *wire_scratch,
+                        size_t wire_cap, struct cdb_exec_cursor *out_cursor, uint8_t *exec_scratch,
+                        size_t exec_cap, struct cdb_compile_error *err);
 
 /* Streaming blobs (spec 8.4, 14.15). */
 cdb_status cdb_db_blob_write_begin(cdb_db *db, uint64_t store_id, uint8_t *scratch,
