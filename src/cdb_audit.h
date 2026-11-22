@@ -44,13 +44,21 @@ typedef struct cdb_audit_event {
 
 struct cdb_db;
 
-/* Appends a new event to the audit series with SHA-256 hash chaining. */
+/* Appends a new event to the audit series with SHA-256 hash chaining.
+ *
+ * The chain head is reloaded from the durable index tail before each append so
+ * concurrent coordinator slots continue the one chain (spec 12.7). When a
+ * signing policy is in effect and an identity is active, the event's self-hash
+ * is signed and stored as a fixed-size trailer (spec 12.5 default: audit-series
+ * events are signed). Payloads must be redacted: event type, sequence, hashes
+ * and non-secret references only, never key material or PII (master §5). */
 cdb_status cdb_audit_log(struct cdb_db *db, uint16_t event_type, uint32_t principal_id,
                          uint64_t store_id, uint64_t entity_id, const void *payload,
                          size_t payload_len);
 
-/* Verifies the integrity of the SHA-256 hash chain over the range [from_ts, to_ts).
- * Sets *valid to 1 if valid, 0 if tampering or corruption is detected. */
+/* Verifies the integrity of the SHA-256 hash chain over the range [from_ts, to_ts),
+ * including any event signatures present. Sets *valid to 1 if valid, 0 if
+ * tampering, a broken chain link, or a bad signature is detected. */
 cdb_status cdb_audit_verify(struct cdb_db *db, int64_t from_ts, int64_t to_ts, int *valid);
 
 /* Queries events in [from_ts, to_ts). If payload_buf is provided, payloads are copied

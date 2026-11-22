@@ -18,6 +18,13 @@
 #define AUDIT_OFF_PAYLOAD 90u
 #define AUDIT_HDR_LEN 90u
 
+/* An optional ECDSA signature (spec 12.5) is stored as a fixed-size trailer
+ * AFTER the payload, so the on-disk header layout is unchanged and records
+ * written without a signing policy stay byte-identical to before. A record's
+ * signature length is therefore derived from its total length:
+ * sig_len = vlen - AUDIT_HDR_LEN - payload_len, which is 0 (unsigned) or
+ * CDB_SIGNATURE_SIZE (signed). The signature covers the event's self-hash and
+ * is not part of the chain hash. */
 #define AUDIT_MAX_PAYLOAD 3900u
 
 static void make_audit_key(uint8_t out[16], int64_t ts, uint64_t seq)
@@ -113,7 +120,18 @@ static cdb_status compute_audit_hash(const uint8_t key[16], uint16_t event_type,
     return s;
 }
 
-static cdb_status audit_init(cdb_db *db)
+/* Reloads the chain head (sequence + last hash) from the durable audit index
+ * tail. The index is key-ordered, so the last record scanned is the newest.
+ *
+ * FR5: the chain head is not just an in-memory per-process cache. Reloading it
+ * from the committed index immediately before every append lets concurrent
+ * coordinator slots continue the ONE chain rather than forking it: a slot that
+ * sees another's reconciled events chains onto the latest, keeping the series
+ * single and tamper-evident. (Residual: the append itself is not yet
+ * baton-serialized, so a true simultaneous race between two writers that have
+ * not reconciled could still interleave; the durable head + reload is the
+ * floor the governance spec permits.) */
+static cdb_status audit_reload_head(cdb_db *db)
 {
     cdb_index ix;
     cdb_index_cursor cur;
@@ -122,19 +140,13 @@ static cdb_status audit_init(cdb_db *db)
     int done, have;
     cdb_status s;
 
-    if (db->audit_initialized)
-        return CDB_OK;
-
-    db->audit_initialized = 1;
     memset(db->last_audit_hash, 0, sizeof(db->last_audit_hash));
     db->audit_seq = 0;
 
     if (db->pager.catroot.audit_root == 0)
         return CDB_OK;
-
     if ((s = open_audit_index(db, &ix, 0, &have)) != CDB_OK || !have)
         return s;
-
     if (db->cfg.catalog_page == NULL)
         return CDB_OK;
 
@@ -153,6 +165,21 @@ static cdb_status audit_init(cdb_db *db)
     return CDB_OK;
 }
 
+static cdb_status audit_init(cdb_db *db)
+{
+    cdb_status s;
+
+    if (db->audit_initialized)
+        return CDB_OK;
+
+    db->audit_initialized = 1;
+    if ((s = audit_reload_head(db)) != CDB_OK) {
+        db->audit_initialized = 0;
+        return s;
+    }
+    return CDB_OK;
+}
+
 cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id, uint64_t store_id,
                          uint64_t entity_id, const void *payload, size_t payload_len)
 {
@@ -160,6 +187,7 @@ cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
     uint8_t k[16];
     uint8_t vbuf[4096];
     size_t vlen;
+    uint16_t sig_len = 0;
     int64_t now_ts = 0;
     int have_clk = 0, have;
     cdb_status s;
@@ -172,6 +200,11 @@ cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
     if ((s = audit_init(db)) != CDB_OK)
         return s;
 
+    /* FR5: continue the single chain across coordinator slots by reloading the
+     * durable head immediately before appending (see audit_reload_head). */
+    if ((s = audit_reload_head(db)) != CDB_OK)
+        return s;
+
     s = cdb_db_now(db, &now_ts, &have_clk);
     if (s != CDB_OK || !have_clk)
         now_ts = (int64_t)(db->audit_seq + 1u);
@@ -179,7 +212,6 @@ cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
     db->audit_seq++;
     make_audit_key(k, now_ts, db->audit_seq);
 
-    vlen = AUDIT_HDR_LEN + payload_len;
     cdb_store_u16(vbuf + AUDIT_OFF_TYPE, event_type, CDB_ORDER_BIG);
     cdb_store_u32(vbuf + AUDIT_OFF_PRINCIPAL, principal_id, CDB_ORDER_BIG);
     cdb_store_u64(vbuf + AUDIT_OFF_STORE, store_id, CDB_ORDER_BIG);
@@ -195,6 +227,23 @@ cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
     cdb_store_u32(vbuf + AUDIT_OFF_PAYLOAD_LEN, (uint32_t)payload_len, CDB_ORDER_BIG);
     if (payload_len > 0 && payload != NULL)
         memcpy(vbuf + AUDIT_OFF_PAYLOAD, payload, payload_len);
+
+    /* FR4 (spec 12.5): the default signing policy signs audit-series events.
+     * Sign the event's self-hash under the active identity when any signing
+     * policy is in effect (CDB_SIGN_AUDIT_ONLY or CDB_SIGN_EVERY_REVISION),
+     * routing the signature's randomness through the environment's RNG (FR1).
+     * The signature is a fixed-size trailer after the payload; it is not part
+     * of the chain hash, so verification can be added without reflowing the
+     * chain. Fail closed: if signing is required but fails, the event is not
+     * appended unsigned. */
+    if (db->has_identity && db->signing_policy != CDB_SIGN_NONE) {
+        s = cdb_identity_sign_env(&db->env, &db->active_identity, vbuf + AUDIT_OFF_HASH, 32,
+                                  vbuf + AUDIT_OFF_PAYLOAD + payload_len);
+        if (s != CDB_OK)
+            return s;
+        sig_len = CDB_SIGNATURE_SIZE;
+    }
+    vlen = AUDIT_HDR_LEN + payload_len + sig_len;
 
     if ((s = open_audit_index(db, &ix, 1, &have)) != CDB_OK)
         return s;
@@ -245,7 +294,7 @@ cdb_status cdb_audit_verify(cdb_db *db, int64_t from_ts, int64_t to_ts, int *val
     for (;;) {
         int64_t ts;
         uint64_t seq;
-        uint16_t type;
+        uint16_t type, sig_len;
         uint32_t principal, plen;
         uint64_t store, entity;
         uint8_t calc_hash[32];
@@ -271,7 +320,14 @@ cdb_status cdb_audit_verify(cdb_db *db, int64_t from_ts, int64_t to_ts, int *val
         entity = cdb_load_u64(v + AUDIT_OFF_ENTITY, CDB_ORDER_BIG);
         plen = cdb_load_u32(v + AUDIT_OFF_PAYLOAD_LEN, CDB_ORDER_BIG);
 
-        if (vlen != (size_t)(AUDIT_HDR_LEN + plen)) {
+        /* sig_len is derived from the record length (trailer after the payload)
+         * and must be exactly 0 (unsigned) or CDB_SIGNATURE_SIZE (signed). */
+        if (vlen < (size_t)AUDIT_HDR_LEN + plen) {
+            *valid = 0;
+            return CDB_OK;
+        }
+        sig_len = (uint16_t)(vlen - AUDIT_HDR_LEN - plen);
+        if (sig_len != 0 && sig_len != CDB_SIGNATURE_SIZE) {
             *valid = 0;
             return CDB_OK;
         }
@@ -293,6 +349,18 @@ cdb_status cdb_audit_verify(cdb_db *db, int64_t from_ts, int64_t to_ts, int *val
         if (memcmp(calc_hash, v + AUDIT_OFF_HASH, 32) != 0) {
             *valid = 0;
             return CDB_OK;
+        }
+
+        /* FR4/AC9: when the event carries a signature and an identity is
+         * active, verify it over the self-hash with the active principal's
+         * public key. A bad signature fails closed (tamper-evident). */
+        if (sig_len == CDB_SIGNATURE_SIZE && db->has_identity) {
+            if (cdb_identity_verify(db->active_identity.public_key, v + AUDIT_OFF_HASH, 32,
+                                    v + AUDIT_OFF_PAYLOAD + plen)
+                != CDB_OK) {
+                *valid = 0;
+                return CDB_OK;
+            }
         }
 
         memcpy(expected_prev, v + AUDIT_OFF_HASH, 32);

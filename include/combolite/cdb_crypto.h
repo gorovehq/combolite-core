@@ -11,6 +11,11 @@
 
 #include "combolite/cdb_common.h"
 
+/* The environment handle (cdb_env.h). Forward-declared so the crypto layer can
+ * take the engine's RNG hook (env->ops->random) without pulling the whole
+ * environment interface into every crypto consumer. */
+struct cdb_env;
+
 /* AEAD Algorithm IDs (file header offset 77, spec 12.1). */
 #define CDB_AEAD_NONE 0u
 #define CDB_AEAD_AES_256_GCM 1u
@@ -83,8 +88,20 @@ typedef struct cdb_identity {
 /* Securely zeroes memory (spec 12.6). */
 void cdb_crypto_wipe(void *buf, size_t len);
 
-/* Fills buf with cryptographically secure random bytes. */
+/* Fills buf with cryptographically secure random bytes.
+ *
+ * The no-env form is a library convenience for standalone callers that have no
+ * environment to offer; it uses the platform entropy source. Engine code that
+ * holds a cdb_env MUST use cdb_crypto_random_bytes_env so randomness flows
+ * through the environment's RNG hook (env->ops->random), honouring the
+ * no-heap/no-POSIX core contract and keeping the source injectable for tests. */
 cdb_status cdb_crypto_random_bytes(void *buf, size_t len);
+
+/* Env-routed randomness (spec 1.3 environment abstraction). Draws len bytes
+ * from env->ops->random. Fails closed with CDB_E_SECURITY when env is NULL or
+ * provides no random hook, and with CDB_E_IO when the hook reports failure:
+ * never falls back to a hardcoded entropy source. */
+cdb_status cdb_crypto_random_bytes_env(const struct cdb_env *env, void *buf, size_t len);
 
 /* Derives a 12-byte deterministic nonce: track_id (4B, big-endian) || seq (8B, big-endian). */
 void cdb_crypto_make_nonce(uint32_t track_id, uint64_t seq, uint8_t nonce[CDB_AEAD_NONCE_SIZE]);
@@ -143,6 +160,14 @@ cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
                                const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
                                uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE]);
 
+/* As cdb_crypto_wrap_key, but the per-wrap random nonce is drawn through the
+ * environment's RNG hook (fail-closed, no platform fallback). Engine code with
+ * a cdb_env uses this form. */
+cdb_status cdb_crypto_wrap_key_env(const struct cdb_env *env,
+                                   const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
+                                   const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
+                                   uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE]);
+
 cdb_status cdb_crypto_unwrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
                                  const uint8_t wrapped_in[CDB_WRAPPED_KEY_SIZE],
                                  uint8_t enclave_key_out[CDB_CRYPTO_KEY_SIZE]);
@@ -153,11 +178,23 @@ cdb_status cdb_crypto_resolve_key(const char *uri, int is_production,
                                   cdb_key_provider_fn custom_provider, void *user_data,
                                   uint8_t key_out[CDB_CRYPTO_KEY_SIZE]);
 
-/* Principal identity generation, signing, and verification (spec 12.5). */
+/* Principal identity generation, signing, and verification (spec 12.5).
+ *
+ * The no-env generate/sign forms use the platform entropy source and are for
+ * standalone callers; engine code that holds a cdb_env MUST use the _env forms
+ * so key generation and the signature's blinding randomness flow through
+ * env->ops->random (fail-closed, no hardcoded entropy). Verification needs no
+ * randomness, so it has a single form. */
 cdb_status cdb_identity_generate(cdb_identity *out_id, uint64_t principal_id, uint32_t tenant_id);
+
+cdb_status cdb_identity_generate_env(const struct cdb_env *env, cdb_identity *out_id,
+                                     uint64_t principal_id, uint32_t tenant_id);
 
 cdb_status cdb_identity_sign(const cdb_identity *id, const void *msg, size_t msg_len,
                              uint8_t sig[CDB_SIGNATURE_SIZE]);
+
+cdb_status cdb_identity_sign_env(const struct cdb_env *env, const cdb_identity *id, const void *msg,
+                                 size_t msg_len, uint8_t sig[CDB_SIGNATURE_SIZE]);
 
 cdb_status cdb_identity_verify(const uint8_t public_key[CDB_IDENTITY_PUBKEY_SIZE], const void *msg,
                                size_t msg_len, const uint8_t sig[CDB_SIGNATURE_SIZE]);
