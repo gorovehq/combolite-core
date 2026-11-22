@@ -62,4 +62,14 @@ cdb_status cdb_overflow_free_db(struct cdb_db *db, cdb_pager *p, uint64_t first,
 cdb_status cdb_overflow_nib_moved(struct cdb_db *db, uint64_t store, const uint8_t *okey,
                                   size_t oklen, uint64_t old_addr, uint64_t addr);
 
+/* Reads one page of a chain at lid and checks it is exactly what the chain
+ * needs next: part value bytes, and a next-page link that is 0 iff last.
+ * *next receives the link; *body points at the value bytes inside page.
+ * CDB_E_CORRUPT on any mismatch of type, flag, store, length or link. This
+ * is the single source of truth for overflow-page validation; the content-
+ * addressed blob reader reuses it so a malformed interior page is caught
+ * even when hash verification is off. page is a page_size buffer. */
+cdb_status cdb_overflow_chain_page(cdb_pager *p, uint64_t lid, uint64_t store, size_t part,
+                                   int last, uint8_t *page, uint64_t *next, const uint8_t **body);
+
 #endif

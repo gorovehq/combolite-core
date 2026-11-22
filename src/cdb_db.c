@@ -4372,7 +4372,10 @@ cdb_status cdb_db_blob_write_end(cdb_blob_writer *w, cdb_blob_ref *out_ref)
     cdb_db *db = w != NULL ? (cdb_db *)w->db : NULL;
     cdb_status s;
     cdb_db_lock(db);
-    s = cdb_blob_write_end(w, out_ref);
+    if (db != NULL)
+        s = cdb_blob_write_end_db(db, w, store_domain(db, w->store_id), out_ref);
+    else
+        s = cdb_blob_write_end(w, out_ref);
     cdb_db_unlock(db);
     return s;
 }
@@ -4450,7 +4453,7 @@ static cdb_status db_blob_free_in(cdb_db *db, uint64_t store_id, const cdb_blob_
 {
     if (db == NULL)
         return CDB_E_INVALID_ARG;
-    return cdb_blob_free(&db->pager, store_id, ref, page_buf);
+    return cdb_blob_free_db(db, store_id, store_domain(db, store_id), ref, page_buf);
 }
 
 /* ------------------------------------------------------------ CRDT & P2P Replication */
