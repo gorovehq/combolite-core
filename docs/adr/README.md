@@ -39,3 +39,4 @@ Use the template below; number sequentially (`NNNN-kebab-title.md`). Status is o
 |---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-no-heap-caller-owned-memory-model.md) | No heap in the core; caller-owned buffers | Accepted |
+| [0003](0003-decimal-downsample-avg-rounding.md) | Exact DECIMAL downsample aggregation and AVG rounding | Accepted |

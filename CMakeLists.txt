@@ -106,6 +106,7 @@ add_library(combolite
   src/cdb_crc32c.c
   src/cdb_varint.c
   src/cdb_value.c
+  src/cdb_decimal_agg.c
   src/cdb_hostfile.c
   src/cdb_header.c
   src/cdb_page.c

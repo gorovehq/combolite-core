@@ -40,6 +40,8 @@ Time series are sequences of timestamped values: metrics, sensor readings, event
   - **Compact.** As part of a compaction, the recipe collapses raw data **inside the collection itself**, for example replacing instantaneous watt readings with a kWh total.
   - **Threshold compaction.** The recipe collapses any run of measurements that stay within a ± threshold into a single aggregate value: mean, average, maximum, minimum and similar.
   - Compact and threshold-compaction recipes discard raw data, so they run only when the operator configures them. Otherwise the default, keep everything, applies.
+- **Aggregating DECIMAL fields.** SUM, MIN, MAX and AVG over a `DECIMAL` (money/exact) field are computed exactly, using the engine's decimal representation — never through floating point. SUM is held at the maximum input scale in the bucket; MIN/MAX return the exact stored value that is the numeric minimum/maximum; **AVG = sum / count at that maximum scale, rounded half-to-even** (banker's rounding; see ADR-0003). COUNT, FIRST and LAST are unaffected.
+- **Non-aggregatable types fail closed.** A numeric aggregate (SUM/AVG/MIN/MAX) over a type that cannot be numerically aggregated (string, binary, object, array, …) returns a typed error (`CDB_E_UNSUPPORTED`) and writes no summary point, rather than silently emitting 0.
 
 ### 10.5 Late data is configurable by the operator
 

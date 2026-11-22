@@ -48,6 +48,21 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Fixed
 
+- **Time-series downsampling (silent wrong result over money, CWE-682)** — SUM,
+  MIN, MAX and AVG over a `DECIMAL` field in a downsample recipe previously emitted
+  **0 with no error** (the aggregation loop filled only the INT/F32/F64
+  accumulators), silently corrupting money/exact data. They are now computed
+  **exactly** using a bounded, allocation-free big-integer accumulator
+  (`src/cdb_decimal_agg.{c,h}`): scale-aligned SUM, decimal-value MIN/MAX returning
+  the exact stored winner, and AVG as `sum / count` at the bucket's maximum input
+  scale rounded **half-to-even** (ADR-0003 — the spec left DECIMAL AVG rounding
+  unspecified). A numeric aggregate over a non-aggregatable type now **fails closed**
+  with `CDB_E_UNSUPPORTED` instead of a silent 0. No `double` round-trip, no
+  `__int128`, C99, `no-heap-in-core` preserved; stored bytes are length-checked and
+  intermediates fail closed with `CDB_E_OVERFLOW`. COUNT/FIRST/LAST and the
+  INT/F32/F64 paths are unchanged. Held to a committed regression test
+  (`tests/test_ts_downsample_decimal.c`, red→green proven under ASan+UBSan).
+  (DECIMAL-downsample item of #40)
 - Resolved three undefined-behaviour bugs caught by UndefinedBehaviorSanitizer,
   each held to a committed regression test (delivered together in #19):
   - **Crypto** — undefined behaviour on the cryptography path. (#15)
