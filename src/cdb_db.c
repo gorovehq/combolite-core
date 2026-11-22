@@ -821,6 +821,66 @@ static int goes_first(const struct jcursor *a, const struct jcursor *b)
     return a->counter < b->counter;
 }
 
+/* Sub-operation markers for redacted governance audit payloads (spec 12.7).
+ * Only this 1-byte marker (or, for SCHEMA, the new version number) is logged —
+ * never key material, schema bodies, or PII (master §5). */
+#define CDB_GOV_SUBOP_MASTER_KEY 1u
+#define CDB_GOV_SUBOP_BATON_ACQUIRE 1u
+
+/* Emits a redacted governance audit event (KEY_OP / BATON, spec 12.7).
+ *
+ * Emit scope (F1, #37 review): fires whenever the audit log is persistable
+ * (has_catalog), attributed to the active principal when one is registered and
+ * to principal_id=0 (unattributed) otherwise — mirroring the COLLISION emit
+ * (cdb_ts.c), which logs unconditionally with principal 0. A governance-mode
+ * database with a master key but no registered principal MUST still record
+ * master-key rotation, schema change and baton handoff; gating the whole
+ * emission on has_identity would fail open (silently unaudited), reopening the
+ * exact gap #37 closes (OWASP A09). Signing already degrades gracefully when no
+ * identity is present (cdb_audit.c signs only when has_identity). Best-effort: a
+ * failed audit append must never fail or undo the primary governance operation. */
+static void db_governance_audit(cdb_db *db, uint16_t event_type, uint64_t store_id,
+                                uint64_t entity_id, uint8_t subop)
+{
+    uint8_t pay[1];
+    uint32_t principal;
+    if (!db->has_catalog)
+        return;
+    principal = db->has_identity ? (uint32_t)db->active_identity.principal_id : 0u;
+    pay[0] = subop;
+    (void)cdb_audit_log(db, event_type, principal, store_id, entity_id, pay, sizeof pay);
+}
+
+/* FR2 (spec 12.5): verify a commit record's signature before its transaction
+ * is applied on any read path (recovery, replay, merge). When the signing
+ * policy requires signed revisions and an identity is active, a commit MUST
+ * carry a valid ECDSA signature over sha256 of its first 32 payload bytes; a
+ * missing, stripped, or tampered signature fails closed with CDB_E_SECURITY.
+ * Complete mediation: signatures are checked where they are consumed, not only
+ * written. Under any other policy verification is not forced, so an unsigned
+ * commit under an unsigned policy is never falsely rejected (AC4). */
+static cdb_status verify_commit_sig(cdb_db *db, const cdb_record *r)
+{
+    uint16_t sig_len;
+    uint8_t h[32];
+
+    if (db->signing_policy != CDB_SIGN_EVERY_REVISION || !db->has_identity)
+        return CDB_OK;
+    if (r->payload_len < CDB_COMMIT_PAYLOAD_SIZE)
+        return CDB_E_SECURITY;
+    sig_len = cdb_load_u16(r->payload + 32, db->pager.order);
+    if (sig_len != CDB_SIGNATURE_SIZE
+        || r->payload_len < (uint32_t)CDB_COMMIT_PAYLOAD_SIZE + sig_len)
+        return CDB_E_SECURITY; /* missing/stripped signature under an active policy */
+    if (cdb_crypto_sha256(r->payload, 32, h) != CDB_OK)
+        return CDB_E_SECURITY;
+    if (cdb_identity_verify(db->active_identity.public_key, h, 32,
+                            r->payload + CDB_COMMIT_PAYLOAD_SIZE)
+        != CDB_OK)
+        return CDB_E_SECURITY;
+    return CDB_OK;
+}
+
 /* Moves the cursor to its journal's next committed transaction above the
  * slot's mark (c->have is 0 when there is none), noting the highest
  * committed counter on the way.
@@ -884,6 +944,8 @@ static cdb_status scan_next(cdb_db *db, struct jcursor *c)
             if (ours && counter > c->top)
                 c->top = counter;
             if (ours && counter > c->mark) {
+                if ((s = verify_commit_sig(db, &r)) != CDB_OK)
+                    return s;
                 c->have = 1;
                 c->stamp = ci.timestamp;
                 c->counter = counter;
@@ -2764,14 +2826,21 @@ static cdb_status tx_commit_locked(cdb_db *db)
     ci.delta_count = db->tx_deltas;
     ci.track_mask = 1u << CDB_COMPANION_MAIN_JOURNAL;
     cdb_commit_encode(&ci, info, db->pager.order);
-    if (db->has_identity && db->signing_policy != CDB_SIGN_NONE) {
+    /* Spec 12.5: only CDB_SIGN_EVERY_REVISION signs commit records (the default
+     * CDB_SIGN_AUDIT_ONLY signs audit-series events, not commits). The
+     * signature covers sha256 of the first 32 payload bytes and is verified on
+     * every read path (see verify_commit_sig). Randomness routes through the
+     * environment RNG (FR1); fail closed when a required signature cannot be
+     * produced rather than writing an unsigned commit (FR2). */
+    if (db->has_identity && db->signing_policy == CDB_SIGN_EVERY_REVISION) {
         uint8_t h[32];
         cdb_crypto_sha256(info, 32, h);
-        if (cdb_identity_sign(&db->active_identity, h, 32, info + CDB_COMMIT_PAYLOAD_SIZE)
-            == CDB_OK) {
-            sig_len = CDB_SIGNATURE_SIZE;
-            cdb_store_u16(info + 32, (uint16_t)sig_len, db->pager.order);
-        }
+        s = cdb_identity_sign_env(&db->env, &db->active_identity, h, 32,
+                                  info + CDB_COMMIT_PAYLOAD_SIZE);
+        if (s != CDB_OK)
+            return s;
+        sig_len = CDB_SIGNATURE_SIZE;
+        cdb_store_u16(info + 32, (uint16_t)sig_len, db->pager.order);
     }
     memset(&r, 0, sizeof r);
     r.kind = (uint8_t)CDB_RECORD_COMMIT;
@@ -3133,10 +3202,21 @@ static cdb_status reconcile_hold_body(cdb_db *db, int closing)
 cdb_status cdb_db_reconcile(cdb_db *db)
 {
     cdb_status s;
+    int acquired;
     db_lock(db);
+    /* FR3/AC6 (spec 12.7): acquiring the baton here is a coordinator handoff to
+     * this process. Detect the not-held -> held transition so a BATON audit
+     * event is recorded for the genuine handoff only, not for a reconcile that
+     * already held a standing baton. */
+    acquired = !cdb_coord_baton_held(&db->coord);
     s = reconcile_hold(db, 0);
     if (s == CDB_OK)
         s = finish_baton(db);
+    /* Emit after the reconcile has committed so the audit append cannot be
+     * discarded by the reconcile's pager reload. Attributed-governance scope
+     * (see db_governance_audit); best-effort. */
+    if (s == CDB_OK && acquired)
+        db_governance_audit(db, CDB_AUDIT_BATON, 0, 0, CDB_GOV_SUBOP_BATON_ACQUIRE);
     db_unlock(db);
     return s;
 }
@@ -3315,8 +3395,20 @@ static cdb_status db_add_schema_in(cdb_db *db, uint64_t store_id, const void *sc
     cdb_status s = catalog_ready(db);
     if (s != CDB_OK)
         return s;
-    return finish_archive_op(db,
-                             cdb_catalog_add_schema(&db->catalog, store_id, schema, len, version));
+    s = finish_archive_op(db, cdb_catalog_add_schema(&db->catalog, store_id, schema, len, version));
+    /* FR3/AC7 (spec 12.7): a schema change is a governance event. Record a
+     * redacted SCHEMA event carrying only the store and the new version number
+     * (never the schema body, master §5), attributed to the governing principal
+     * when one is registered and to principal_id=0 otherwise (F1, #37 review:
+     * emit unconditionally when persistable, never gate on has_identity).
+     * Best-effort, after the change has committed. */
+    if (s == CDB_OK && db->has_catalog) {
+        uint8_t pay[4];
+        uint32_t principal = db->has_identity ? (uint32_t)db->active_identity.principal_id : 0u;
+        cdb_store_u32(pay, version != NULL ? *version : 0u, db->pager.order);
+        (void)cdb_audit_log(db, CDB_AUDIT_SCHEMA, principal, store_id, 0, pay, sizeof pay);
+    }
+    return s;
 }
 
 static cdb_status reclaim_dropped_under_baton(cdb_db *db, uint64_t *pages_freed,
@@ -3762,7 +3854,7 @@ static cdb_status db_create_enclave_in(cdb_db *db, uint64_t enclave_id, const ch
         if (s != CDB_OK)
             return s;
     } else {
-        s = cdb_crypto_random_bytes(raw_key, 32);
+        s = cdb_crypto_random_bytes_env(&db->env, raw_key, 32);
         if (s != CDB_OK)
             return s;
     }
@@ -3863,7 +3955,7 @@ static cdb_status db_rotate_master_key_in(cdb_db *db, const char *new_master_key
     /* Verify re-wrapping for all active enclaves under new master key */
     for (i = 0; i < sizeof(db->enclaves) / sizeof(db->enclaves[0]); i++) {
         if (db->enclaves[i].in_use) {
-            s = cdb_crypto_wrap_key(new_mk, db->enclaves[i].enclave_key, wrapped);
+            s = cdb_crypto_wrap_key_env(&db->env, new_mk, db->enclaves[i].enclave_key, wrapped);
             if (s != CDB_OK) {
                 cdb_crypto_wipe(new_mk, sizeof new_mk);
                 cdb_crypto_wipe(wrapped, sizeof wrapped);
@@ -3888,6 +3980,13 @@ static cdb_status db_rotate_master_key_in(cdb_db *db, const char *new_master_key
     /* Update pager */
     cdb_pager_set_crypto(&db->pager, db->aead_alg, db->master_key, db->integrity_key,
                          cdb_db_domain_key_cb, db);
+
+    /* FR3/AC5 (spec 12.7): a master-key rotation is a governance event. Record
+     * a redacted KEY_OP in the audit series — NO key material, only a sub-op
+     * marker (master §5). Attributed-governance scope: emitted when a principal
+     * identity governs the database (the audit event is attributed to it);
+     * best-effort so a failed audit append cannot undo a completed rotation. */
+    db_governance_audit(db, CDB_AUDIT_KEY_OP, 0, 0, CDB_GOV_SUBOP_MASTER_KEY);
 
     return CDB_OK;
 }
@@ -3931,7 +4030,7 @@ static cdb_status db_rotate_enclave_key_in(cdb_db *db, uint64_t enclave_id,
         if (s != CDB_OK)
             return s;
     } else {
-        s = cdb_crypto_random_bytes(raw_key, 32);
+        s = cdb_crypto_random_bytes_env(&db->env, raw_key, 32);
         if (s != CDB_OK)
             return s;
     }
