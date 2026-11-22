@@ -1752,13 +1752,19 @@ static cdb_status open_db(cdb_db *db, const char *base, const cdb_db_config *cfg
                          db);
 
     /* Open the archive, or create it (syncing the parent directory so the
-     * new file's name is durable). */
+     * new file's name is durable). The check above is advisory only: creation
+     * claims the file atomically with CDB_ENV_EXCL, so when two processes race
+     * to create the same new archive exactly one wins and every loser gets
+     * CDB_E_EXISTS here. We fail closed on that (return, never fall through to
+     * open-existing) so no creator ever proceeds into an archive another is
+     * still formatting (TOCTOU, CWE-367; issue #46). */
     if ((s = env_exists(db, db->archive, &exists)) != CDB_OK)
         return s;
     if (!exists) {
         if (create == NULL)
             return CDB_E_NOT_FOUND;
-        if ((s = env_open(db, db->archive, CDB_ENV_CREATE, &db->archive_st)) != CDB_OK)
+        if ((s = env_open(db, db->archive, CDB_ENV_CREATE | CDB_ENV_EXCL, &db->archive_st))
+            != CDB_OK)
             return s;
         if ((s = cdb_pager_create(&db->pager, &db->archive_st, &cfg->pager, create)) != CDB_OK)
             return s;

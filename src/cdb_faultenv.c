@@ -81,8 +81,17 @@ static cdb_status fe_open(void *ctx, const char *path, unsigned flags, cdb_stora
         return CDB_E_IO;
     if (!name_ok(path))
         return CDB_E_INVALID_ARG;
-    if ((f = find_file(fe, path)) != NULL)
+    /* Exclusive create is a create-or-claim; it is meaningless on its own. */
+    if ((flags & CDB_ENV_EXCL) && !(flags & CDB_ENV_CREATE))
+        return CDB_E_INVALID_ARG;
+    if ((f = find_file(fe, path)) != NULL) {
+        /* An exclusive creator that finds the file already there has lost the
+         * race: fail closed with the typed status, never hand back a handle
+         * over another creator's archive (#46). */
+        if (flags & CDB_ENV_EXCL)
+            return CDB_E_EXISTS;
         return cdb_faultdev_rebind(&f->dev, out); /* keep its contents */
+    }
     if (!(flags & CDB_ENV_CREATE))
         return CDB_E_NOT_FOUND;
     parent_of(path, parent);

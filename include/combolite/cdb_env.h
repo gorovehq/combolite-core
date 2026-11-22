@@ -12,6 +12,12 @@
 
 #define CDB_ENV_CREATE 0x1u   /* open: create the file if it does not exist */
 #define CDB_ENV_READONLY 0x2u /* open: read-only access */
+/* open: exclusive create. With CDB_ENV_CREATE, create the file atomically and
+ * fail with CDB_E_EXISTS if it already exists, so exactly one of several racing
+ * creators wins (the create-or-claim is a single step, never check-then-create,
+ * spec 1.3; issue #46). Without CDB_ENV_CREATE it is meaningless and the open
+ * is rejected with CDB_E_INVALID_ARG. */
+#define CDB_ENV_EXCL 0x4u
 
 /* Opaque handle types for concurrency primitives (spec 5.9.6, M20). */
 typedef struct cdb_mutex cdb_mutex;
