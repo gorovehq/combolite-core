@@ -596,7 +596,11 @@ static cdb_status project_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_r
     if (p->passthrough) {
         out_row->record_data = in_row.record_data;
         out_row->record_len = in_row.record_len;
-        for (i = 0; i < in_row.n_fields && out_row->n_fields < CDB_EXEC_MAX_FIELDS; i++) {
+        for (i = 0; i < in_row.n_fields; i++) {
+            /* Fail closed rather than silently dropping a field once the row
+             * is full: a truncated projection is a wrong answer (#36 FR5). */
+            if (out_row->n_fields >= CDB_EXEC_MAX_FIELDS)
+                return CDB_E_OVERFLOW;
             out_row->fields[out_row->n_fields++] = in_row.fields[i];
         }
     }
@@ -611,9 +615,12 @@ static cdb_status project_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_r
     cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)&in_row);
 
     /* Evaluate projected output columns */
-    for (i = 0; i < p->count && out_row->n_fields < CDB_EXEC_MAX_FIELDS; i++) {
+    for (i = 0; i < p->count; i++) {
         cdb_value val;
         size_t consumed = 0;
+        /* Fail closed rather than silently dropping a column (#36 FR5). */
+        if (out_row->n_fields >= CDB_EXEC_MAX_FIELDS)
+            return CDB_E_OVERFLOW;
         st = cdb_eval_expr_wire(&cur->eval_ctx, p->cols[i].expr_wire, p->cols[i].expr_len, &val,
                                 &consumed);
         if (st != CDB_OK)
@@ -923,6 +930,13 @@ typedef struct cdb_exec_sort {
     cdb_exec_block *row_blocks; /* host profile: the grown rows array */
     cdb_exec_pool pool;
     uint64_t keep; /* a Limit above needs only the first keep rows; 0: all */
+    /* No-heap top-N (#36 FR5): with a Limit above and no growable memory, the
+     * kept rows ping-pong between two carved pools so only O(keep) rows are
+     * ever buffered for an ORDER BY ... LIMIT k over a large store. pool is
+     * pool A; pool_b is pool B; use_b selects the currently active one. */
+    cdb_exec_pool pool_b;
+    int use_b;
+    int topn_noheap;
 } cdb_exec_sort;
 
 static int compare_rows(cdb_exec_cursor *cur, const cdb_exec_sort *s, const cdb_exec_row *a,
@@ -1050,6 +1064,51 @@ static cdb_status sort_trim(cdb_exec_cursor *cur, cdb_exec_sort *s)
     return CDB_OK;
 }
 
+/* Carves a pool worth (a share of) what remains of the arena. Used for the
+ * no-heap top-N second pool; returns CDB_E_OUT_OF_BUDGET if none is left. */
+static cdb_status carve_pool(cdb_exec_arena *arena, cdb_exec_pool *pool)
+{
+    size_t avail = (arena->cap > arena->used) ? (arena->cap - arena->used) : 0;
+    size_t share = avail / 2; /* leave half for any breaker opened above */
+
+    pool->blocks = NULL;
+    pool->a.buf = (uint8_t *)cdb_exec_arena_alloc(arena, share, sizeof(void *));
+    pool->a.cap = pool->a.buf != NULL ? share : 0;
+    pool->a.used = 0;
+    if (pool->a.buf == NULL || pool->a.cap == 0)
+        return CDB_E_OUT_OF_BUDGET;
+    return CDB_OK;
+}
+
+/* The currently active top-N pool (where new rows are stored). */
+static cdb_exec_pool *sort_active_pool(cdb_exec_sort *s)
+{
+    return s->use_b ? &s->pool_b : &s->pool;
+}
+
+/* No-heap top-N (#36 FR5): sort the ≤2*keep buffered rows, keep the best
+ * keep, copy them into the inactive pool, reset and hand back the active
+ * pool, then swap. Bounds buffered memory to O(keep) with no heap growth. */
+static cdb_status sort_topn_compact(cdb_exec_cursor *cur, cdb_exec_sort *s)
+{
+    cdb_exec_pool *dst = s->use_b ? &s->pool : &s->pool_b; /* the inactive one */
+    size_t i;
+    cdb_status st;
+
+    sort_rows(cur, s, s->rows, s->n_rows);
+    if (s->n_rows > (size_t)s->keep)
+        s->n_rows = (size_t)s->keep;
+
+    /* dst is the pool abandoned by the previous compaction; empty it. */
+    exec_free_all(cur, &dst->blocks);
+    dst->a.used = 0;
+    for (i = 0; i < s->n_rows; i++)
+        if ((st = store_row(cur, dst, s->rows[i], &s->rows[i])) != CDB_OK)
+            return st;
+    s->use_b = !s->use_b;
+    return CDB_OK;
+}
+
 static cdb_status sort_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_sort *s = (cdb_exec_sort *)op;
@@ -1060,6 +1119,9 @@ static cdb_status sort_open(cdb_exec_op *op, cdb_exec_cursor *cur)
     s->cur_idx = 0;
     s->is_buffered = 0;
     s->row_blocks = NULL;
+    s->use_b = 0;
+    s->topn_noheap = 0;
+    memset(&s->pool_b, 0, sizeof s->pool_b);
     /* The input first, so a breaker below gets its memory before this one */
     if ((st = s->input->vtab->open(s->input, cur)) != CDB_OK)
         return st;
@@ -1068,6 +1130,14 @@ static cdb_status sort_open(cdb_exec_op *op, cdb_exec_cursor *cur)
         != CDB_OK)
         return st;
     s->rows = (cdb_exec_row **)items;
+
+    /* With a Limit above and no growable memory, carve a second pool so the
+     * kept rows can ping-pong (O(keep) buffered) instead of failing once the
+     * row array fills (#36 FR5). Needs room for two generations of kept rows,
+     * so the row array must hold at least 2*keep. */
+    if (s->keep > 0 && cur->mem_budget == 0 && (uint64_t)s->keep <= (uint64_t)s->max_rows / 2
+        && carve_pool(&cur->arena, &s->pool_b) == CDB_OK)
+        s->topn_noheap = 1;
     return CDB_OK;
 }
 
@@ -1084,6 +1154,7 @@ static void sort_close(cdb_exec_op *op, cdb_exec_cursor *cur)
     cdb_exec_sort *s = (cdb_exec_sort *)op;
     if (cur->db != NULL) {
         exec_free_all(cur, &s->pool.blocks);
+        exec_free_all(cur, &s->pool_b.blocks);
         exec_free_all(cur, &s->row_blocks);
     }
     s->input->vtab->close(s->input, cur);
@@ -1100,9 +1171,13 @@ static cdb_status sort_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
     if (!s->is_buffered) {
         cdb_exec_row item;
         int in_has_row = 0;
-        /* With a Limit above, trim to the first keep rows each time twice
-         * that many are held */
-        int trim = s->keep > 0 && cur->mem_budget > 0 && s->keep <= SIZE_MAX / 4;
+        /* With a Limit above, keep only the first keep rows. On the host
+         * profile this grows a fresh pool (sort_trim); with no growable
+         * memory it ping-pongs two carved pools (sort_topn_compact). Either
+         * way the buffer is trimmed each time twice keep rows accumulate. */
+        int host_trim = s->keep > 0 && cur->mem_budget > 0 && s->keep <= SIZE_MAX / 4;
+        int noheap_trim = s->topn_noheap;
+        int trim = host_trim || noheap_trim;
 
         while (1) {
             st = s->input->vtab->next(s->input, cur, &item, &in_has_row);
@@ -1126,11 +1201,14 @@ static cdb_status sort_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
                 s->rows = grown;
                 s->max_rows *= 2;
             }
-            if ((st = store_row(cur, &s->pool, &item, &s->rows[s->n_rows])) != CDB_OK)
+            if ((st = store_row(cur, sort_active_pool(s), &item, &s->rows[s->n_rows])) != CDB_OK)
                 return st;
             s->n_rows++;
-            if (trim && s->n_rows >= 2 * s->keep && s->n_rows >= 64
+            if (host_trim && s->n_rows >= 2 * s->keep && s->n_rows >= 64
                 && (st = sort_trim(cur, s)) != CDB_OK)
+                return st;
+            else if (noheap_trim && s->n_rows >= 2 * s->keep
+                     && (st = sort_topn_compact(cur, s)) != CDB_OK)
                 return st;
         }
 
@@ -1165,7 +1243,7 @@ typedef struct cdb_exec_agg_desc {
 } cdb_exec_agg_desc;
 
 typedef struct cdb_exec_agg_group {
-    cdb_value group_vals[CDB_EXEC_MAX_FIELDS];
+    cdb_value group_vals[CDB_EXEC_MAX_GROUP_KEYS];
     double sum[CDB_EXEC_MAX_AGGS];
     double sumsq[CDB_EXEC_MAX_AGGS]; /* sum of squares, for STDDEV/VARIANCE */
     uint64_t count[CDB_EXEC_MAX_AGGS];
@@ -1180,8 +1258,8 @@ typedef struct cdb_exec_aggregate {
     cdb_exec_op *input;
     size_t groups_count;
     size_t aggs_count;
-    const uint8_t *group_wires[CDB_EXEC_MAX_FIELDS];
-    size_t group_lens[CDB_EXEC_MAX_FIELDS];
+    const uint8_t *group_wires[CDB_EXEC_MAX_GROUP_KEYS];
+    size_t group_lens[CDB_EXEC_MAX_GROUP_KEYS];
     cdb_exec_agg_desc aggs[CDB_EXEC_MAX_AGGS];
 
     cdb_exec_agg_group *groups;
@@ -1246,7 +1324,7 @@ static cdb_status aggregate_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec
         int in_has_row = 0;
 
         while (1) {
-            cdb_value gvals[CDB_EXEC_MAX_FIELDS];
+            cdb_value gvals[CDB_EXEC_MAX_GROUP_KEYS];
             int group_idx = -1;
 
             st = a->input->vtab->next(a->input, cur, &item, &in_has_row);
@@ -1482,6 +1560,12 @@ static const cdb_exec_vtab aggregate_vtab = {aggregate_open, aggregate_next, agg
 /* --------------------------------------------------------------------------
  * Operator 0x0D: WINDOW
  * -------------------------------------------------------------------------- */
+/* A single row that lands in more covering windows than this (a tiny step
+ * against a huge size) is rejected rather than expanded unboundedly: a
+ * crafted plan must not turn one input row into a denial of service
+ * (#36 FR1; CWE-834/CWE-400). */
+#define CDB_EXEC_MAX_WINDOWS_PER_ROW 65536u
+
 typedef struct cdb_exec_window {
     cdb_exec_op base;
     cdb_exec_op *input;
@@ -1490,17 +1574,74 @@ typedef struct cdb_exec_window {
     size_t time_field_len;
     uint64_t size_ns;
     uint64_t step_ns;
+
+    /* Effective hop between window starts: step_ns for sliding/hopping,
+     * size_ns for tumbling (0 only when size_ns is 0). Resolved at open. */
+    uint64_t step;
+
+    /* A row that falls in several overlapping windows (sliding/hopping) is
+     * held and emitted once per covering window, so each (row, window) pair
+     * reaches the operator above (e.g. an Aggregate grouping on
+     * $window_start). The held input stays valid because the input is not
+     * advanced until all its windows are emitted. */
+    cdb_exec_row cur_in;
+    int have_in;
+    int64_t cur_ts;
+    int64_t cur_k;  /* next window index to emit for cur_in */
+    int64_t last_k; /* last covering window index (inclusive) */
 } cdb_exec_window;
+
+/* floor(a / b) for b > 0, correct for negative a (C division truncates
+ * toward zero, which is not floor for negative numerators). */
+static int64_t window_floor_div(int64_t a, int64_t b)
+{
+    int64_t q = a / b;
+    if ((a % b != 0) && ((a < 0) != (b < 0)))
+        q--;
+    return q;
+}
+
+/* The effective hop between window starts, honoring type and step_ns. */
+static uint64_t window_effective_step(const cdb_exec_window *w)
+{
+    if ((w->type == 0x02u || w->type == 0x03u) && w->step_ns > 0)
+        return w->step_ns; /* sliding / hopping */
+    return w->size_ns;     /* tumbling (or degenerate size 0) */
+}
+
+/* Reads the row's window timestamp from the time_field, falling back to the
+ * row's own timestamp. */
+static int64_t window_extract_ts(cdb_exec_window *w, cdb_exec_row *row, cdb_exec_cursor *cur)
+{
+    if (w->time_field_len > 0) {
+        cdb_value tval;
+        int found = 0;
+        if (cdb_exec_row_get_field(row, &cur->eval_ctx, w->time_field, w->time_field_len, &tval,
+                                   &found)
+                == CDB_OK
+            && found && tval.type == CDB_TYPE_INT)
+            return tval.as.i64;
+    }
+    return row->timestamp;
+}
 
 static cdb_status window_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_window *w = (cdb_exec_window *)op;
+    w->have_in = 0;
+    w->cur_k = 0;
+    w->last_k = 0;
+    w->step = window_effective_step(w);
     return w->input->vtab->open(w->input, cur);
 }
 
 static cdb_status window_reset(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_window *w = (cdb_exec_window *)op;
+    w->have_in = 0;
+    w->cur_k = 0;
+    w->last_k = 0;
+    w->step = window_effective_step(w);
     return w->input->vtab->reset(w->input, cur);
 }
 
@@ -1515,52 +1656,72 @@ static cdb_status window_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_ro
 {
     cdb_exec_window *w = (cdb_exec_window *)op;
     cdb_status st;
-    int64_t ts = 0;
-    int found = 0;
     int64_t win_start, win_end;
 
     *has_row = 0;
-    st = w->input->vtab->next(w->input, cur, out_row, has_row);
-    if (st != CDB_OK || !*has_row)
-        return st;
 
-    /* Extract timestamp */
-    if (w->time_field_len > 0) {
-        cdb_value tval;
-        st = cdb_exec_row_get_field(out_row, &cur->eval_ctx, w->time_field, w->time_field_len,
-                                    &tval, &found);
-        if (st == CDB_OK && found && tval.type == CDB_TYPE_INT) {
-            ts = tval.as.i64;
+    /* Fetch and window-assign the next input row when the current one's
+     * windows are exhausted. */
+    if (!w->have_in) {
+        int in_has = 0;
+        st = w->input->vtab->next(w->input, cur, &w->cur_in, &in_has);
+        if (st != CDB_OK || !in_has)
+            return st;
+
+        w->cur_ts = window_extract_ts(w, &w->cur_in, cur);
+
+        if (w->size_ns == 0 || w->step == 0) {
+            /* Degenerate: a single point window at the timestamp. */
+            w->cur_k = 0;
+            w->last_k = 0;
         } else {
-            ts = out_row->timestamp;
+            int64_t size = (int64_t)w->size_ns;
+            int64_t step = (int64_t)w->step;
+            /* A window with start = k*step covers ts iff k*step <= ts and
+             * ts < k*step + size, i.e. k in (floor((ts-size)/step),
+             * floor(ts/step)]. For tumbling (step == size) this collapses to
+             * the single window floor(ts/size)*size, preserving the prior
+             * tumbling behavior; for step < size it yields the overlapping
+             * sliding/hopping windows (#36 FR1). */
+            int64_t last_k = window_floor_div(w->cur_ts, step);
+            int64_t first_k = window_floor_div(w->cur_ts - size, step) + 1;
+            if (first_k > last_k)
+                first_k = last_k; /* ts is always in at least its own window */
+            if ((uint64_t)(last_k - first_k) >= CDB_EXEC_MAX_WINDOWS_PER_ROW)
+                return CDB_E_OUT_OF_BUDGET;
+            w->cur_k = first_k;
+            w->last_k = last_k;
         }
+        w->have_in = 1;
+    }
+
+    cdb_exec_row_copy(out_row, &w->cur_in);
+
+    if (w->size_ns == 0 || w->step == 0) {
+        win_start = w->cur_ts;
+        win_end = w->cur_ts;
     } else {
-        ts = out_row->timestamp;
+        win_start = w->cur_k * (int64_t)w->step;
+        win_end = win_start + (int64_t)w->size_ns;
     }
 
-    /* Compute tumbling/sliding bounds */
-    if (w->size_ns > 0) {
-        uint64_t s = w->size_ns;
-        win_start = (ts >= 0) ? (ts / (int64_t)s) * (int64_t)s
-                              : ((ts - (int64_t)s + 1) / (int64_t)s) * (int64_t)s;
-        win_end = win_start + (int64_t)s;
-    } else {
-        win_start = ts;
-        win_end = ts;
-    }
+    /* Fail closed rather than silently dropping the window bounds (#36 FR5). */
+    if (out_row->n_fields + 2 > CDB_EXEC_MAX_FIELDS)
+        return CDB_E_OVERFLOW;
 
-    /* Add $window_start and $window_end */
-    if (out_row->n_fields + 2 <= CDB_EXEC_MAX_FIELDS) {
-        out_row->fields[out_row->n_fields].name = "$window_start";
-        out_row->fields[out_row->n_fields].name_len = 13;
-        cdb_eval_make_int(&out_row->fields[out_row->n_fields].val, win_start);
-        out_row->n_fields++;
+    out_row->fields[out_row->n_fields].name = "$window_start";
+    out_row->fields[out_row->n_fields].name_len = 13;
+    cdb_eval_make_int(&out_row->fields[out_row->n_fields].val, win_start);
+    out_row->n_fields++;
 
-        out_row->fields[out_row->n_fields].name = "$window_end";
-        out_row->fields[out_row->n_fields].name_len = 11;
-        cdb_eval_make_int(&out_row->fields[out_row->n_fields].val, win_end);
-        out_row->n_fields++;
-    }
+    out_row->fields[out_row->n_fields].name = "$window_end";
+    out_row->fields[out_row->n_fields].name_len = 11;
+    cdb_eval_make_int(&out_row->fields[out_row->n_fields].val, win_end);
+    out_row->n_fields++;
+
+    w->cur_k++;
+    if (w->cur_k > w->last_k)
+        w->have_in = 0; /* advance to the next input row on the next call */
 
     *has_row = 1;
     return CDB_OK;
@@ -1583,12 +1744,103 @@ typedef struct cdb_exec_asof {
     size_t right_time_len;
     const uint8_t *match_cond_wire;
     size_t match_cond_len;
+
+    /* The right input is materialized exactly once (its computed as-of time
+     * stored in each buffered row's timestamp), so each left row is matched
+     * against an in-memory buffer rather than re-executing the right pipeline:
+     * right-subtree scans go from O(n*m) to O(m) (#36 FR2). */
+    int right_buffered;
+    cdb_exec_row **right_rows;
+    size_t right_n;
+    size_t right_max;
+    cdb_exec_pool right_pool;
 } cdb_exec_asof;
+
+/* Number of right rows scanned by the most recent AsofJoin open. One pass
+ * over the right pipeline fills the buffer, so this is m, not n*m. */
+static uint64_t g_asof_right_scans = 0;
+
+uint64_t cdb_exec_asof_right_scan_count(void)
+{
+    return g_asof_right_scans;
+}
+
+/* Binds the evaluation context and field resolver to a row. */
+static void asof_bind_ctx(cdb_exec_cursor *cur, cdb_exec_row *row)
+{
+    cur->eval_ctx.entry_id = row->entry_id;
+    cur->eval_ctx.score = (double)row->score;
+    cur->eval_ctx.timestamp = row->timestamp;
+    cur->eval_ctx.record_data = row->record_data;
+    cur->eval_ctx.record_len = row->record_len;
+    cur->eval_ctx.store_id = row->store_id;
+    cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)row);
+}
+
+/* Materializes the whole right input once into the as-of buffer, storing the
+ * computed right-side time in each buffered row's timestamp. */
+static cdb_status asof_materialize_right(cdb_exec_asof *a, cdb_exec_cursor *cur)
+{
+    void *items = NULL;
+    cdb_status st;
+
+    g_asof_right_scans = 0;
+    if ((st = carve_buffer(&cur->arena, sizeof(cdb_exec_row *), cur->max_buffered_rows, &items,
+                           &a->right_max, &a->right_pool))
+        != CDB_OK)
+        return st;
+    a->right_rows = (cdb_exec_row **)items;
+    a->right_n = 0;
+
+    for (;;) {
+        cdb_exec_row rrow;
+        int rhas = 0;
+        int64_t t_right;
+
+        st = a->right->vtab->next(a->right, cur, &rrow, &rhas);
+        if (st != CDB_OK)
+            return st;
+        if (!rhas)
+            break;
+        g_asof_right_scans++;
+
+        asof_bind_ctx(cur, &rrow);
+        t_right = rrow.timestamp;
+        if (a->right_time_wire != NULL && a->right_time_len > 0) {
+            cdb_value tv;
+            size_t consumed = 0;
+            if (cdb_eval_expr_wire(&cur->eval_ctx, a->right_time_wire, a->right_time_len, &tv,
+                                   &consumed)
+                    == CDB_OK
+                && tv.type == CDB_TYPE_INT)
+                t_right = tv.as.i64;
+        }
+        rrow.timestamp = t_right; /* reuse the field to carry the as-of time */
+
+        if (a->right_n >= a->right_max)
+            return CDB_E_OUT_OF_BUDGET; /* fail closed: right can't be buffered */
+        if ((st = store_row(cur, &a->right_pool, &rrow, &a->right_rows[a->right_n])) != CDB_OK)
+            return st;
+        a->right_n++;
+    }
+
+    a->right_buffered = 1;
+    return CDB_OK;
+}
 
 static cdb_status asof_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_asof *a = (cdb_exec_asof *)op;
     cdb_status st;
+
+    a->right_buffered = 0;
+    a->right_rows = NULL;
+    a->right_n = 0;
+    a->right_max = 0;
+    memset(&a->right_pool, 0, sizeof a->right_pool);
+
+    /* The right input is materialized lazily on the first next (asof_next) so
+     * that a test's mock scan, bound after open, is already in place. */
     if ((st = a->left->vtab->open(a->left, cur)) != CDB_OK)
         return st;
     return a->right->vtab->open(a->right, cur);
@@ -1597,17 +1849,44 @@ static cdb_status asof_open(cdb_exec_op *op, cdb_exec_cursor *cur)
 static cdb_status asof_reset(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_asof *a = (cdb_exec_asof *)op;
-    cdb_status st;
-    if ((st = a->left->vtab->reset(a->left, cur)) != CDB_OK)
-        return st;
-    return a->right->vtab->reset(a->right, cur);
+    /* The right buffer is a deterministic materialization; only the left
+     * cursor restarts. */
+    return a->left->vtab->reset(a->left, cur);
 }
 
 static void asof_close(cdb_exec_op *op, cdb_exec_cursor *cur)
 {
     cdb_exec_asof *a = (cdb_exec_asof *)op;
+    if (cur->db != NULL)
+        exec_free_all(cur, &a->right_pool.blocks);
     a->left->vtab->close(a->left, cur);
     a->right->vtab->close(a->right, cur);
+}
+
+/* Evaluates the as-of match predicate over the combined left+right row.
+ * An absent predicate matches. */
+static cdb_status asof_match(cdb_exec_asof *a, cdb_exec_cursor *cur, const cdb_exec_row *left_row,
+                             const cdb_exec_row *rr, int *matched)
+{
+    cdb_exec_row cand;
+    size_t f;
+
+    *matched = 1;
+    if (a->match_cond_wire == NULL || a->match_cond_len == 0)
+        return CDB_OK;
+
+    cand = *left_row;
+    cand.has_right = 1;
+    cand.right_store_id = rr->store_id;
+    cand.right_entry_id = rr->entry_id;
+    cand.right_model = rr->model;
+    cand.right_record_data = rr->record_data;
+    cand.right_record_len = rr->record_len;
+    for (f = 0; f < rr->n_fields && cand.n_fields < CDB_EXEC_MAX_FIELDS; f++)
+        cand.fields[cand.n_fields++] = rr->fields[f];
+
+    asof_bind_ctx(cur, &cand);
+    return cdb_eval_predicate(&cur->eval_ctx, a->match_cond_wire, a->match_cond_len, matched);
 }
 
 static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
@@ -1617,77 +1896,39 @@ static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
     cdb_exec_row left_row;
     int left_has = 0;
     cdb_status st;
-    int64_t t_left = 0;
-    cdb_value tv;
-    size_t consumed = 0;
-    cdb_exec_row best_right;
+    int64_t t_left;
+    size_t i, best_idx = 0;
     int has_best = 0;
     int64_t best_diff = 0x7FFFFFFFFFFFFFFFLL;
 
-    memset(&best_right, 0, sizeof best_right);
     *has_row = 0;
+
+    if (!a->right_buffered && (st = asof_materialize_right(a, cur)) != CDB_OK)
+        return st;
 
     st = a->left->vtab->next(a->left, cur, &left_row, &left_has);
     if (st != CDB_OK || !left_has)
         return st;
 
     /* Evaluate left time */
-    cur->eval_ctx.entry_id = left_row.entry_id;
-    cur->eval_ctx.score = (double)left_row.score;
-    cur->eval_ctx.timestamp = left_row.timestamp;
-    cur->eval_ctx.record_data = left_row.record_data;
-    cur->eval_ctx.record_len = left_row.record_len;
-    cur->eval_ctx.store_id = left_row.store_id;
-    cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)&left_row);
-
+    asof_bind_ctx(cur, &left_row);
+    t_left = left_row.timestamp;
     if (a->left_time_wire != NULL && a->left_time_len > 0) {
+        cdb_value tv;
+        size_t consumed = 0;
         if (cdb_eval_expr_wire(&cur->eval_ctx, a->left_time_wire, a->left_time_len, &tv, &consumed)
                 == CDB_OK
             && tv.type == CDB_TYPE_INT)
             t_left = tv.as.i64;
-        else
-            t_left = left_row.timestamp;
-    } else {
-        t_left = left_row.timestamp;
     }
 
-    /* Reset right side and find as-of match */
-    st = a->right->vtab->reset(a->right, cur);
-    if (st != CDB_OK)
-        return st;
-
-    while (1) {
-        cdb_exec_row rrow;
-        int rhas = 0;
-        int64_t t_right = 0;
-        int64_t diff = 0;
-
-        st = a->right->vtab->next(a->right, cur, &rrow, &rhas);
-        if (st != CDB_OK || !rhas)
-            break;
-
-        /* Eval right time */
-        cur->eval_ctx.entry_id = rrow.entry_id;
-        cur->eval_ctx.score = (double)rrow.score;
-        cur->eval_ctx.timestamp = rrow.timestamp;
-        cur->eval_ctx.record_data = rrow.record_data;
-        cur->eval_ctx.record_len = rrow.record_len;
-        cur->eval_ctx.store_id = rrow.store_id;
-        cdb_eval_ctx_set_custom_resolver(&cur->eval_ctx, row_field_resolver, (void *)&rrow);
-
-        if (a->right_time_wire != NULL && a->right_time_len > 0) {
-            if (cdb_eval_expr_wire(&cur->eval_ctx, a->right_time_wire, a->right_time_len, &tv,
-                                   &consumed)
-                    == CDB_OK
-                && tv.type == CDB_TYPE_INT)
-                t_right = tv.as.i64;
-            else
-                t_right = rrow.timestamp;
-        } else {
-            t_right = rrow.timestamp;
-        }
-
-        diff = t_left - t_right;
+    /* Scan the materialized right buffer (no right-pipeline re-execution). */
+    for (i = 0; i < a->right_n; i++) {
+        cdb_exec_row *rr = a->right_rows[i];
+        int64_t t_right = rr->timestamp;
+        int64_t diff = t_left - t_right;
+        int64_t adiff;
+        int matched = 0;
 
         /* Backward as-of: right point must be <= left point */
         if (a->kind == 1 && diff < 0)
@@ -1696,29 +1937,33 @@ static cdb_status asof_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
         if (a->kind == 2 && diff > 0)
             continue;
 
-        if (diff < 0)
-            diff = -diff;
-        if (a->tolerance_ns > 0 && (uint64_t)diff > a->tolerance_ns)
+        adiff = diff < 0 ? -diff : diff;
+        if (a->tolerance_ns > 0 && (uint64_t)adiff > a->tolerance_ns)
             continue;
 
-        if (!has_best || diff < best_diff) {
+        if ((st = asof_match(a, cur, &left_row, rr, &matched)) != CDB_OK)
+            return st;
+        if (!matched)
+            continue;
+
+        if (!has_best || adiff < best_diff) {
             has_best = 1;
-            best_diff = diff;
-            best_right = rrow;
+            best_diff = adiff;
+            best_idx = i;
         }
     }
 
     *out_row = left_row;
     if (has_best) {
-        size_t i;
+        cdb_exec_row *rr = a->right_rows[best_idx];
         out_row->has_right = 1;
-        out_row->right_store_id = best_right.store_id;
-        out_row->right_entry_id = best_right.entry_id;
-        out_row->right_record_data = best_right.record_data;
-        out_row->right_record_len = best_right.record_len;
-        for (i = 0; i < best_right.n_fields && out_row->n_fields < CDB_EXEC_MAX_FIELDS; i++) {
-            out_row->fields[out_row->n_fields++] = best_right.fields[i];
-        }
+        out_row->right_store_id = rr->store_id;
+        out_row->right_entry_id = rr->entry_id;
+        out_row->right_model = rr->model;
+        out_row->right_record_data = rr->record_data;
+        out_row->right_record_len = rr->record_len;
+        for (i = 0; i < rr->n_fields && out_row->n_fields < CDB_EXEC_MAX_FIELDS; i++)
+            out_row->fields[out_row->n_fields++] = rr->fields[i];
     }
 
     *has_row = 1;
@@ -2626,6 +2871,10 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->base.tag = CDB_QUERY_NODE_PROJECT;
         op->passthrough = (uint8_t)node.as.project.passthrough;
         op->count = node.as.project.count;
+        /* More output columns than a row can hold is a fail-closed error, not
+         * a silent truncation of the plan's outputs (#36 FR5). */
+        if (op->count > CDB_EXEC_MAX_FIELDS)
+            return CDB_E_OVERFLOW;
         st = build_exec_tree(cur, &node.as.project.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK)
             return st;
@@ -2762,12 +3011,16 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
         op->base.tag = CDB_QUERY_NODE_AGGREGATE;
         op->groups_count = node.as.aggregate.n_groups;
         op->aggs_count = node.as.aggregate.n_aggs;
+        /* Fail closed rather than silently ignoring group keys / aggregates
+         * beyond the fixed caps (#36 FR5). */
+        if (op->groups_count > CDB_EXEC_MAX_GROUP_KEYS || op->aggs_count > CDB_EXEC_MAX_AGGS)
+            return CDB_E_OVERFLOW;
         st = build_exec_tree(cur, &node.as.aggregate.input_wire, end, &op->input, depth + 1);
         if (st != CDB_OK)
             return st;
 
         cur_wire = node.as.aggregate.groups_wire;
-        for (i = 0; i < op->groups_count && i < CDB_EXEC_MAX_FIELDS; i++) {
+        for (i = 0; i < op->groups_count && i < CDB_EXEC_MAX_GROUP_KEYS; i++) {
             const uint8_t *g_start = cur_wire;
             st = cdb_query_skip_expr(&cur_wire, end);
             if (st != CDB_OK)
