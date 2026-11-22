@@ -182,6 +182,12 @@ struct ast_node {
             ast_node *branches[MAX_KEYS];
             uint32_t weights[MAX_KEYS];
         } hybrid_rank;
+        /* UNION (#35): the executor/wire already support UNION (0x07); only the
+         * AST lacked a home for its branch list. Additive, compiler-internal. */
+        struct {
+            size_t n_branches;
+            ast_node *branches[MAX_KEYS];
+        } union_node;
         struct {
             ast_node *input;
             ast_expr *array_expr;
@@ -358,6 +364,7 @@ static size_t encode_string_val(const char *s, size_t len, uint8_t *buf, size_t 
 static ast_expr *parse_expr(compiler_ctx *ctx);
 static ast_node *parse_source(compiler_ctx *ctx);
 static ast_node *parse_query(compiler_ctx *ctx);
+static int kw_is_field_name(cdb_token_kind k); /* #35 FR-A3 */
 
 /* Maps standard function names to math call IDs (Spec 14.19.4) */
 static uint16_t lookup_function_id(const char *name, size_t len)
@@ -731,6 +738,17 @@ static ast_expr *parse_primary(compiler_ctx *ctx)
         return resolve_field_identifier(ctx, &tok);
     }
 
+    /* Contextual keyword used as a field name (#35 FR-A3), e.g. `time`, `data`,
+     * `source`. Treated as a plain field reference in expression position. */
+    if (kw_is_field_name(tok.kind)) {
+        cdb_token synthetic;
+        memset(&synthetic, 0, sizeof(synthetic));
+        synthetic.start = tok.start;
+        synthetic.len = tok.len;
+        synthetic.kind = CDB_TOK_IDENT;
+        return resolve_field_identifier(ctx, &synthetic);
+    }
+
     set_error(ctx, &tok, "Unexpected token in expression");
     return NULL;
 }
@@ -916,10 +934,746 @@ static ast_expr *parse_expr(compiler_ctx *ctx)
     return parse_or(ctx);
 }
 
-/* Parse stream sources: Scan("name"), OperatorCalls, or table identifiers */
+/* ------------------------------------------------------------------------- *
+ * Sub-feature A (#35): CMBQL-TEXT grammar for the 8 previously text-unreachable
+ * operators (AGGREGATE, UNION, TRAVERSE, TEXT_SEARCH, VECTOR_SEARCH,
+ * HYBRID_RANK, ASOF_JOIN, UNNEST). These productions parse the pipeline/stream
+ * surface syntax (spec 11.11.1/11.11.3) and populate the AST members the
+ * existing serialize_node cases map onto the wire the executor already
+ * consumes (ADR-1). All input is validated; malformed clauses fail closed with
+ * a typed error (CDB_E_INVALID_ARG / CDB_E_DEPTH), never a partial/garbage plan
+ * (FR-A4, CWE-20/-674). No executor/wire change.
+ * ------------------------------------------------------------------------- */
+
+/* Maps an aggregate function name to its wire opcode; 0 when not an aggregate
+ * (so count/sum/avg/... are recognised in aggregate position without colliding
+ * with the scalar math-function table). */
+static uint8_t lookup_agg_fn(const char *name, size_t len)
+{
+#define MATCH_AGG(str, id)                                 \
+    if (len == strlen(str) && memcmp(name, str, len) == 0) \
+    return (uint8_t)(id)
+    MATCH_AGG("count", CDB_AGG_COUNT);
+    MATCH_AGG("sum", CDB_AGG_SUM);
+    MATCH_AGG("avg", CDB_AGG_AVG);
+    MATCH_AGG("mean", CDB_AGG_AVG);
+    MATCH_AGG("min", CDB_AGG_MIN);
+    MATCH_AGG("max", CDB_AGG_MAX);
+    MATCH_AGG("first", CDB_AGG_FIRST);
+    MATCH_AGG("last", CDB_AGG_LAST);
+    MATCH_AGG("stddev", CDB_AGG_STDDEV);
+    MATCH_AGG("variance", CDB_AGG_VARIANCE);
+    MATCH_AGG("var", CDB_AGG_VARIANCE);
+#undef MATCH_AGG
+    return 0;
+}
+
+/* Contextual keywords permitted as a field/identifier in expression position
+ * (FR-A3): tokens the lexer classifies as keywords but which are common field
+ * names (time, data, source, ...). Structural keywords (SELECT, FROM, JOIN,
+ * aggregate-function words, ...) are deliberately excluded. */
+static int kw_is_field_name(cdb_token_kind k)
+{
+    switch (k) {
+    case CDB_TOK_KW_TIME:
+    case CDB_TOK_KW_DATA:
+    case CDB_TOK_KW_SOURCE:
+    case CDB_TOK_KW_SEARCH:
+    case CDB_TOK_KW_WEIGHT:
+    case CDB_TOK_KW_KEY:
+    case CDB_TOK_KW_TYPE:
+    case CDB_TOK_KW_STEP:
+    case CDB_TOK_KW_AGE:
+    case CDB_TOK_KW_TAGS:
+    case CDB_TOK_KW_SERIES:
+    case CDB_TOK_KW_MODEL:
+    case CDB_TOK_KW_STORE:
+    case CDB_TOK_KW_ACTION:
+    case CDB_TOK_KW_SUMMARY:
+    case CDB_TOK_KW_VALUES:
+    case CDB_TOK_KW_ROLE:
+    case CDB_TOK_KW_TENANT:
+    case CDB_TOK_KW_SYNC: return 1;
+    default: return 0;
+    }
+}
+
+/* Builds a literal boolean expression (used as a safe default for an absent
+ * optional match condition). */
+static ast_expr *make_bool_literal(compiler_ctx *ctx, int val)
+{
+    ast_expr *e = alloc_expr(ctx);
+    if (!e)
+        return NULL;
+    e->tag = CDB_QUERY_EXPR_LITERAL;
+    e->as.literal.len = encode_bool_val(val, e->as.literal.bytes, sizeof(e->as.literal.bytes));
+    return e;
+}
+
+/* Reads one value token as a pooled, unescaped string (accepts a string literal
+ * or a bare identifier/keyword token). Returns NULL and records an error on
+ * allocation/lex failure. */
+static const char *parse_strval(compiler_ctx *ctx, size_t *out_len)
+{
+    cdb_token t;
+    char buf[256];
+    size_t len = 0;
+    if (cdb_lexer_next(&ctx->lex, &t) != CDB_OK) {
+        set_error(ctx, NULL, "Expected a value");
+        return NULL;
+    }
+    if (t.kind == CDB_TOK_STRING || t.is_quoted) {
+        cdb_token_unescape_string(&t, buf, sizeof(buf), &len);
+    } else {
+        len = (size_t)t.len < sizeof(buf) - 1 ? (size_t)t.len : sizeof(buf) - 1;
+        memcpy(buf, t.start, len);
+    }
+    const char *p = pool_strdup(ctx, buf, len);
+    if (!p) {
+        set_error(ctx, &t, "String pool exhausted");
+        return NULL;
+    }
+    if (out_len)
+        *out_len = len;
+    return p;
+}
+
+/* Reads a non-negative integer argument value. Returns 0 on success, -1 on
+ * error (bounds/overflow fail closed; CWE-190). */
+static int parse_uint_arg(compiler_ctx *ctx, uint64_t *out)
+{
+    cdb_token t;
+    if (expect(ctx, CDB_TOK_INT, "Expected integer value", &t) != CDB_OK)
+        return -1;
+    if (t.num_val.i64 < 0) {
+        set_error(ctx, &t, "Expected a non-negative integer");
+        return -1;
+    }
+    *out = (uint64_t)t.num_val.i64;
+    return 0;
+}
+
+/* Case-insensitive match of a pooled string against a C literal. */
+static int strval_ci_eq(const char *s, size_t len, const char *lit)
+{
+    size_t ll = strlen(lit);
+    if (len != ll)
+        return 0;
+    for (size_t i = 0; i < len; ++i) {
+        char a = s[i];
+        char b = lit[i];
+        if (a >= 'A' && a <= 'Z')
+            a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z')
+            b = (char)(b - 'A' + 'a');
+        if (a != b)
+            return 0;
+    }
+    return 1;
+}
+
+/* Reads one "name:" argument key; returns the key token (ident or keyword) and
+ * consumes the ':' separator. Returns 0 on success, -1 on error. */
+static int parse_arg_key(compiler_ctx *ctx, cdb_token *key)
+{
+    if (cdb_lexer_next(&ctx->lex, key) != CDB_OK) {
+        set_error(ctx, NULL, "Expected argument name");
+        return -1;
+    }
+    if (key->kind == CDB_TOK_RPAREN) {
+        set_error(ctx, key, "Missing argument before ')'");
+        return -1;
+    }
+    if (expect(ctx, CDB_TOK_COLON, "Expected ':' after argument name", NULL) != CDB_OK)
+        return -1;
+    return 0;
+}
+
+static ast_node *parse_source(compiler_ctx *ctx);
+static ast_node *parse_pipeline(compiler_ctx *ctx, ast_node *source);
+
+/* Parses a branch sub-plan (used by HybridRank/Union): a source optionally
+ * followed by pipeline stages. Recursion is depth-bounded (CWE-674). */
+static ast_node *parse_branch(compiler_ctx *ctx)
+{
+    if (!depth_enter(ctx))
+        return NULL;
+    ast_node *src = parse_source(ctx);
+    ast_node *res = src ? parse_pipeline(ctx, src) : NULL;
+    depth_leave(ctx);
+    return res;
+}
+
+/* Parses the NamedArgList of a text_search stage/constructor into node n
+ * (already tagged TEXT_SEARCH with its input set). Consumes up to and including
+ * the closing ')'. Requires a query; validates mode. */
+static int parse_text_search_args(compiler_ctx *ctx, ast_node *n)
+{
+    int have_query = 0;
+    n->as.text_search.mode = CDB_QUERY_FTS_ANY;
+    n->as.text_search.limit = 0;
+    n->as.text_search.n_fields = 0;
+    n->as.text_search.query = "";
+    n->as.text_search.query_len = 0;
+
+    while (!match(ctx, CDB_TOK_RPAREN, NULL)) {
+        cdb_token key;
+        if (parse_arg_key(ctx, &key) != 0)
+            return -1;
+        if (cdb_token_equals_ci(&key, "query")) {
+            size_t ql = 0;
+            const char *q = parse_strval(ctx, &ql);
+            if (!q)
+                return -1;
+            n->as.text_search.query = q;
+            n->as.text_search.query_len = ql;
+            have_query = 1;
+        } else if (cdb_token_equals_ci(&key, "mode")) {
+            size_t ml = 0;
+            const char *m = parse_strval(ctx, &ml);
+            if (!m)
+                return -1;
+            if (strval_ci_eq(m, ml, "any"))
+                n->as.text_search.mode = CDB_QUERY_FTS_ANY;
+            else if (strval_ci_eq(m, ml, "all"))
+                n->as.text_search.mode = CDB_QUERY_FTS_ALL;
+            else {
+                set_error(ctx, &key, "text_search mode must be 'any' or 'all'");
+                return -1;
+            }
+        } else if (cdb_token_equals_ci(&key, "limit")) {
+            if (parse_uint_arg(ctx, &n->as.text_search.limit) != 0)
+                return -1;
+        } else if (cdb_token_equals_ci(&key, "fields")) {
+            if (expect(ctx, CDB_TOK_LBRACKET, "Expected '[' for fields list", NULL) != CDB_OK)
+                return -1;
+            if (!match(ctx, CDB_TOK_RBRACKET, NULL)) {
+                do {
+                    size_t fl = 0;
+                    const char *f = parse_strval(ctx, &fl);
+                    if (!f)
+                        return -1;
+                    if (n->as.text_search.n_fields >= MAX_KEYS) {
+                        set_error(ctx, &key, "Too many text_search fields");
+                        return -1;
+                    }
+                    size_t fi = n->as.text_search.n_fields++;
+                    n->as.text_search.fields[fi] = f;
+                    n->as.text_search.field_lens[fi] = fl;
+                } while (match(ctx, CDB_TOK_COMMA, NULL));
+                if (expect(ctx, CDB_TOK_RBRACKET, "Expected ']' after fields", NULL) != CDB_OK)
+                    return -1;
+            }
+        } else if (cdb_token_equals_ci(&key, "field")) {
+            size_t fl = 0;
+            const char *f = parse_strval(ctx, &fl);
+            if (!f)
+                return -1;
+            if (n->as.text_search.n_fields >= MAX_KEYS) {
+                set_error(ctx, &key, "Too many text_search fields");
+                return -1;
+            }
+            size_t fi = n->as.text_search.n_fields++;
+            n->as.text_search.fields[fi] = f;
+            n->as.text_search.field_lens[fi] = fl;
+        } else {
+            set_error(ctx, &key, "Unknown text_search argument");
+            return -1;
+        }
+        match(ctx, CDB_TOK_COMMA, NULL);
+    }
+    if (!have_query) {
+        set_error(ctx, NULL, "text_search requires a 'query' argument");
+        return -1;
+    }
+    return 0;
+}
+
+/* Parses the NamedArgList of a vector_search stage/constructor into node n
+ * (already tagged, input set). Requires field and near; validates metric. */
+static int parse_vector_search_args(compiler_ctx *ctx, ast_node *n)
+{
+    int have_field = 0, have_near = 0;
+    n->as.vector_search.field = "";
+    n->as.vector_search.field_len = 0;
+    n->as.vector_search.near_expr = NULL;
+    n->as.vector_search.k = 0;
+    n->as.vector_search.metric = CDB_QUERY_METRIC_DEFAULT;
+
+    while (!match(ctx, CDB_TOK_RPAREN, NULL)) {
+        cdb_token key;
+        if (parse_arg_key(ctx, &key) != 0)
+            return -1;
+        if (cdb_token_equals_ci(&key, "field")) {
+            size_t fl = 0;
+            const char *f = parse_strval(ctx, &fl);
+            if (!f)
+                return -1;
+            n->as.vector_search.field = f;
+            n->as.vector_search.field_len = fl;
+            have_field = 1;
+        } else if (cdb_token_equals_ci(&key, "near")) {
+            ast_expr *e = parse_expr(ctx);
+            if (!e)
+                return -1;
+            n->as.vector_search.near_expr = e;
+            have_near = 1;
+        } else if (cdb_token_equals_ci(&key, "k")) {
+            if (parse_uint_arg(ctx, &n->as.vector_search.k) != 0)
+                return -1;
+        } else if (cdb_token_equals_ci(&key, "metric")) {
+            size_t ml = 0;
+            const char *m = parse_strval(ctx, &ml);
+            if (!m)
+                return -1;
+            if (strval_ci_eq(m, ml, "default"))
+                n->as.vector_search.metric = CDB_QUERY_METRIC_DEFAULT;
+            else if (strval_ci_eq(m, ml, "euclidean") || strval_ci_eq(m, ml, "l2"))
+                n->as.vector_search.metric = CDB_QUERY_METRIC_EUCLIDEAN;
+            else if (strval_ci_eq(m, ml, "cosine"))
+                n->as.vector_search.metric = CDB_QUERY_METRIC_COSINE;
+            else if (strval_ci_eq(m, ml, "dot"))
+                n->as.vector_search.metric = CDB_QUERY_METRIC_DOT;
+            else {
+                set_error(ctx, &key, "unknown vector_search metric");
+                return -1;
+            }
+        } else {
+            set_error(ctx, &key, "Unknown vector_search argument");
+            return -1;
+        }
+        match(ctx, CDB_TOK_COMMA, NULL);
+    }
+    if (!have_field || !have_near) {
+        set_error(ctx, NULL, "vector_search requires 'field' and 'near' arguments");
+        return -1;
+    }
+    return 0;
+}
+
+/* Parses the NamedArgList of a traverse stage/constructor into node n (already
+ * tagged, input set). Requires link; validates direction and hop bounds. */
+static int parse_traverse_args(compiler_ctx *ctx, ast_node *n)
+{
+    int have_link = 0, have_max = 0;
+    n->as.traverse.link_type = "";
+    n->as.traverse.link_len = 0;
+    n->as.traverse.dir = CDB_TRAVERSE_FWD;
+    n->as.traverse.min_hops = 1;
+    n->as.traverse.max_hops = 1;
+
+    while (!match(ctx, CDB_TOK_RPAREN, NULL)) {
+        cdb_token key;
+        if (parse_arg_key(ctx, &key) != 0)
+            return -1;
+        if (cdb_token_equals_ci(&key, "link") || cdb_token_equals_ci(&key, "type")) {
+            size_t ll = 0;
+            const char *l = parse_strval(ctx, &ll);
+            if (!l)
+                return -1;
+            n->as.traverse.link_type = l;
+            n->as.traverse.link_len = ll;
+            have_link = 1;
+        } else if (cdb_token_equals_ci(&key, "dir") || cdb_token_equals_ci(&key, "direction")) {
+            size_t dl = 0;
+            const char *d = parse_strval(ctx, &dl);
+            if (!d)
+                return -1;
+            if (strval_ci_eq(d, dl, "fwd") || strval_ci_eq(d, dl, "forward")
+                || strval_ci_eq(d, dl, "out"))
+                n->as.traverse.dir = CDB_TRAVERSE_FWD;
+            else if (strval_ci_eq(d, dl, "rev") || strval_ci_eq(d, dl, "reverse"))
+                n->as.traverse.dir = CDB_TRAVERSE_REV;
+            else if (strval_ci_eq(d, dl, "both"))
+                n->as.traverse.dir = CDB_TRAVERSE_BOTH;
+            else {
+                set_error(ctx, &key, "traverse dir must be 'fwd', 'rev' or 'both'");
+                return -1;
+            }
+        } else if (cdb_token_equals_ci(&key, "min")) {
+            if (parse_uint_arg(ctx, &n->as.traverse.min_hops) != 0)
+                return -1;
+        } else if (cdb_token_equals_ci(&key, "max")) {
+            if (parse_uint_arg(ctx, &n->as.traverse.max_hops) != 0)
+                return -1;
+            have_max = 1;
+        } else {
+            set_error(ctx, &key, "Unknown traverse argument");
+            return -1;
+        }
+        match(ctx, CDB_TOK_COMMA, NULL);
+    }
+    if (!have_link) {
+        set_error(ctx, NULL, "traverse requires a 'link' argument");
+        return -1;
+    }
+    if (!have_max)
+        n->as.traverse.max_hops = n->as.traverse.min_hops;
+    if (n->as.traverse.max_hops < n->as.traverse.min_hops) {
+        set_error(ctx, NULL, "traverse max hops below min hops");
+        return -1;
+    }
+    return 0;
+}
+
+/* Parses the NamedArgList of an asof_join stage/constructor into node n (already
+ * tagged, left/right set). Requires left_time and right_time; validates kind. */
+static int parse_asof_join_args(compiler_ctx *ctx, ast_node *n)
+{
+    int have_lt = 0, have_rt = 0;
+    n->as.asof_join.kind = CDB_ASOF_BACKWARD;
+    n->as.asof_join.tolerance_ns = 0;
+    n->as.asof_join.left_time = NULL;
+    n->as.asof_join.right_time = NULL;
+    n->as.asof_join.match_cond = NULL;
+
+    while (!match(ctx, CDB_TOK_RPAREN, NULL)) {
+        cdb_token key;
+        if (parse_arg_key(ctx, &key) != 0)
+            return -1;
+        if (cdb_token_equals_ci(&key, "left_time")) {
+            ast_expr *e = parse_expr(ctx);
+            if (!e)
+                return -1;
+            n->as.asof_join.left_time = e;
+            have_lt = 1;
+        } else if (cdb_token_equals_ci(&key, "right_time")) {
+            ast_expr *e = parse_expr(ctx);
+            if (!e)
+                return -1;
+            n->as.asof_join.right_time = e;
+            have_rt = 1;
+        } else if (cdb_token_equals_ci(&key, "match")) {
+            ast_expr *e = parse_expr(ctx);
+            if (!e)
+                return -1;
+            n->as.asof_join.match_cond = e;
+        } else if (cdb_token_equals_ci(&key, "kind")) {
+            size_t kl = 0;
+            const char *k = parse_strval(ctx, &kl);
+            if (!k)
+                return -1;
+            if (strval_ci_eq(k, kl, "backward"))
+                n->as.asof_join.kind = CDB_ASOF_BACKWARD;
+            else if (strval_ci_eq(k, kl, "forward"))
+                n->as.asof_join.kind = CDB_ASOF_FORWARD;
+            else if (strval_ci_eq(k, kl, "nearest"))
+                n->as.asof_join.kind = CDB_ASOF_NEAREST;
+            else {
+                set_error(ctx, &key, "asof_join kind must be backward/forward/nearest");
+                return -1;
+            }
+        } else if (cdb_token_equals_ci(&key, "tolerance")) {
+            if (parse_uint_arg(ctx, &n->as.asof_join.tolerance_ns) != 0)
+                return -1;
+        } else {
+            set_error(ctx, &key, "Unknown asof_join argument");
+            return -1;
+        }
+        match(ctx, CDB_TOK_COMMA, NULL);
+    }
+    if (!have_lt || !have_rt) {
+        set_error(ctx, NULL, "asof_join requires 'left_time' and 'right_time'");
+        return -1;
+    }
+    if (!n->as.asof_join.match_cond) {
+        n->as.asof_join.match_cond = make_bool_literal(ctx, 1);
+        if (!n->as.asof_join.match_cond)
+            return -1;
+    }
+    return 0;
+}
+
+/* Parses a hybrid_rank NamedArgList into node n (tagged HYBRID_RANK). Branches
+ * are sub-plans; weights optional (default 1000 each); fuse must be RRF. */
+static int parse_hybrid_rank_args(compiler_ctx *ctx, ast_node *n)
+{
+    size_t n_weights = 0;
+    uint32_t weights[MAX_KEYS];
+    n->as.hybrid_rank.fuse = CDB_FUSE_RRF;
+    n->as.hybrid_rank.n_branches = 0;
+
+    while (!match(ctx, CDB_TOK_RPAREN, NULL)) {
+        cdb_token key;
+        if (parse_arg_key(ctx, &key) != 0)
+            return -1;
+        if (cdb_token_equals_ci(&key, "branches")) {
+            if (expect(ctx, CDB_TOK_LBRACKET, "Expected '[' for branches list", NULL) != CDB_OK)
+                return -1;
+            do {
+                ast_node *b = parse_branch(ctx);
+                if (!b)
+                    return -1;
+                if (n->as.hybrid_rank.n_branches >= MAX_KEYS) {
+                    set_error(ctx, &key, "Too many hybrid_rank branches");
+                    return -1;
+                }
+                n->as.hybrid_rank.branches[n->as.hybrid_rank.n_branches++] = b;
+            } while (match(ctx, CDB_TOK_COMMA, NULL));
+            if (expect(ctx, CDB_TOK_RBRACKET, "Expected ']' after branches", NULL) != CDB_OK)
+                return -1;
+        } else if (cdb_token_equals_ci(&key, "weights")) {
+            if (expect(ctx, CDB_TOK_LBRACKET, "Expected '[' for weights list", NULL) != CDB_OK)
+                return -1;
+            do {
+                uint64_t wv = 0;
+                if (parse_uint_arg(ctx, &wv) != 0)
+                    return -1;
+                if (wv > 0xFFFFFFFFu) {
+                    set_error(ctx, &key, "hybrid_rank weight out of range");
+                    return -1;
+                }
+                if (n_weights >= MAX_KEYS) {
+                    set_error(ctx, &key, "Too many hybrid_rank weights");
+                    return -1;
+                }
+                weights[n_weights++] = (uint32_t)wv;
+            } while (match(ctx, CDB_TOK_COMMA, NULL));
+            if (expect(ctx, CDB_TOK_RBRACKET, "Expected ']' after weights", NULL) != CDB_OK)
+                return -1;
+        } else if (cdb_token_equals_ci(&key, "fuse")) {
+            size_t fl = 0;
+            const char *f = parse_strval(ctx, &fl);
+            if (!f)
+                return -1;
+            if (!strval_ci_eq(f, fl, "rrf")) {
+                set_error(ctx, &key, "hybrid_rank fuse must be 'rrf'");
+                return -1;
+            }
+        } else {
+            set_error(ctx, &key, "Unknown hybrid_rank argument");
+            return -1;
+        }
+        match(ctx, CDB_TOK_COMMA, NULL);
+    }
+    if (n->as.hybrid_rank.n_branches == 0) {
+        set_error(ctx, NULL, "hybrid_rank requires at least one branch");
+        return -1;
+    }
+    if (n_weights != 0 && n_weights != n->as.hybrid_rank.n_branches) {
+        set_error(ctx, NULL, "hybrid_rank weights count must match branches");
+        return -1;
+    }
+    for (size_t i = 0; i < n->as.hybrid_rank.n_branches; ++i)
+        n->as.hybrid_rank.weights[i] = (n_weights != 0) ? weights[i] : 1000u;
+    return 0;
+}
+
+/* Parses the body of an aggregate output given its function token `fn_tok` and
+ * an optional alias: `aggfn(expr|*)`, with an optional trailing `AS alias`. */
+static int parse_agg_output_tail(compiler_ctx *ctx, ast_node *n, const cdb_token *fn_tok,
+                                 const char *alias, size_t alias_len)
+{
+    uint8_t fn = lookup_agg_fn(fn_tok->start, (size_t)fn_tok->len);
+    if (fn == 0) {
+        set_error(ctx, fn_tok, "Expected aggregate function (count/sum/avg/min/max/...)");
+        return -1;
+    }
+    if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after aggregate function", NULL) != CDB_OK)
+        return -1;
+    ast_expr *expr = NULL;
+    if (match(ctx, CDB_TOK_STAR, NULL)) {
+        /* count(*) (and any-fn(*)): a constant non-null expr makes COUNT count
+         * every row (closes the BACKLOG 'count(*)' item). */
+        expr = alloc_expr(ctx);
+        if (!expr)
+            return -1;
+        expr->tag = CDB_QUERY_EXPR_LITERAL;
+        expr->as.literal.len =
+            encode_int_val(1, expr->as.literal.bytes, sizeof(expr->as.literal.bytes));
+    } else {
+        expr = parse_expr(ctx);
+        if (!expr)
+            return -1;
+    }
+    if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' after aggregate argument", NULL) != CDB_OK)
+        return -1;
+    if (!alias) {
+        if (match(ctx, CDB_TOK_KW_AS, NULL) || match(ctx, CDB_TOK_COLON, NULL)) {
+            cdb_token atok;
+            if (expect(ctx, CDB_TOK_IDENT, "Expected aggregate alias", &atok) != CDB_OK)
+                return -1;
+            alias = pool_strdup(ctx, atok.start, (size_t)atok.len);
+            if (!alias)
+                return -1;
+            alias_len = (size_t)atok.len;
+        } else {
+            /* Default the alias to the function name. */
+            alias = pool_strdup(ctx, fn_tok->start, (size_t)fn_tok->len);
+            if (!alias)
+                return -1;
+            alias_len = (size_t)fn_tok->len;
+        }
+    }
+    if (n->as.aggregate.n_aggs >= MAX_OUTPUTS) {
+        set_error(ctx, fn_tok, "Too many aggregate outputs");
+        return -1;
+    }
+    size_t ai = n->as.aggregate.n_aggs++;
+    n->as.aggregate.aggs[ai].alias = alias;
+    n->as.aggregate.aggs[ai].alias_len = alias_len;
+    n->as.aggregate.aggs[ai].fn = fn;
+    n->as.aggregate.aggs[ai].expr = expr;
+    return 0;
+}
+
+/* Parses one aggregate output: `alias : aggfn(expr|*)` or `aggfn(expr|*) [AS alias]`. */
+static int parse_agg_output(compiler_ctx *ctx, ast_node *n)
+{
+    cdb_token first;
+    if (cdb_lexer_next(&ctx->lex, &first) != CDB_OK) {
+        set_error(ctx, NULL, "Expected aggregate output");
+        return -1;
+    }
+    /* Leading `alias :` form (spec 11.11.1 example: avg_v: avg(voltage)). An
+     * IDENT followed by ':' is an alias; otherwise `first` is the function. */
+    if (first.kind == CDB_TOK_IDENT) {
+        cdb_token after;
+        if (cdb_lexer_peek(&ctx->lex, &after) == CDB_OK && after.kind == CDB_TOK_COLON) {
+            cdb_lexer_next(&ctx->lex, &after); /* consume ':' */
+            const char *alias = pool_strdup(ctx, first.start, (size_t)first.len);
+            if (!alias)
+                return -1;
+            size_t alias_len = (size_t)first.len;
+            cdb_token fn_tok;
+            if (cdb_lexer_next(&ctx->lex, &fn_tok) != CDB_OK) {
+                set_error(ctx, NULL, "Expected aggregate function");
+                return -1;
+            }
+            return parse_agg_output_tail(ctx, n, &fn_tok, alias, alias_len);
+        }
+    }
+    return parse_agg_output_tail(ctx, n, &first, NULL, 0);
+}
+/* Parse stream sources: Scan("name"), operator constructors, or table names. */
 static ast_node *parse_source(compiler_ctx *ctx)
 {
     cdb_token tok;
+
+    /* Stream-operator constructors (#35, spec 11.11.3 StreamOp). Checked before
+     * the bare-identifier Scan fallback so e.g. Union(...) is not mistaken for a
+     * store named "Union". */
+    if (match(ctx, CDB_TOK_KW_TEXTSEARCH, &tok)) {
+        if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after TextSearch", NULL) != CDB_OK)
+            return NULL;
+        ast_node *src = parse_source(ctx);
+        if (!src)
+            return NULL;
+        if (expect(ctx, CDB_TOK_COMMA, "Expected ',' after TextSearch source", NULL) != CDB_OK)
+            return NULL;
+        ast_node *n = alloc_node(ctx);
+        if (!n)
+            return NULL;
+        n->tag = CDB_QUERY_NODE_TEXT_SEARCH;
+        n->as.text_search.input = src;
+        if (parse_text_search_args(ctx, n) != 0)
+            return NULL;
+        return n;
+    }
+    if (match(ctx, CDB_TOK_KW_VECTORSEARCH, &tok)) {
+        if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after VectorSearch", NULL) != CDB_OK)
+            return NULL;
+        ast_node *src = parse_source(ctx);
+        if (!src)
+            return NULL;
+        if (expect(ctx, CDB_TOK_COMMA, "Expected ',' after VectorSearch source", NULL) != CDB_OK)
+            return NULL;
+        ast_node *n = alloc_node(ctx);
+        if (!n)
+            return NULL;
+        n->tag = CDB_QUERY_NODE_VECTOR_SEARCH;
+        n->as.vector_search.input = src;
+        if (parse_vector_search_args(ctx, n) != 0)
+            return NULL;
+        return n;
+    }
+    if (match(ctx, CDB_TOK_KW_TRAVERSE, &tok)) {
+        if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after Traverse", NULL) != CDB_OK)
+            return NULL;
+        ast_node *src = parse_source(ctx);
+        if (!src)
+            return NULL;
+        if (expect(ctx, CDB_TOK_COMMA, "Expected ',' after Traverse source", NULL) != CDB_OK)
+            return NULL;
+        ast_node *n = alloc_node(ctx);
+        if (!n)
+            return NULL;
+        n->tag = CDB_QUERY_NODE_TRAVERSE;
+        n->as.traverse.input = src;
+        if (parse_traverse_args(ctx, n) != 0)
+            return NULL;
+        return n;
+    }
+    if (match(ctx, CDB_TOK_KW_HYBRIDRANK, &tok)) {
+        if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after HybridRank", NULL) != CDB_OK)
+            return NULL;
+        ast_node *n = alloc_node(ctx);
+        if (!n)
+            return NULL;
+        n->tag = CDB_QUERY_NODE_HYBRID_RANK;
+        if (parse_hybrid_rank_args(ctx, n) != 0)
+            return NULL;
+        return n;
+    }
+    {
+        /* AsofJoin(..) and Union(..) are plain identifiers to the lexer; dispatch
+         * on the identifier text before the bare-identifier Scan fallback. */
+        cdb_token peek;
+        if (cdb_lexer_peek(&ctx->lex, &peek) == CDB_OK && peek.kind == CDB_TOK_IDENT
+            && (cdb_token_equals_ci(&peek, "AsofJoin") || cdb_token_equals_ci(&peek, "asof_join"))) {
+            cdb_lexer_next(&ctx->lex, &tok);
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after AsofJoin", NULL) != CDB_OK)
+                return NULL;
+            ast_node *left = parse_source(ctx);
+            if (!left)
+                return NULL;
+            if (expect(ctx, CDB_TOK_COMMA, "Expected ',' after AsofJoin left", NULL) != CDB_OK)
+                return NULL;
+            ast_node *right = parse_source(ctx);
+            if (!right)
+                return NULL;
+            if (expect(ctx, CDB_TOK_COMMA, "Expected ',' after AsofJoin right", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_ASOF_JOIN;
+            n->as.asof_join.left = left;
+            n->as.asof_join.right = right;
+            if (parse_asof_join_args(ctx, n) != 0)
+                return NULL;
+            return n;
+        }
+        if (cdb_lexer_peek(&ctx->lex, &peek) == CDB_OK && peek.kind == CDB_TOK_IDENT
+            && cdb_token_equals_ci(&peek, "Union")) {
+            cdb_lexer_next(&ctx->lex, &tok);
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after Union", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_UNION;
+            n->as.union_node.n_branches = 0;
+            do {
+                ast_node *b = parse_branch(ctx);
+                if (!b)
+                    return NULL;
+                if (n->as.union_node.n_branches >= MAX_KEYS) {
+                    set_error(ctx, &peek, "Too many union branches");
+                    return NULL;
+                }
+                n->as.union_node.branches[n->as.union_node.n_branches++] = b;
+            } while (match(ctx, CDB_TOK_COMMA, NULL));
+            if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' after Union branches", NULL) != CDB_OK)
+                return NULL;
+            if (n->as.union_node.n_branches < 2) {
+                set_error(ctx, &peek, "Union requires at least two branches");
+                return NULL;
+            }
+            return n;
+        }
+    }
+
     if (match(ctx, CDB_TOK_KW_SCAN, &tok)) {
         if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after Scan", NULL) != CDB_OK)
             return NULL;
@@ -1168,6 +1922,203 @@ static ast_node *parse_pipeline(compiler_ctx *ctx, ast_node *source)
             } while (match(ctx, CDB_TOK_COMMA, NULL));
 
             if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' after project list", NULL) != CDB_OK)
+                return NULL;
+            cur = n;
+            continue;
+        }
+
+        /* Aggregate stage (#35): aggregate([by: [g, ...],] out, ...) */
+        if (stage_tok.kind == CDB_TOK_KW_AGGREGATE || cdb_token_equals_ci(&stage_tok, "aggregate")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after aggregate", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_AGGREGATE;
+            n->as.aggregate.input = cur;
+            n->as.aggregate.n_groups = 0;
+            n->as.aggregate.n_aggs = 0;
+
+            cdb_token bytok;
+            int done = 0;
+            if (cdb_lexer_peek(&ctx->lex, &bytok) == CDB_OK
+                && (bytok.kind == CDB_TOK_KW_BY || cdb_token_equals_ci(&bytok, "by"))) {
+                cdb_lexer_next(&ctx->lex, &bytok); /* consume 'by' */
+                if (expect(ctx, CDB_TOK_COLON, "Expected ':' after 'by'", NULL) != CDB_OK)
+                    return NULL;
+                if (expect(ctx, CDB_TOK_LBRACKET, "Expected '[' for group list", NULL) != CDB_OK)
+                    return NULL;
+                do {
+                    ast_expr *g = parse_expr(ctx);
+                    if (!g)
+                        return NULL;
+                    if (n->as.aggregate.n_groups >= MAX_OUTPUTS) {
+                        set_error(ctx, &bytok, "Too many group keys");
+                        return NULL;
+                    }
+                    n->as.aggregate.groups[n->as.aggregate.n_groups++] = g;
+                } while (match(ctx, CDB_TOK_COMMA, NULL));
+                if (expect(ctx, CDB_TOK_RBRACKET, "Expected ']' after group list", NULL) != CDB_OK)
+                    return NULL;
+                if (match(ctx, CDB_TOK_RPAREN, NULL))
+                    done = 1; /* groups only */
+                else if (expect(ctx, CDB_TOK_COMMA, "Expected ',' after 'by' list", NULL) != CDB_OK)
+                    return NULL;
+            }
+            if (!done) {
+                do {
+                    if (parse_agg_output(ctx, n) != 0)
+                        return NULL;
+                } while (match(ctx, CDB_TOK_COMMA, NULL));
+                if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' after aggregate outputs", NULL)
+                    != CDB_OK)
+                    return NULL;
+            }
+            if (n->as.aggregate.n_groups == 0 && n->as.aggregate.n_aggs == 0) {
+                set_error(ctx, &stage_tok, "aggregate requires a group or an output");
+                return NULL;
+            }
+            cur = n;
+            continue;
+        }
+
+        /* Text-search stage (#35): text_search(query: "..", fields: [..], ..) */
+        if (stage_tok.kind == CDB_TOK_KW_TEXTSEARCH || cdb_token_equals_ci(&stage_tok, "text_search")
+            || cdb_token_equals_ci(&stage_tok, "textsearch")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after text_search", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_TEXT_SEARCH;
+            n->as.text_search.input = cur;
+            if (parse_text_search_args(ctx, n) != 0)
+                return NULL;
+            cur = n;
+            continue;
+        }
+
+        /* Vector-search stage (#35): vector_search(field: .., near: .., k: ..) */
+        if (stage_tok.kind == CDB_TOK_KW_VECTORSEARCH
+            || cdb_token_equals_ci(&stage_tok, "vector_search")
+            || cdb_token_equals_ci(&stage_tok, "vectorsearch")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after vector_search", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_VECTOR_SEARCH;
+            n->as.vector_search.input = cur;
+            if (parse_vector_search_args(ctx, n) != 0)
+                return NULL;
+            cur = n;
+            continue;
+        }
+
+        /* Traverse stage (#35): traverse(link: .., dir: .., min: .., max: ..) */
+        if (stage_tok.kind == CDB_TOK_KW_TRAVERSE || cdb_token_equals_ci(&stage_tok, "traverse")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after traverse", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_TRAVERSE;
+            n->as.traverse.input = cur;
+            if (parse_traverse_args(ctx, n) != 0)
+                return NULL;
+            cur = n;
+            continue;
+        }
+
+        /* Hybrid-rank stage (#35): hybrid_rank(branches: [..], weights: [..]) */
+        if (stage_tok.kind == CDB_TOK_KW_HYBRIDRANK
+            || cdb_token_equals_ci(&stage_tok, "hybrid_rank")
+            || cdb_token_equals_ci(&stage_tok, "hybridrank")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after hybrid_rank", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_HYBRID_RANK;
+            if (parse_hybrid_rank_args(ctx, n) != 0)
+                return NULL;
+            cur = n;
+            continue;
+        }
+
+        /* As-of join stage (#35): asof_join(<right>, left_time:.., right_time:..) */
+        if (stage_tok.kind == CDB_TOK_KW_ASOF_JOIN || cdb_token_equals_ci(&stage_tok, "asof_join")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after asof_join", NULL) != CDB_OK)
+                return NULL;
+            ast_node *right = parse_source(ctx);
+            if (!right)
+                return NULL;
+            if (expect(ctx, CDB_TOK_COMMA, "Expected ',' after asof_join source", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_ASOF_JOIN;
+            n->as.asof_join.left = cur;
+            n->as.asof_join.right = right;
+            if (parse_asof_join_args(ctx, n) != 0)
+                return NULL;
+            cur = n;
+            continue;
+        }
+
+        /* Unnest stage (#35): unnest(expr [AS item]) */
+        if (stage_tok.kind == CDB_TOK_KW_UNNEST || cdb_token_equals_ci(&stage_tok, "unnest")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after unnest", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_UNNEST;
+            n->as.unnest.input = cur;
+            n->as.unnest.array_expr = parse_expr(ctx);
+            if (!n->as.unnest.array_expr)
+                return NULL;
+            n->as.unnest.item_alias = "item";
+            n->as.unnest.item_len = 4;
+            n->as.unnest.idx_alias = NULL;
+            n->as.unnest.idx_len = 0;
+            if (match(ctx, CDB_TOK_KW_AS, NULL)) {
+                cdb_token itok;
+                if (expect(ctx, CDB_TOK_IDENT, "Expected item alias after AS", &itok) != CDB_OK)
+                    return NULL;
+                n->as.unnest.item_alias = pool_strdup(ctx, itok.start, (size_t)itok.len);
+                if (!n->as.unnest.item_alias)
+                    return NULL;
+                n->as.unnest.item_len = (size_t)itok.len;
+            }
+            if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' after unnest", NULL) != CDB_OK)
+                return NULL;
+            cur = n;
+            continue;
+        }
+
+        /* Union stage (#35): union(src [, src ...]) — concatenates (UNION ALL) */
+        if (cdb_token_equals_ci(&stage_tok, "union")) {
+            if (expect(ctx, CDB_TOK_LPAREN, "Expected '(' after union", NULL) != CDB_OK)
+                return NULL;
+            ast_node *n = alloc_node(ctx);
+            if (!n)
+                return NULL;
+            n->tag = CDB_QUERY_NODE_UNION;
+            n->as.union_node.n_branches = 0;
+            n->as.union_node.branches[n->as.union_node.n_branches++] = cur;
+            do {
+                ast_node *b = parse_branch(ctx);
+                if (!b)
+                    return NULL;
+                if (n->as.union_node.n_branches >= MAX_KEYS) {
+                    set_error(ctx, &stage_tok, "Too many union branches");
+                    return NULL;
+                }
+                n->as.union_node.branches[n->as.union_node.n_branches++] = b;
+            } while (match(ctx, CDB_TOK_COMMA, NULL));
+            if (expect(ctx, CDB_TOK_RPAREN, "Expected ')' after union branches", NULL) != CDB_OK)
                 return NULL;
             cur = n;
             continue;
@@ -1502,6 +2453,133 @@ static cdb_status serialize_node(cdb_query_writer *w, const ast_node *n)
         if (s != CDB_OK)
             return s;
         return serialize_node(w, n->as.window.input);
+    }
+
+    /* ----- #35: the 8 formerly text-unreachable operators ----- */
+    case CDB_QUERY_NODE_UNION: {
+        cdb_status s = cdb_query_write_union(w, n->as.union_node.n_branches);
+        if (s != CDB_OK)
+            return s;
+        for (size_t i = 0; i < n->as.union_node.n_branches; ++i) {
+            s = serialize_node(w, n->as.union_node.branches[i]);
+            if (s != CDB_OK)
+                return s;
+        }
+        return CDB_OK;
+    }
+
+    case CDB_QUERY_NODE_AGGREGATE: {
+        cdb_status s =
+            cdb_query_write_aggregate(w, n->as.aggregate.n_groups, n->as.aggregate.n_aggs);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_node(w, n->as.aggregate.input);
+        if (s != CDB_OK)
+            return s;
+        for (size_t i = 0; i < n->as.aggregate.n_groups; ++i) {
+            s = serialize_expr(w, n->as.aggregate.groups[i]);
+            if (s != CDB_OK)
+                return s;
+        }
+        for (size_t i = 0; i < n->as.aggregate.n_aggs; ++i) {
+            s = cdb_query_write_aggregate_output(w, n->as.aggregate.aggs[i].alias,
+                                                 n->as.aggregate.aggs[i].alias_len,
+                                                 n->as.aggregate.aggs[i].fn);
+            if (s != CDB_OK)
+                return s;
+            s = serialize_expr(w, n->as.aggregate.aggs[i].expr);
+            if (s != CDB_OK)
+                return s;
+        }
+        return CDB_OK;
+    }
+
+    case CDB_QUERY_NODE_TRAVERSE: {
+        cdb_status s = cdb_query_write_traverse(w, n->as.traverse.link_type, n->as.traverse.link_len,
+                                                n->as.traverse.dir, n->as.traverse.min_hops,
+                                                n->as.traverse.max_hops);
+        if (s != CDB_OK)
+            return s;
+        return serialize_node(w, n->as.traverse.input);
+    }
+
+    case CDB_QUERY_NODE_TEXT_SEARCH: {
+        cdb_status s = cdb_query_write_text_search(w, n->as.text_search.mode, n->as.text_search.limit,
+                                                   n->as.text_search.query,
+                                                   n->as.text_search.query_len,
+                                                   n->as.text_search.n_fields);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_node(w, n->as.text_search.input);
+        if (s != CDB_OK)
+            return s;
+        for (size_t i = 0; i < n->as.text_search.n_fields; ++i) {
+            s = cdb_query_write_field_name(w, n->as.text_search.fields[i],
+                                           n->as.text_search.field_lens[i]);
+            if (s != CDB_OK)
+                return s;
+        }
+        return CDB_OK;
+    }
+
+    case CDB_QUERY_NODE_VECTOR_SEARCH: {
+        cdb_status s = cdb_query_write_vector_search(w, n->as.vector_search.field,
+                                                     n->as.vector_search.field_len,
+                                                     n->as.vector_search.k,
+                                                     n->as.vector_search.metric);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_node(w, n->as.vector_search.input);
+        if (s != CDB_OK)
+            return s;
+        return serialize_expr(w, n->as.vector_search.near_expr);
+    }
+
+    case CDB_QUERY_NODE_HYBRID_RANK: {
+        cdb_status s = cdb_query_write_hybrid_rank(w, n->as.hybrid_rank.fuse,
+                                                   n->as.hybrid_rank.n_branches);
+        if (s != CDB_OK)
+            return s;
+        for (size_t i = 0; i < n->as.hybrid_rank.n_branches; ++i) {
+            s = serialize_node(w, n->as.hybrid_rank.branches[i]);
+            if (s != CDB_OK)
+                return s;
+            s = cdb_query_write_branch_weight(w, n->as.hybrid_rank.weights[i]);
+            if (s != CDB_OK)
+                return s;
+        }
+        return CDB_OK;
+    }
+
+    case CDB_QUERY_NODE_ASOF_JOIN: {
+        cdb_status s =
+            cdb_query_write_asof_join(w, n->as.asof_join.kind, n->as.asof_join.tolerance_ns);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_node(w, n->as.asof_join.left);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_node(w, n->as.asof_join.right);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_expr(w, n->as.asof_join.left_time);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_expr(w, n->as.asof_join.right_time);
+        if (s != CDB_OK)
+            return s;
+        return serialize_expr(w, n->as.asof_join.match_cond);
+    }
+
+    case CDB_QUERY_NODE_UNNEST: {
+        cdb_status s = cdb_query_write_unnest(w, n->as.unnest.item_alias, n->as.unnest.item_len,
+                                              n->as.unnest.idx_alias, n->as.unnest.idx_len);
+        if (s != CDB_OK)
+            return s;
+        s = serialize_node(w, n->as.unnest.input);
+        if (s != CDB_OK)
+            return s;
+        return serialize_expr(w, n->as.unnest.array_expr);
     }
 
     default: return CDB_E_INVALID_ARG;

@@ -204,20 +204,34 @@ int main(void)
 
 The following features, interfaces, or operators are provisioned in headers, specification documents, or executor scaffolds, but are not yet fully implemented:
 
-1. **CMBQL-TEXT grammar for the multi-model search/graph operators**:
-   The `TEXT_SEARCH`, `VECTOR_SEARCH`, `TRAVERSE`, and `HYBRID_RANK` executor
-   operators (`src/cdb_exec.c`) are wired to their real engines and perform real
-   search/traversal: `TEXT_SEARCH` runs BM25 over the full-text index
-   (`cdb_doc_search`), `VECTOR_SEARCH` runs ANN over the neighbour graph ranked by
-   the requested metric (`cdb_vec_search_mode`), `TRAVERSE` performs a bounded
-   breadth-first link walk honouring direction and `max_hops` with cycle
-   detection and real per-node `$depth` (`cdb_link_list`), and `HYBRID_RANK` fuses
-   those real branch scores with Reciprocal Rank Fusion (RRF). What remains is the
-   **front-end**: these operators are currently reachable only by constructing the
-   query **wire** directly (the writers in `cdb_query.h`, as the executor tests and
-   the proc-VM `OPEN_CURSOR` path do). The CMBQL-TEXT compiler/grammar productions
-   that parse `TEXT_SEARCH`/`VECTOR_SEARCH`/`TRAVERSE`/`HYBRID_RANK` clauses, the
-   trigger subsystem, and a public `cdb_db_query` entry point are pending.
+1. **Time-series rollup pushdown & a declarative-SQL aggregate path** (#35 follow-ups):
+   The query **front-end** now reaches the full operator set from CMBQL text. The
+   eight previously text-unreachable operators — `AGGREGATE`, `UNION`, `TRAVERSE`,
+   `TEXT_SEARCH`, `VECTOR_SEARCH`, `HYBRID_RANK`, `ASOF_JOIN`, and `UNNEST` — have
+   grammar/parser productions that compile to the same CMBQ wire the executor
+   already consumes (`src/cdb_compiler.c`; spec 11.11). They are reachable through
+   the **pipeline (Flux) syntax** — e.g.
+   `Scan("notes") | text_search(query: "alpha", fields: ["body"])`,
+   `Scan("telemetry") | aggregate(by: [device_id], avg_v: avg(voltage), n: count(*))`,
+   `Scan("users") | traverse(link: "follows", dir: "fwd", min: 1, max: 3)` —
+   and through the stream-operator constructors `TextSearch(...)`,
+   `VectorSearch(...)`, `Traverse(...)`, `HybridRank(...)`, `AsofJoin(...)`,
+   `Union(...)`. `count(*)` and the other aggregates (`sum`/`avg`/`min`/`max`/
+   `first`/`last`/`stddev`/`variance`) now parse inside `aggregate(...)`, closing the
+   prior "Unknown function call" / "Unknown pipeline stage" gaps; reserved words are
+   accepted as field names in expression position. Malformed clauses fail closed
+   with a typed parse error. **Triggers now fire:** `cdb_trigger_dispatch`
+   resolves the registered procedure, marshals the mutated row's old/new values as
+   parameters, honours the per-trigger depth/cascade limit, and executes it via the
+   proc VM — fail-closed on a procedure error; the commit path captures matching
+   store mutations and dispatches them after the commit is durable (spec 11.6/11.9).
+   A public **`cdb_db_query(db, text, …)`** entry (`cdb_db.h`) compiles CMBQL text
+   and runs it to a streaming cursor with caller-owned, no-heap buffers.
+   *Still pending:* the declarative `SELECT … GROUP BY …` aggregate path (aggregates
+   are reached via the pipeline/constructor syntax above, not yet inside a plain
+   `SELECT` list), time-series rollup pushdown into chunk summaries, and
+   full old/new **row-content** marshalling to triggers (dispatch currently
+   marshals the mutated entry's identity).
 2. **Coordinator Primary Election & Dynamic Slots (Step 6)**:
    - Dynamic allocation of coordinator slots beyond the compiled default and primary node designation via `coord/primary` (as outlined in `docs/dev/plan-step6-coord-primary.md`).
 3. **Enclave Storage & Keystore (M27–M31)**:
