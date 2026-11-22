@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "combolite/cdb_crypto.h"
+#include "combolite/cdb_env.h"
 #include "cdb_endian.h"
 
 #include "mbedtls/platform_util.h"
@@ -262,9 +263,13 @@ cdb_status cdb_crypto_derive_subkey(const uint8_t base_key[CDB_CRYPTO_KEY_SIZE],
     return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
 }
 
-cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
-                               const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
-                               uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE])
+/* Shared wrap body: validate, draw a fresh nonce from the supplied source,
+ * then AEAD-encrypt the enclave key under the master key. env is NULL for the
+ * legacy platform-entropy path and non-NULL for the env-routed path. */
+static cdb_status wrap_key_common(const struct cdb_env *env,
+                                  const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
+                                  const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
+                                  uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE])
 {
     /*
      * #23/F5a (sibling of #15): validate pointers BEFORE forming any pointer
@@ -290,12 +295,30 @@ cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
      * pair, and one master key wraps many enclave keys and re-wraps on rotation;
      * a fixed nonce would be catastrophic reuse (CWE-323). The nonce is stored
      * with the wrapped key so unwrap can reproduce it. */
-    s = cdb_crypto_random_bytes(nonce, CDB_AEAD_NONCE_SIZE);
+    s = env != NULL ? cdb_crypto_random_bytes_env(env, nonce, CDB_AEAD_NONCE_SIZE)
+                    : cdb_crypto_random_bytes(nonce, CDB_AEAD_NONCE_SIZE);
     if (s != CDB_OK)
         return s;
 
     return cdb_crypto_aead_encrypt(CDB_AEAD_AES_256_GCM, master_key, nonce, NULL, 0, enclave_key,
                                    CDB_CRYPTO_KEY_SIZE, ciphertext, tag);
+}
+
+cdb_status cdb_crypto_wrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
+                               const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
+                               uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE])
+{
+    return wrap_key_common(NULL, master_key, enclave_key, wrapped_out);
+}
+
+cdb_status cdb_crypto_wrap_key_env(const struct cdb_env *env,
+                                   const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
+                                   const uint8_t enclave_key[CDB_CRYPTO_KEY_SIZE],
+                                   uint8_t wrapped_out[CDB_WRAPPED_KEY_SIZE])
+{
+    if (env == NULL || env->ops == NULL || env->ops->random == NULL)
+        return CDB_E_SECURITY; /* fail closed: no env RNG */
+    return wrap_key_common(env, master_key, enclave_key, wrapped_out);
 }
 
 cdb_status cdb_crypto_unwrap_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
@@ -413,7 +436,11 @@ cdb_status cdb_crypto_resolve_key(const char *uri, int is_production,
     return CDB_E_UNSUPPORTED;
 }
 
-/* Basic entropy source reading from /dev/urandom. */
+/* Legacy platform entropy source (reads /dev/urandom), kept ONLY for the
+ * no-env public API used by standalone/library callers and their tests. Engine
+ * code never reaches this: it routes through env_f_rng below so randomness
+ * honours the environment abstraction (spec 1.3) and works on non-POSIX/MCU
+ * targets. */
 static int platform_entropy_rng(void *ctx, unsigned char *buf, size_t len)
 {
     FILE *f;
@@ -427,6 +454,18 @@ static int platform_entropy_rng(void *ctx, unsigned char *buf, size_t len)
     return n == len ? 0 : MBEDTLS_ERR_ECP_RANDOM_FAILED;
 }
 
+/* mbedtls f_rng adapter whose context is a const cdb_env*. Draws entropy from
+ * the environment's RNG hook. Fails closed (no fallback entropy) when the env
+ * offers no random hook or the hook reports failure, so a hostile or absent
+ * env RNG can never be silently bypassed (FR1, AC2). */
+static int env_f_rng(void *ctx, unsigned char *buf, size_t len)
+{
+    const cdb_env *env = (const cdb_env *)ctx;
+    if (env == NULL || env->ops == NULL || env->ops->random == NULL)
+        return MBEDTLS_ERR_ECP_RANDOM_FAILED;
+    return env->ops->random(env->ctx, buf, len) == CDB_OK ? 0 : MBEDTLS_ERR_ECP_RANDOM_FAILED;
+}
+
 cdb_status cdb_crypto_random_bytes(void *buf, size_t len)
 {
     if (buf == NULL)
@@ -434,7 +473,21 @@ cdb_status cdb_crypto_random_bytes(void *buf, size_t len)
     return platform_entropy_rng(NULL, (unsigned char *)buf, len) == 0 ? CDB_OK : CDB_E_IO;
 }
 
-cdb_status cdb_identity_generate(cdb_identity *out_id, uint64_t principal_id, uint32_t tenant_id)
+cdb_status cdb_crypto_random_bytes_env(const cdb_env *env, void *buf, size_t len)
+{
+    if (buf == NULL)
+        return CDB_E_INVALID_ARG;
+    if (env == NULL || env->ops == NULL || env->ops->random == NULL)
+        return CDB_E_SECURITY; /* fail closed: no env RNG, no hardcoded fallback */
+    if (len == 0)
+        return CDB_OK;
+    return env->ops->random(env->ctx, buf, len) == CDB_OK ? CDB_OK : CDB_E_IO;
+}
+
+/* Shared key generation taking an explicit mbedtls f_rng. */
+static cdb_status identity_generate_rng(cdb_identity *out_id, uint64_t principal_id,
+                                        uint32_t tenant_id,
+                                        int (*f_rng)(void *, unsigned char *, size_t), void *p_rng)
 {
     mbedtls_ecdsa_context ctx;
     size_t olen = 0;
@@ -448,7 +501,7 @@ cdb_status cdb_identity_generate(cdb_identity *out_id, uint64_t principal_id, ui
     out_id->tenant_id = tenant_id;
 
     mbedtls_ecdsa_init(&ctx);
-    ret = mbedtls_ecdsa_genkey(&ctx, MBEDTLS_ECP_DP_SECP256R1, platform_entropy_rng, NULL);
+    ret = mbedtls_ecdsa_genkey(&ctx, MBEDTLS_ECP_DP_SECP256R1, f_rng, p_rng);
     if (ret != 0) {
         mbedtls_ecdsa_free(&ctx);
         return CDB_E_CORRUPT;
@@ -466,8 +519,25 @@ cdb_status cdb_identity_generate(cdb_identity *out_id, uint64_t principal_id, ui
     return (ret == 0 && olen == CDB_IDENTITY_PUBKEY_SIZE) ? CDB_OK : CDB_E_CORRUPT;
 }
 
-cdb_status cdb_identity_sign(const cdb_identity *id, const void *msg, size_t msg_len,
-                             uint8_t sig[CDB_SIGNATURE_SIZE])
+cdb_status cdb_identity_generate(cdb_identity *out_id, uint64_t principal_id, uint32_t tenant_id)
+{
+    return identity_generate_rng(out_id, principal_id, tenant_id, platform_entropy_rng, NULL);
+}
+
+cdb_status cdb_identity_generate_env(const cdb_env *env, cdb_identity *out_id,
+                                     uint64_t principal_id, uint32_t tenant_id)
+{
+    if (env == NULL || env->ops == NULL || env->ops->random == NULL)
+        return CDB_E_SECURITY; /* fail closed: no env RNG */
+    return identity_generate_rng(out_id, principal_id, tenant_id, env_f_rng, (void *)env);
+}
+
+/* Shared signing taking an explicit mbedtls f_rng. mbedtls uses the RNG to
+ * blind even the deterministic (RFC 6979) signature, so a genuine entropy
+ * source is required; env_f_rng fails closed when none is available. */
+static cdb_status identity_sign_rng(const cdb_identity *id, const void *msg, size_t msg_len,
+                                    uint8_t sig[CDB_SIGNATURE_SIZE],
+                                    int (*f_rng)(void *, unsigned char *, size_t), void *p_rng)
 {
     mbedtls_ecp_group grp;
     mbedtls_mpi r, s, d;
@@ -494,7 +564,7 @@ cdb_status cdb_identity_sign(const cdb_identity *id, const void *msg, size_t msg
     if (ret == 0) {
         /* Deterministic ECDSA signature (RFC 6979). */
         ret = mbedtls_ecdsa_sign_det_ext(&grp, &r, &s, &d, hash, CDB_CRYPTO_HASH_SIZE,
-                                         MBEDTLS_MD_SHA256, platform_entropy_rng, NULL);
+                                         MBEDTLS_MD_SHA256, f_rng, p_rng);
     }
 
     if (ret == 0) {
@@ -510,6 +580,20 @@ cdb_status cdb_identity_sign(const cdb_identity *id, const void *msg, size_t msg
     cdb_crypto_wipe(hash, sizeof(hash));
 
     return ret == 0 ? CDB_OK : CDB_E_CORRUPT;
+}
+
+cdb_status cdb_identity_sign(const cdb_identity *id, const void *msg, size_t msg_len,
+                             uint8_t sig[CDB_SIGNATURE_SIZE])
+{
+    return identity_sign_rng(id, msg, msg_len, sig, platform_entropy_rng, NULL);
+}
+
+cdb_status cdb_identity_sign_env(const cdb_env *env, const cdb_identity *id, const void *msg,
+                                 size_t msg_len, uint8_t sig[CDB_SIGNATURE_SIZE])
+{
+    if (env == NULL || env->ops == NULL || env->ops->random == NULL)
+        return CDB_E_SECURITY; /* fail closed: no env RNG */
+    return identity_sign_rng(id, msg, msg_len, sig, env_f_rng, (void *)env);
 }
 
 cdb_status cdb_identity_verify(const uint8_t public_key[CDB_IDENTITY_PUBKEY_SIZE], const void *msg,
