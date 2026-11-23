@@ -47,6 +47,9 @@
 #define CDB_COORD_MAX_LOBBY 16u  /* lobby files looked at per scan */
 #define CDB_COORD_DIR 172u       /* longest coord/ folder path, with its zero */
 #define CDB_COORD_PATH 220u      /* the folder plus "/" and the longest name */
+/* #42 FR4.8 DEFER: CDB_COORD_MAX is compile-fixed at 64 — the slot count is not
+ * dynamic. Step-6 dynamic slots + primary election (coord/primary) are future
+ * work (README Provisioned 2, docs/dev/plan-step6-coord-primary.md). */
 
 /* Roles (offset 12). */
 #define CDB_COORD_FREE 0u
@@ -79,6 +82,17 @@
 #define CDB_COORD_OP_REBASE 6u
 #define CDB_COORD_OP_OTHER 255u
 #define CDB_COORD_ESTIMATE_UNKNOWN 0xFFFFFFFFu
+/* #42 FR2: conservative completion estimate (ms) a busy operation publishes
+ * when it has no x/x_total progress basis, so every live holder of a
+ * non-baton op (RECONCILE/COMPACT/GRAPH/RECOVER/REBASE, spec 5.8) publishes a
+ * finite estimate and a waiter's estimate-bounded wait (cdb_db.c
+ * check_slot_collisions, spec 5.9.4/5.9.5) always has a value to read. One
+ * shared constant rather than per-op windows: these ops have no measured
+ * device-class basis yet (spec 5.9.6), so a single generous bound is the
+ * honest floor until one exists. The waiter's own hard cap
+ * (CDB_TX_WAIT_HARD_CAP_MS) bounds the wait regardless of this value, so it is
+ * an optimisation for the common case, never a trusted limit. */
+#define CDB_COORD_ESTIMATE_CONSERVATIVE_MS 30000u
 
 /* One slot half, decoded (spec 14.5.2). Times are in microseconds of the
  * primary's clock. */
