@@ -76,7 +76,12 @@ static int type_ok(int type)
     return type > (int)CDB_TYPE_NULL && type < (int)CDB_TYPE_UNKNOWN;
 }
 
-/* Index keys exist for these (cdb_key.h). */
+/* Index keys exist for these (cdb_key.h). DECIMAL, ARRAY, OBJECT and VECTOR
+ * are deliberately not indexable (#40 FR5, deferred): they have no
+ * order-preserving byte-key form yet, so a B-tree over them could not range
+ * or compare correctly. Adding one is #42/future work; attempting to index
+ * such a column returns CDB_E_INVALID_ARG (add_index), not silent wrong
+ * ordering. */
 static int indexable(int type)
 {
     switch (type) {
@@ -956,6 +961,14 @@ static cdb_status table_delete_in(cdb_db *db, uint64_t store, uint64_t entry)
         size_t raw;
         int live = 0;
         uint32_t version = 0;
+        /* #40 FR2: the unique-index tombstones below are staged before
+         * cdb_doc_delete, which may refuse the delete (e.g. a REFUSE-rule
+         * graph link still references the row). Capture the index-stage
+         * watermark first so a refusal fully rolls the staging back: no
+         * tombstone must survive a refused delete, or it would shadow the
+         * still-live row's index entries. */
+        size_t saved_used = db->stage_idx_used;
+        int saved_overflow = db->stage_idx_overflow;
         if (cdb_doc_get_in_tx(db, store, entry, CDB_STAGE_OFF_NONE, tbuf(db, T_OTHER),
                               tbuf_size(db), &raw, &live, &version)
                 == CDB_OK
@@ -975,6 +988,8 @@ static cdb_status table_delete_in(cdb_db *db, uint64_t store, uint64_t entry)
             }
         }
         s = cdb_doc_delete(db, store, entry);
+        if (s != CDB_OK)
+            cdb_stage_idx_rewind(db, saved_used, saved_overflow);
     }
     db->via_table = 0;
     return s;
@@ -1675,7 +1690,11 @@ static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t
                               &db->cfg.catalog_work))
         != CDB_OK)
         return s;
-    /* Existing rows (none for a new table). */
+    /* #40 FR1: once cdb_index_create has allocated the index's pages, every
+     * failure path (a duplicate on a unique index, or any mid-fill error)
+     * must reclaim them with cdb_index_drop. Without this the half-built
+     * index is never tracked (t->nidx stays put), so its pages leak. The
+     * reclaim is best-effort: it never masks the original cause. */
     for (;;) {
         uint8_t key[CDB_TABLE_KEY_MAX + 8u], v[8];
         size_t len, klen;
@@ -1688,7 +1707,7 @@ static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t
             if ((s = col_committed_row(db, t, e, tbuf(db, T_OTHER), tbuf_size(db), &len, &live,
                                        &schema_ver))
                 != CDB_OK)
-                return s;
+                goto fail;
             if (!live)
                 continue;
         } else {
@@ -1698,26 +1717,34 @@ static cdb_status add_index(cdb_db *db, uint64_t store, table *t, const uint64_t
             if ((s = cdb_doc_get(db, store, e, 0, tbuf(db, T_OTHER), tbuf_size(db), &len, NULL, 0,
                                  NULL, &info))
                 != CDB_OK)
-                return s;
+                goto fail;
             schema_ver = info.schema_version;
         }
         if ((s = row_key(db, t, x, tbuf(db, T_OTHER), len, schema_ver, e, key, &klen, &null))
             != CDB_OK)
-            return s;
+            goto fail;
         if (x->unique && !null) {
             if ((s = cdb_index_get(&x->ix, key, klen, v, sizeof v, &len, &found)) != CDB_OK)
-                return s;
-            if (found)
-                return CDB_E_EXISTS;
+                goto fail;
+            if (found) {
+                s = CDB_E_EXISTS;
+                goto fail;
+            }
         }
         cdb_store_u64(v, e, CDB_ORDER_BIG);
         if ((s = cdb_index_put(&x->ix, key, klen, v, sizeof v)) != CDB_OK)
-            return s;
+            goto fail;
     }
     if (s != CDB_OK)
-        return s;
+        goto fail;
     t->nidx++;
     return CDB_OK;
+fail:
+    /* Best-effort reclaim; keep the original status as the return value and
+     * leave no dangling handle (t->nidx is left unincremented). */
+    (void)cdb_index_drop(&x->ix);
+    memset(x, 0, sizeof *x);
+    return s;
 }
 
 /* Runs a catalog change on the table: loads it fresh, calls fn, and makes
@@ -1755,6 +1782,14 @@ cdb_status cdb_table_create(cdb_db *db, const char *name, size_t len, const cdb_
     return r;
 }
 
+/* #40 FR5 (deferred, documented): creating a table is not a single atomic
+ * catalog commit -- the store, its column IDs, the primary-key index and the
+ * settings, then the first schema version, are written across more than one
+ * commit. A crash mid-create can leave a store whose settings never landed;
+ * such a store reads back with version == 0 and is treated as absent/droppable
+ * (see table_get / forget, and the version==0 guards). This is a known
+ * limitation, not a correctness defect: no partially-created store is ever
+ * usable. A fully atomic multi-store catalog commit is future work. */
 static cdb_status table_create_in(cdb_db *db, const char *name, size_t len,
                                   const cdb_table_def *def, uint64_t *store)
 {

@@ -120,9 +120,15 @@ cdb_status cdb_link_reinforce(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref
                               float weight, int64_t time);
 cdb_status cdb_link_remove(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target);
 
-/* Committed links. get: *found 0 when there is none. list: the links out of
+/* Committed links. get: *found 0 when there is none; a tombstoned/removed
+ * link IS returned (*found 1) with its dead state in out->flags
+ * (CDB_LINK_TOMBSTONE / _SOURCE_GONE / _TARGET_GONE) -- the explicit,
+ * caller-visible way to inspect a link's state. list: the LIVE links out of
  * (or into) entry, of one type or all (type 0), in key order, starting after
- * *after (NULL: from the first); at most max. */
+ * *after (NULL: from the first); at most max. list filters to live links by
+ * default (#40 FR3) -- a tombstoned/removed end is skipped, so *n counts live
+ * links only and a consumer (e.g. graph traversal) never walks a dead end;
+ * paging still advances past skipped keys. */
 cdb_status cdb_link_get(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref target, cdb_link *out,
                         int *found);
 cdb_status cdb_link_list(cdb_db *db, cdb_ref entry, int direction, uint64_t type,

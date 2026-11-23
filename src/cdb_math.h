@@ -168,6 +168,8 @@ cdb_status cdb_math_mat_vec_mul(const float *m, size_t rows, size_t cols, const 
 cdb_status cdb_math_mat_mul(const float *a, size_t a_rows, size_t a_cols, const float *b,
                             size_t b_cols, float *out);
 cdb_status cdb_math_mat_transpose(const float *m, size_t rows, size_t cols, float *out);
+/* Determinant for dim 1-3 only; dim >= 4 returns CDB_E_UNSUPPORTED (no general
+ * LU path yet -- documented capability cap, #40 FR5). */
 cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out);
 cdb_status cdb_math_mat_trace(const float *m, size_t dim, float *out);
 
