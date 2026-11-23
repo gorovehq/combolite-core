@@ -90,6 +90,37 @@ cdb_status cdb_ts_series(cdb_db *db, uint64_t store, const char *name, size_t le
                          uint64_t *series, int *created);
 cdb_status cdb_ts_describe(cdb_db *db, uint64_t store, uint64_t series, cdb_ts_def *def);
 
+/* One enumerated series: its ID and the bytes of its key (the name, then each
+ * tag's key and value, tags sorted by key) copied into the caller's buffer at
+ * off, len bytes. The same byte form series_key builds for cdb_ts_series. */
+typedef struct cdb_ts_entry {
+    uint64_t series;
+    size_t off;
+    size_t len;
+} cdb_ts_entry;
+
+/* Lists a store's series in key order (the committed view, as cdb_ts_range
+ * sees blocks). Writes at most max entries into ents, their key bytes into buf
+ * (cap bytes); *n gets how many were written.
+ *
+ * To start an enumeration, set *cursor_len to 0. On return, cursor and
+ * *cursor_len hold an opaque continuation token: pass them back unchanged to
+ * read the next batch. *cursor_len == 0 on return means the enumeration is
+ * finished. cursor must have room for one series key (cursor_cap bytes).
+ *
+ * CDB_E_BUFFER_TOO_SMALL if a key does not fit the remaining buf, an ents
+ * slot is unavailable for it, or the continuation token does not fit cursor.
+ * No heap: the store's cursor page buffer is used. */
+cdb_status cdb_ts_list(cdb_db *db, uint64_t store, uint8_t *cursor, size_t cursor_cap,
+                       size_t *cursor_len, cdb_ts_entry *ents, size_t max, uint8_t *buf, size_t cap,
+                       size_t *n);
+
+/* Store-level config getter: the late mode (CDB_TS_LATE_*) and lateness (ns)
+ * the store was created with, so cdb_ts_create inputs round-trip. Either
+ * out-pointer may be NULL. Per-series retention is read with
+ * cdb_ts_get_retention. */
+cdb_status cdb_ts_get_late(cdb_db *db, uint64_t store, unsigned *late_mode, int64_t *lateness);
+
 /* Inside a transaction: appends points (any order). A point that is late
  * under the store's mode is refused with CDB_E_STATE; a value of the wrong
  * type or an unknown field is CDB_E_INVALID_ARG. Nothing is journaled when
