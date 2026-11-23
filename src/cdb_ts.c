@@ -32,6 +32,18 @@ enum { S_LATE_MODE = 1, S_LATENESS, S_KEYS, S_SERIES, S_BLOCKS, S_HELD };
 #define KEY_MAX 512u  /* series key buffer; the keys index's own limit applies first */
 #define DEFAULT_WINDOW_NS INT64_C(3600000000000) /* one hour */
 
+/* Downsampling (spec 10.4): FIRST/LAST string/binary values are captured in
+ * full into a bounded per-field work area; a single value larger than this
+ * fails closed (CDB_E_OVERFLOW) rather than being silently truncated (FR2).
+ * The summary bucket is encoded into a buffer sized to one page's capacity
+ * (the real limit of a destination block); the writer error is the
+ * authoritative overflow gate (FR3). CDB_TS_DS_ENC_MAX bounds the summary any
+ * one bucket can produce (every field at the capture cap), so the stack buffer
+ * is sized without a VLA and the writer is capped at the smaller of it and the
+ * page capacity. */
+#define CDB_TS_DS_PAYLOAD_MAX 1024u
+#define CDB_TS_DS_ENC_MAX (CDB_TS_MAX_FIELDS * (CDB_TS_DS_PAYLOAD_MAX + 16u) + 16u)
+
 typedef struct cdb_ts_store ts_store;
 
 /* -------------------------------------------------------- buffers */
@@ -745,12 +757,14 @@ static cdb_status find_series(cdb_db *db, ts_store *t, const uint8_t *key, size_
 /* -------------------------------------------------------- the API */
 
 /* A valid definition: a known precision, a window that is not negative
- * (0 means the default), at most CDB_TS_MAX_FIELDS fields of known types
- * with strictly increasing IDs. */
+ * (0 means the default), between one and CDB_TS_MAX_FIELDS fields of known
+ * types with strictly increasing IDs. A zero-field series is rejected: spec
+ * 10.1 requires each point carry one or more named values (FR4). */
 static cdb_status check_def(const cdb_ts_def *def)
 {
     unsigned i;
-    if (def->precision > CDB_TS_NANOS || def->window < 0 || def->nfields > CDB_TS_MAX_FIELDS)
+    if (def->precision > CDB_TS_NANOS || def->window < 0 || def->nfields == 0
+        || def->nfields > CDB_TS_MAX_FIELDS)
         return CDB_E_INVALID_ARG;
     for (i = 0; i < def->nfields; i++)
         if (def->fields[i].type >= CDB_TYPE_UNKNOWN
@@ -850,6 +864,120 @@ static cdb_status ts_describe_in(cdb_db *db, uint64_t store, uint64_t series, cd
     if (!found)
         return CDB_E_NOT_FOUND;
     *def = r.def;
+    return CDB_OK;
+}
+
+static cdb_status ts_list_in(cdb_db *db, uint64_t store, uint8_t *cursor, size_t cursor_cap,
+                             size_t *cursor_len, cdb_ts_entry *ents, size_t max, uint8_t *buf,
+                             size_t cap, size_t *n);
+
+cdb_status cdb_ts_list(cdb_db *db, uint64_t store, uint8_t *cursor, size_t cursor_cap,
+                       size_t *cursor_len, cdb_ts_entry *ents, size_t max, uint8_t *buf, size_t cap,
+                       size_t *n)
+{
+    cdb_status r;
+    cdb_db_lock(db);
+    r = ts_list_in(db, store, cursor, cursor_cap, cursor_len, ents, max, buf, cap, n);
+    cdb_db_unlock(db);
+    return r;
+}
+
+/* Enumerates the store's keys index (series key -> series ID) in key order.
+ * The continuation token is the last key emitted: on resume the cursor seeks
+ * to it and skips that one already-returned key, then continues. Caller buffers
+ * bound the output; the store's own cursor page (B_CURSOR) backs the walk, so
+ * no heap.
+ *
+ * The token lives in `cursor`; it is only read for the one skip at the start of
+ * a resumed batch, and only overwritten once an entry has been emitted, so the
+ * read never races the write. */
+static cdb_status ts_list_in(cdb_db *db, uint64_t store, uint8_t *cursor, size_t cursor_cap,
+                             size_t *cursor_len, cdb_ts_entry *ents, size_t max, uint8_t *buf,
+                             size_t cap, size_t *n)
+{
+    ts_store *t;
+    cdb_index_cursor c;
+    uint8_t kbuf[KEY_MAX], v[8];
+    size_t klen, vlen, used = 0, tok_len, last_len = 0;
+    int done = 0, skipped;
+    cdb_status s;
+
+    if (cursor == NULL || cursor_len == NULL || ents == NULL || buf == NULL || n == NULL)
+        return CDB_E_INVALID_ARG;
+    *n = 0;
+    tok_len = *cursor_len;
+    if (tok_len > cursor_cap || tok_len > sizeof kbuf)
+        return CDB_E_INVALID_ARG;
+    skipped = tok_len == 0; /* nothing to skip when starting fresh */
+
+    if ((s = ts_get(db, store, &t)) != CDB_OK)
+        return s;
+
+    s = cdb_index_seek(&c, &t->keys, tbuf(db, B_CURSOR), tok_len ? cursor : NULL, tok_len);
+    if (s != CDB_OK)
+        return s;
+
+    for (;;) {
+        s = cdb_index_next(&c, kbuf, sizeof kbuf, &klen, v, sizeof v, &vlen, &done);
+        if (s != CDB_OK)
+            return s;
+        if (done) {
+            *cursor_len = 0; /* enumeration finished */
+            return CDB_OK;
+        }
+        if (vlen != 8)
+            return CDB_E_CORRUPT;
+        if (!skipped) {
+            /* First entry of a resumed batch: drop the already-returned token
+             * key. If it was deleted meanwhile, seek landed past it and this
+             * key is genuinely new, so fall through to emit it. */
+            skipped = 1;
+            if (klen == tok_len && memcmp(kbuf, cursor, tok_len) == 0)
+                continue;
+        }
+        if (*n == max) {
+            /* More remain: resume after the last emitted key, held in cursor. */
+            *cursor_len = last_len;
+            return CDB_OK;
+        }
+        if (klen > cap - used)
+            return CDB_E_BUFFER_TOO_SMALL;
+        if (klen > cursor_cap)
+            return CDB_E_BUFFER_TOO_SMALL;
+        memcpy(buf + used, kbuf, klen);
+        ents[*n].series = cdb_load_u64(v, CDB_ORDER_BIG);
+        ents[*n].off = used;
+        ents[*n].len = klen;
+        used += klen;
+        (*n)++;
+        memcpy(cursor, kbuf, klen); /* continuation = last emitted key */
+        last_len = klen;
+    }
+}
+
+static cdb_status ts_get_late_in(cdb_db *db, uint64_t store, unsigned *late_mode, int64_t *lateness);
+
+cdb_status cdb_ts_get_late(cdb_db *db, uint64_t store, unsigned *late_mode, int64_t *lateness)
+{
+    cdb_status r;
+    cdb_db_lock(db);
+    r = ts_get_late_in(db, store, late_mode, lateness);
+    cdb_db_unlock(db);
+    return r;
+}
+
+/* The store's late mode and lateness, from the open slot (both are the
+ * cdb_ts_create inputs, kept in memory and in the store settings record). */
+static cdb_status ts_get_late_in(cdb_db *db, uint64_t store, unsigned *late_mode, int64_t *lateness)
+{
+    ts_store *t;
+    cdb_status s;
+    if ((s = ts_get(db, store, &t)) != CDB_OK)
+        return s;
+    if (late_mode != NULL)
+        *late_mode = t->late_mode;
+    if (lateness != NULL)
+        *lateness = t->lateness;
     return CDB_OK;
 }
 
@@ -1425,9 +1553,18 @@ static cdb_status merge_point(cdb_db *db, ts_store *t, srec *r, uint64_t series,
         if (same_values(&r->def, &pts[i], &merged))
             return CDB_OK; /* nothing changes */
         {
-            uint8_t old_buf[512];
+            /* The overwritten value must reach the audit log in full (spec
+             * 10.6). It was decoded from one block (<= one page), so the page
+             * buffer is its true upper bound; a fixed 512-byte buffer dropped
+             * larger rows to an empty audit record. B_OUT is free here (the
+             * block is rewritten by write_points below), and cdb_audit_log
+             * copies the bytes before any reuse. Fail closed on a write_row
+             * error rather than record an empty replaced value (FR1). */
+            uint8_t *old_buf = tbuf(db, B_OUT);
             size_t old_len = 0;
-            (void)write_row(r, &pts[i], db->pager.order, old_buf, sizeof old_buf, &old_len);
+            if ((s = write_row(r, &pts[i], db->pager.order, old_buf, capacity(db), &old_len))
+                != CDB_OK)
+                return s;
             collided(db, t, series, p->ts, old_buf, old_len);
         }
         pts[i] = merged;
@@ -2026,10 +2163,10 @@ typedef struct agg_state {
     int64_t min_i64;
     int64_t max_i64;
     cdb_value first_val;
-    uint8_t first_payload[128];
+    uint8_t first_payload[CDB_TS_DS_PAYLOAD_MAX];
     int have_first;
     cdb_value last_val;
-    uint8_t last_payload[128];
+    uint8_t last_payload[CDB_TS_DS_PAYLOAD_MAX];
     int have_last;
     cdb_decimal_agg dec; /* exact DECIMAL SUM/MIN/MAX/AVG (spec 10.4, #40) */
 } agg_state;
@@ -2062,7 +2199,8 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
                                           const cdb_ts_def *dst_def, const cdb_ts_def *src_def,
                                           int64_t bucket_ts, const agg_state *aggs)
 {
-    uint8_t enc_buf[1024];
+    uint8_t enc_buf[CDB_TS_DS_ENC_MAX];
+    size_t enc_cap = capacity(db) < sizeof enc_buf ? capacity(db) : sizeof enc_buf;
     cdb_value_writer w;
     cdb_ts_in pin;
     size_t enc_len;
@@ -2072,7 +2210,7 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
     uint64_t dsc;
     cdb_status ds;
 
-    cdb_value_writer_init(&w, enc_buf, sizeof enc_buf, db->pager.order, CDB_DECIMAL_UNBOUNDED);
+    cdb_value_writer_init(&w, enc_buf, enc_cap, db->pager.order, CDB_DECIMAL_UNBOUNDED);
     cdb_value_begin_object(&w);
 
     for (df = 0; df < dst_def->nfields; df++) {
@@ -2163,6 +2301,13 @@ static cdb_status flush_downsample_bucket(cdb_db *db, const cdb_ts_downsample_sp
         }
     }
     cdb_value_end_object(&w);
+    /* The bucket object is untrusted-size aggregated data. If it overflowed
+     * the page-sized buffer, fail closed with a typed error instead of
+     * appending the short, invalid object the unchecked writer would leave
+     * behind (FR3). CDB_E_BUFFER_TOO_SMALL from the writer is reported as the
+     * time-series layer's over-capacity code, CDB_E_OVERFLOW. */
+    if (w.error != CDB_OK)
+        return w.error == CDB_E_BUFFER_TOO_SMALL ? CDB_E_OVERFLOW : w.error;
     enc_len = cdb_value_writer_len(&w);
 
     pin.ts = bucket_ts;
@@ -2304,10 +2449,14 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
                         aggs[sf].sum_f64 = fval;
                         aggs[sf].first_val = v;
                         if (v.payload_len > 0 && v.payload != NULL) {
-                            size_t copy_len = v.payload_len < sizeof(aggs[sf].first_payload)
-                                                  ? v.payload_len
-                                                  : sizeof(aggs[sf].first_payload);
-                            memcpy(aggs[sf].first_payload, v.payload, copy_len);
+                            /* Keep the FIRST value in full: fail closed if it
+                             * exceeds the bounded capture, never truncate it
+                             * (FR2). */
+                            if (v.payload_len > sizeof aggs[sf].first_payload) {
+                                s = CDB_E_OVERFLOW;
+                                goto fail;
+                            }
+                            memcpy(aggs[sf].first_payload, v.payload, v.payload_len);
                             aggs[sf].first_val.payload = aggs[sf].first_payload;
                         }
                         aggs[sf].have_first = 1;
@@ -2325,10 +2474,14 @@ static cdb_status ts_downsample_run_in(cdb_db *db, const cdb_ts_downsample_spec 
                     }
                     aggs[sf].last_val = v;
                     if (v.payload_len > 0 && v.payload != NULL) {
-                        size_t copy_len = v.payload_len < sizeof(aggs[sf].last_payload)
-                                              ? v.payload_len
-                                              : sizeof(aggs[sf].last_payload);
-                        memcpy(aggs[sf].last_payload, v.payload, copy_len);
+                        /* Keep the LAST value in full: fail closed if it
+                         * exceeds the bounded capture, never truncate it
+                         * (FR2). */
+                        if (v.payload_len > sizeof aggs[sf].last_payload) {
+                            s = CDB_E_OVERFLOW;
+                            goto fail;
+                        }
+                        memcpy(aggs[sf].last_payload, v.payload, v.payload_len);
                         aggs[sf].last_val.payload = aggs[sf].last_payload;
                     }
                     aggs[sf].have_last = 1;
