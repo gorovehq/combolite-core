@@ -271,10 +271,29 @@ static cdb_status read_file(cdb_coord *c, const char *path, unsigned halves, cdb
     return CDB_OK;
 }
 
+/* #42 FR2: a busy op with no x/x_total progress basis still publishes a
+ * finite, conservative estimate for the non-baton op kinds
+ * (RECONCILE/COMPACT/GRAPH/RECOVER/REBASE, spec 5.8), so a waiter's bounded
+ * wait (spec 5.9.5) has a value to read for any live holder. COMMIT's basis is
+ * the baton's x/x_total, so without it COMMIT stays UNKNOWN here; an unknown op
+ * is unknown too. */
+static uint32_t conservative_estimate(uint8_t op)
+{
+    switch (op) {
+    case CDB_COORD_OP_RECONCILE:
+    case CDB_COORD_OP_COMPACT:
+    case CDB_COORD_OP_GRAPH:
+    case CDB_COORD_OP_RECOVER:
+    case CDB_COORD_OP_REBASE: return CDB_COORD_ESTIMATE_CONSERVATIVE_MS;
+    default: return CDB_COORD_ESTIMATE_UNKNOWN;
+    }
+}
+
 /* The status estimate (spec 5.8, offset 92): how long the current operation
- * still expects to take, in ms, as of now. Only the baton's progress gives
- * a basis: the time so far, scaled by the work left over the work done.
- * Anything else busy is unknown; idle is 0. */
+ * still expects to take, in ms, as of now. The baton's progress gives the
+ * sharpest basis: the time so far, scaled by the work left over the work done.
+ * Without that basis a busy non-baton op falls back to a conservative constant
+ * (#42 FR2); idle is 0. */
 static uint32_t estimate_of(const cdb_coord_rec *me, uint64_t now_us)
 {
     double ms;
@@ -282,7 +301,7 @@ static uint32_t estimate_of(const cdb_coord_rec *me, uint64_t now_us)
         return 0;
     if (me->issued == 0 || me->x == 0 || me->x_total < me->x || me->status_start == 0
         || now_us < me->status_start)
-        return CDB_COORD_ESTIMATE_UNKNOWN;
+        return conservative_estimate(me->status_op);
     ms = (double)(now_us - me->status_start) * (double)(me->x_total - me->x) / (double)me->x
          / 1000.0;
     if (ms >= (double)(CDB_COORD_ESTIMATE_UNKNOWN - 1u))
@@ -1166,14 +1185,19 @@ cdb_status cdb_coord_baton_try(cdb_coord *c, uint64_t x_total, int *granted)
 
 /* Whether the live baton holder's published estimate (spec 5.8) shows it
  * busy past deadline_us, on the primary's clock. An unknown estimate says
- * nothing: the waiter waits for its cap. */
+ * nothing: the waiter waits for its cap. #42 FR2: a conservative fallback
+ * estimate (CDB_COORD_ESTIMATE_CONSERVATIVE_MS) is not a measurement either —
+ * it is published only so the collision-wait (cdb_db.c) has a finite bound to
+ * read — so it too says nothing here; only a measured (progress-based) estimate
+ * shortens the baton wait, keeping baton-handover behaviour as before FR2. */
 static int holder_outlasts(const cdb_coord *c, uint64_t deadline_us)
 {
     unsigned i;
     for (i = 0; i < c->cfg.max_coords; i++) {
         const cdb_coord_brief *b = &c->peers[i].b;
         if (!c->peers[i].live || b->issued == 0 || b->status_op == CDB_COORD_OP_IDLE
-            || b->estimate_ms == CDB_COORD_ESTIMATE_UNKNOWN)
+            || b->estimate_ms == CDB_COORD_ESTIMATE_UNKNOWN
+            || b->estimate_ms == CDB_COORD_ESTIMATE_CONSERVATIVE_MS)
             continue;
         if (b->beat_time + (uint64_t)b->estimate_ms * 1000u > deadline_us)
             return 1;

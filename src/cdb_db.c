@@ -2417,7 +2417,10 @@ static cdb_status db_peek_entry_in(cdb_db *db, uint64_t store, const uint64_t *n
     }
     /* The slot holds CDB_COORD_MAX_BLOCKS: this transaction has claimed more
      * new entry IDs than one process may hold before it reconciles. It is a
-     * limit on the transaction, not on a value, so not CDB_E_OVERFLOW. */
+     * limit on the transaction, not on a value, so not CDB_E_OVERFLOW. #42
+     * FR4.1 DEFER: lifting the per-tx 21-block (21,504-ID) ceiling needs
+     * held-IDs-as-ranges, which changes the coordinator slot format (spec
+     * 14.5); documented, not changed (README Known Issue 2, docs/BACKLOG.md). */
     if ((s = cdb_coord_claim_block(&db->coord, store, floor, &first)) != CDB_OK)
         return s == CDB_E_OVERFLOW ? CDB_E_OUT_OF_BUDGET : s;
     db->id_ranges[db->nid_ranges].store = store;
@@ -2563,18 +2566,46 @@ static cdb_status own_has_item(cdb_db *db, const struct ws_item *own, unsigned n
     return CDB_OK;
 }
 
+/* #42 FR1: the longest a prepared-tx collision waiter waits for one live
+ * holder, in ns, from the holder's published estimate (ms). See the header. */
+uint64_t cdb_tx_collision_wait_bound_ns(uint32_t estimate_ms)
+{
+    uint64_t ms;
+    if (estimate_ms == CDB_COORD_ESTIMATE_UNKNOWN) {
+        ms = CDB_TX_WAIT_HARD_CAP_MS;
+    } else {
+        ms = (uint64_t)estimate_ms + CDB_TX_WAIT_MARGIN_MS;
+        if (ms > CDB_TX_WAIT_HARD_CAP_MS)
+            ms = CDB_TX_WAIT_HARD_CAP_MS;
+    }
+    return ms * 1000000u; /* ms -> ns */
+}
+
+/* The monotonic clock in ns, or 0 without one. Used only on the collision-wait
+ * path, which runs only when db->coord.have_mono (so mono is present). */
+static int64_t db_mono_now(const cdb_db *db)
+{
+    int64_t ns;
+    if (db->env.ops->mono != NULL && db->env.ops->mono(db->env.ctx, &ns) == CDB_OK)
+        return ns;
+    return 0;
+}
+
 /* Scans peer slot's journal above its archive mark for any transaction whose
  * write set overlaps this transaction's (spec 5.9.4). An overlapping
  * committed transaction or an overlapping earlier prepare rejects this
  * transaction with CDB_E_COLLISION; an overlapping later prepare is waited
- * out until it commits, aborts, or its coordinator dies. */
+ * out until it commits, aborts, or its coordinator dies, but only within the
+ * estimate-derived bound (#42 FR1): past it the waiter returns CDB_E_BUSY
+ * rather than stalling on an alive-but-slow holder. */
 static cdb_status check_slot_collisions(cdb_db *db, unsigned slot, uint64_t my_stamp,
                                         const struct ws_item *own, unsigned nown, uint64_t more_at,
                                         uint64_t own_end)
 {
     char path[CDB_DB_PATH_MAX];
     uint64_t mark = 0;
-    int exists;
+    int exists, waiting = 0;
+    int64_t wait_start = 0;
     cdb_status s;
 
     if ((s = mark_get(db, slot, &mark)) != CDB_OK)
@@ -2684,11 +2715,28 @@ static cdb_status check_slot_collisions(cdb_db *db, unsigned slot, uint64_t my_s
         cdb_storage_close(&db->rj_st);
 
         if (cur_tx != 0 && cur_prepared && cur_overlap) {
-            int64_t step;
+            int64_t step, now;
+            uint64_t bound;
             if (prep_stamp < my_stamp || (prep_stamp == my_stamp && slot < db->coord.me.slot))
                 return CDB_E_COLLISION;
             if (!db->coord.have_mono || db->env.ops->sleep == NULL || !db->coord.peers[slot].live)
                 return CDB_OK;
+            /* #42 FR1 (spec 5.9.4/5.9.5): bound the wait by the holder's
+             * published completion estimate plus a margin, under a hard cap, so
+             * an alive-but-slow (or malicious) holder cannot stall this waiter
+             * forever. The estimate is untrusted cross-process input; the hard
+             * cap inside cdb_tx_collision_wait_bound_ns bounds the wait
+             * regardless of it. Fail closed: past the bound return CDB_E_BUSY
+             * rather than looping without end. Elapsed is measured on the
+             * monotonic clock, which never runs backwards. */
+            now = db_mono_now(db);
+            if (!waiting) {
+                wait_start = now;
+                waiting = 1;
+            }
+            bound = cdb_tx_collision_wait_bound_ns(db->coord.peers[slot].b.estimate_ms);
+            if (now >= wait_start && (uint64_t)(now - wait_start) >= bound)
+                return CDB_E_BUSY;
             step = db->coord.cfg.settle_ns > 0 ? db->coord.cfg.settle_ns : 100000;
             (void)db->env.ops->sleep(db->env.ctx, step);
             if ((s = beat_only(db)) != CDB_OK)
@@ -3051,6 +3099,11 @@ void cdb_stage_idx_rewind(cdb_db *db, size_t used, int overflow)
  * 14.4.9): a rollback record names the dropped ordinals for replay, the
  * in-memory ranges let the transaction's own reads skip them, and the
  * staging goes back to what it was at the mark. */
+/* #42 FR4.2 DEFER: a rollback to a savepoint undoes only journaled data
+ * records (dropped as ranges below). It does NOT undo non-journaled state
+ * written straight through after the mark — time-series retention settings,
+ * enclave/key/RBAC and trigger changes; undoing those is future work
+ * (documented, not changed; docs/BACKLOG.md). */
 cdb_status cdb_tx_rollback_to(cdb_db *db, const cdb_tx_mark *mark)
 {
     cdb_tx_drop drops[CDB_TX_MAX_DROPS];

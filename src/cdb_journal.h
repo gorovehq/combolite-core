@@ -22,8 +22,14 @@
 #define CDB_PREPARE_PAYLOAD_SIZE 8u
 #define CDB_ROLLBACK_PAYLOAD_SIZE 8u
 
-/* Format limit (spec 14.4.9 rule 4): disjoint ranges of dropped data records
- * in one transaction. */
+/* Format limit (spec 14.4.9 rule 4): the most disjoint ranges of dropped data
+ * records one transaction may hold. #42 FR3: heavy interleaved savepoint
+ * rollback that fragments the drop set past this many ranges makes drops_add
+ * (src/cdb_db.c) return CDB_E_OUT_OF_BUDGET and the operation fails closed,
+ * never silently losing a drop. It backs fixed-size arrays (cdb_db tx_drops[]
+ * and on-stack copies), so raising it is bounded only by that memory
+ * (N * sizeof(cdb_tx_drop), 24 bytes each); it is kept at 32 because normal,
+ * non-adversarial interleaving stays well under it (see docs/BACKLOG.md). */
 #define CDB_TX_MAX_DROPS 32u
 
 /* Companion type IDs (spec 1.12.3). */
