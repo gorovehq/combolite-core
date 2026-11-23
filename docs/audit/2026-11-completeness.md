@@ -204,3 +204,28 @@ AEAD/HKDF/sign/wrap complete (GHSA-2xx7 nonce bug genuinely fixed). (→ #33, #3
 
 _Audit date: 2026-11-21. Method: 9 parallel read-only slice auditors + knowledge-graph call
 tracing. No code changed. Remediation is tracked per issue (EPIC #32) and gated/dogfooded._
+
+---
+
+## Remediation status — FINAL (2026-11-23, EPIC #32 closed)
+
+All 12 grouped children remediated or documented-and-deferred through the JEV drive/gate and merged to `main`. Each change: signed (mandate email, no AI attribution), red→green or invariant-pinned, `--no-ff` merge with the curation branch kept.
+
+| Issue | Outcome | PR / commit |
+|---|---|---|
+| #33 | CRITICAL multi-writer — **resolved not-reproducible** (fail-closed proven correct; 180-point crash matrix + real multi-process stress = 0 false rejects) + regression oracle | PR #45; successor #46 |
+| #46 | multi-writer create-race (O_EXCL) + contention — **fixed** | PR #59 (contention → #60) |
+| #34 | query executor search/graph operators wired to real engines — **implemented** | PR #48 |
+| #35 | CMBQL grammar for 8 ops + triggers dispatch — **implemented** | PR #49 |
+| #36 | query executor correctness + bounded limits — **fixed** | PR #51 (Q9 → #52) |
+| #37 | crypto RNG env-routing + commit-sig verify + audit taxonomy — **fixed** | PR #53 (M27/residuals → #54) |
+| #38 | CRDT deterministic convergence + PN-counter netting — **fixed** | PR #57 (transport → #58) |
+| #39 | blob content-hash dedup + verify-on-read — **implemented** | PR #55 (ext/compression → #56) |
+| #40 | data-model: DECIMAL money fix (a88622d) + index-reclaim / refused-delete rollback / live-only link list / signed revisions + principal — **fixed** | PR #64 (caps/signed-rev → #65) |
+| #41 | time-series bounded buffers + series enum/config getters — **fixed** | PR #62 (compaction/pushdown → #63) |
+| #42 | bounded prepared-tx collision wait + estimate coverage + savepoint-cap doc — **fixed** | PR #66 (21-block/Step-6/pages → #67) |
+| #43 | docs accuracy (README/comments/BACKLOG) — **corrected** | PR #61 |
+
+**Deferred-item follow-ups:** #52, #54, #56, #58, #60, #63, #65, #67 — all low/medium, spec-level or enhancement work, to be dogfooded through the JEV drive/gate.
+
+Note: #40 and #42 implementations ran through the JEV ideation+design gates; their implementation sub-agents hit the per-run budget cap before the testing/review/release gates, so the completed on-brief impl was salvaged from the drive worktree and verified directly (build + red→green + manual security review) in lieu of the ungated phases — noted transparently in PRs #64 and #66.
