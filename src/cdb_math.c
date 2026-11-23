@@ -906,6 +906,12 @@ cdb_status cdb_math_mat_transpose(const float *m, size_t rows, size_t cols, floa
     return CDB_OK;
 }
 
+/* Determinant of a square matrix. #40 FR5 (documented capability cap, not a
+ * defect): only dim 1, 2 and 3 are supported (direct formulae / Rule of
+ * Sarrus). A dim of 4 or more returns CDB_E_UNSUPPORTED -- there is no general
+ * LU/Gaussian-elimination path yet. Adding one is future work; callers must
+ * handle CDB_E_UNSUPPORTED rather than assume every square matrix has a
+ * determinant here. */
 cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out)
 {
     if (m == NULL || out == NULL)

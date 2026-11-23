@@ -5,7 +5,14 @@
  * of different types sort predictably (null < booleans < integers < floats <
  * timestamps < strings < binary < references). Composite keys are the
  * concatenation of their components. Strings use binary (UTF-8 byte) order;
- * language-aware collation comes later (spec 14.8.5). */
+ * language-aware collation comes later (spec 14.8.5).
+ *
+ * #40 FR5 (documented deferrals, not defects): string keys sort by raw UTF-8
+ * byte order only -- locale/language-aware collation (spec 14.8.5) is future
+ * work, so ordering of accented or case-varying text is byte-order, not
+ * dictionary order. Application-defined "active keys" (spec 6.2) are likewise
+ * not yet implemented. Both are deferred; the current behavior is correct and
+ * deterministic for byte-order keys. */
 #ifndef CDB_KEY_H
 #define CDB_KEY_H
 
