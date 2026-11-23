@@ -60,6 +60,10 @@ cdb_status cdb_overflow_write_db(cdb_db *db, cdb_pager *p, uint64_t store, const
 
     room = cdb_overflow_room(p);
     tail = len % room;
+    /* #42 FR4.7 DEFER: shared-tail nibblet packing of an overflow chain's tail
+     * is done only on 64-bit-address files (addr_width == 8); 32-bit-address
+     * files always spill the tail to its own page. Documented, not changed
+     * (docs/BACKLOG.md). */
     if (db != NULL && p->addr_width == 8 && tail > 0 && cdb_nib_fits(db, tail))
         tail_is_nibblet = 1;
 

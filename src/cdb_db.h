@@ -62,6 +62,23 @@ typedef struct cdb_crdt_store_class {
 
 #define CDB_DB_PATH_MAX 200 /* longest path, including the terminating zero */
 
+/* #42 FR1 (spec 5.9.4/5.9.5): bounding a prepared-transaction collision wait.
+ * A waiter that collides with a live holder's later prepare waits at most
+ * (holder's published estimate + CDB_TX_WAIT_MARGIN_MS) ms, never more than
+ * CDB_TX_WAIT_HARD_CAP_MS ms, then returns CDB_E_BUSY rather than stalling on
+ * an alive-but-slow (or malicious) holder. The holder's estimate is untrusted
+ * cross-process input, so the hard cap bounds the wait independent of it. */
+#define CDB_TX_WAIT_MARGIN_MS 2000u    /* slack added to a holder's estimate */
+#define CDB_TX_WAIT_HARD_CAP_MS 60000u /* absolute cap; bounds an absent/huge estimate */
+
+/* The longest a prepared-tx collision waiter will wait for one live holder, in
+ * nanoseconds, given the holder's published completion estimate in ms (as read
+ * from its coordinator slot; CDB_COORD_ESTIMATE_UNKNOWN when it published
+ * none). Pure and total: min(estimate + margin, hard cap), with UNKNOWN or an
+ * over-cap estimate clamped to the hard cap, so the derived bound is always
+ * finite and positive. Exposed for the bound-invariant test (#42 AC1/AC3). */
+uint64_t cdb_tx_collision_wait_bound_ns(uint32_t estimate_ms);
+
 /* Durability levels (spec 3.1). */
 typedef enum cdb_durability {
     CDB_DURABILITY_DEFAULT = 0, /* use the database setting */

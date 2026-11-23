@@ -240,8 +240,8 @@ The following features, interfaces, or operators are provisioned in headers, spe
    - Storing user procedures, cryptographic principals, and permission grants as catalog records.
 5. **Automated Background P2P Replication Gossip (Spec 19 Draft)**:
    - While binary delta-state CRDT slice codecs and sync methods are implemented, automated background peer discovery and socket gossip are in draft specification.
-6. **Prepared Transaction Estimate Wait (Spec 5.9.4)**:
-   - The coordinator wait loop on prepared transactions does not yet parse the holder's published duration estimate.
+6. **Prepared Transaction Estimate Wait (Spec 5.9.4/5.9.5)** — *implemented (#42)*:
+   - The collision wait loop on prepared transactions now reads the holder's published completion estimate and waits at most `min(estimate + 2 s, 60 s)`, measured on the monotonic clock, then returns `CDB_E_BUSY` instead of stalling on an alive-but-slow holder; every busy op kind publishes a finite (conservative when unmeasured) estimate so the bound applies to all holders. See `docs/BACKLOG.md` (#42). *Still provisioned:* a per-op-kind measured estimate basis (device-class table, spec 5.9.6) to replace the shared conservative constant.
 7. **Microcontroller Profiles (MCU Profile)**:
    - Microcontroller build target presets (`noxz`) are paused until post-1.0 release; the code preserves no-heap guarantees to ensure compatibility upon unpausing.
 

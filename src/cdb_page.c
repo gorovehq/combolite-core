@@ -101,7 +101,10 @@ static uint64_t load_id(const uint8_t *p, unsigned width, cdb_byte_order o)
 /* Whether a page with this header is encrypted. Compact files are refused
  * encryption and keyed tags for now: those need a 16-byte trailer, and
  * section 13.4 gives compact checksum pages an 8-byte one, so a compact
- * page's room would differ by domain (spec 12.8, 14.2.7). */
+ * page's room would differ by domain (spec 12.8, 14.2.7). #42 FR4.5 DEFER:
+ * the compact page format therefore cannot be encrypted or made
+ * tamper-evident; it fails closed (CDB_E_UNSUPPORTED) rather than writing an
+ * unprotected page (documented, not changed; docs/BACKLOG.md). */
 static cdb_status protection(cdb_page_format fmt, unsigned aead_alg, const cdb_page_header *h,
                              int *encrypted)
 {

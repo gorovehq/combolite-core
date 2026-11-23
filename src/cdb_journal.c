@@ -294,8 +294,14 @@ cdb_status cdb_journal_read(cdb_journal *j, uint64_t offset, uint8_t *buf, size_
 }
 
 /* Commit record payload (spec 14.4.4): commit number, timestamp, principal,
- * delta count, track mask, then the signature length. Signatures are not
- * implemented yet, so the length is always 0 and no signature follows. */
+ * delta count, track mask, then the signature length. The base encode always
+ * writes signature length 0; only under CDB_SIGN_EVERY_REVISION does the
+ * committer (src/cdb_db.c tx_commit_locked) append a signature and overwrite
+ * this field. #42 FR4.6 DEFER: in the default policy the commit record is
+ * unsigned and its principal is whatever the caller passes (0 today), so
+ * commits are not attributed or integrity-signed by default; capturing the
+ * principal and signing every commit ties to the #40 signed-revision work and
+ * its recovery-principal follow-up (documented, not changed; docs/BACKLOG.md). */
 void cdb_commit_encode(const cdb_commit_info *c, uint8_t out[CDB_COMMIT_PAYLOAD_SIZE],
                        cdb_byte_order order)
 {
@@ -304,7 +310,7 @@ void cdb_commit_encode(const cdb_commit_info *c, uint8_t out[CDB_COMMIT_PAYLOAD_
     cdb_store_u64(out + 16, c->principal, order);
     cdb_store_u32(out + 24, c->delta_count, order);
     cdb_store_u32(out + 28, c->track_mask, order);
-    cdb_store_u16(out + 32, 0, order); /* unsigned (spec 12.5) */
+    cdb_store_u16(out + 32, 0, order); /* unsigned unless the committer re-signs (spec 12.5) */
 }
 
 /* Decodes a commit record's payload. CDB_E_MALFORMED if r is not a commit

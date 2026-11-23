@@ -39,7 +39,9 @@ typedef struct cdb_anchor_entry {
     uint64_t phys;       /* physical page number; 0 = none */
     uint8_t size_log2;   /* page size as a power of two */
     uint8_t state;       /* one of CDB_ANCHOR_* */
-    uint16_t extent_len; /* pages in the extent, or 0 for a single page (always 0 for now) */
+    uint16_t extent_len; /* pages in the extent, or 0 for a single page. #42 FR4.4
+                          * DEFER: multi-page extents are unimplemented, so this is
+                          * hard 0 today (docs/BACKLOG.md). */
 } cdb_anchor_entry;
 
 /* One cached data page slot (spec 2, backlog). */

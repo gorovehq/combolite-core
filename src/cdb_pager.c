@@ -921,6 +921,9 @@ static cdb_status setup(cdb_pager *p, const cdb_storage *st, const cdb_pager_con
         p->fmt = CDB_PAGE_FMT_FULL32;
         p->addr_width = 4;
     }
+    /* #42 FR4.3 DEFER: variable / per-store page sizes are unsupported unless
+     * every page-size field equals the default; a non-default range or page
+     * mode fails closed. Documented, not changed (docs/BACKLOG.md). */
     if (r->min_page_log2 != r->default_page_log2 || r->max_page_log2 != r->default_page_log2
         || r->page_mode != 0)
         return CDB_E_UNSUPPORTED; /* per-store page sizes come later */
