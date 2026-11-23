@@ -1718,6 +1718,15 @@ static cdb_status check_entry(cdb_db *db, coll *c, uint64_t e, uint8_t *mem, siz
 
 /* After a refresh: entry points are chosen again, then the entries it
  * touched, and those added as entry points before, are checked. */
+/* #40 FR5 (documented tuning deferral, not a defect): when the check list
+ * overflows (very large collections, roughly > ~15k live entries) the
+ * coverage check falls back to scanning every entry with a list plus every
+ * entry point, which is super-linear. This keeps correctness (no entry is
+ * skipped) at a known cost on big collections; a tighter incremental-coverage
+ * algorithm is future work. vec_mem (CDB_VEC_MEM_DEFAULT) and
+ * DEFAULT_EXACT_BELOW are likewise provisional, bench-derived tunings, and the
+ * approximate (ANN) path trades recall for speed by design -- all deferred,
+ * documented tunings rather than correctness bugs. */
 static cdb_status check_coverage(cdb_db *db, coll *c, checks *k, uint8_t *mem, size_t avail)
 {
     uint64_t e, from;

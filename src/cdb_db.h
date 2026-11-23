@@ -805,6 +805,13 @@ cdb_status cdb_stage_idx_put(cdb_db *db, uint64_t store, uint8_t idx_no, const u
                              size_t klen, uint64_t entry, int live);
 cdb_status cdb_stage_idx_get(const cdb_db *db, uint64_t store, uint8_t idx_no, const uint8_t *key,
                              size_t klen, uint64_t *entry, int *live, int *found);
+/* Truncates the index stage back to an earlier length and relinks its hash
+ * chains, giving exactly the stage it was at that watermark (the stage only
+ * ever appends). Used to undo index staging a refused/failed operation wrote
+ * (#40 FR2): capture stage_idx_used/stage_idx_overflow before staging, and
+ * restore them here if the operation is rejected. A no-op when no index
+ * stage is configured. */
+void cdb_stage_idx_rewind(cdb_db *db, size_t used, int overflow);
 
 /* CRDT & P2P Replication (spec backlog L19-42). */
 cdb_status cdb_db_set_peer_id(cdb_db *db, uint32_t peer_id);

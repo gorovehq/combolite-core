@@ -3037,6 +3037,16 @@ static void stage_idx_rewind(cdb_db *db, size_t used, int overflow)
     }
 }
 
+/* Public wrapper so stores (e.g. cdb_table's refused-delete rollback, #40
+ * FR2) can undo index staging without reaching into the internals. A no-op
+ * when the stage is not configured. */
+void cdb_stage_idx_rewind(cdb_db *db, size_t used, int overflow)
+{
+    if (db == NULL || db->idx_stage == NULL)
+        return;
+    stage_idx_rewind(db, used, overflow);
+}
+
 /* Drops every change the open transaction made after mark (spec 11.12.3,
  * 14.4.9): a rollback record names the dropped ordinals for replay, the
  * in-memory ranges let the transaction's own reads skip them, and the
