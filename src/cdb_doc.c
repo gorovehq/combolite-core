@@ -15,7 +15,15 @@
  *
  * A document's current state is rebuilt by starting from the nearest full
  * revision (original or checkpoint) and applying the patches stored in the
- * delta revisions after it, in order. */
+ * delta revisions after it, in order.
+ *
+ * #40 FR5 (documented deferrals, not defects): there is no explicit
+ * rollback-to-an-earlier-head operation (spec 8.6) -- history is append-only
+ * and a caller "reverts" by writing a new revision whose body matches an
+ * older one, never by truncating the chain. Full-text indexing supports only
+ * the "Declared" mode (indexing the documents a pool already holds at create
+ * time, then maintained on change); other spec 8.10 indexing modes are future
+ * work. Both are deferred; current behavior is correct within these caps. */
 #include <string.h>
 
 #include "combolite/cdb_value.h"
@@ -38,6 +46,13 @@
 #define ENV_SIZE 48u
 #define ENV_FLAG_SUMMARY 0x01u
 #define ENV_FLAG_OVERFLOW 0x02u /* body length (8) and chain (address width) follow the summary */
+/* spec 14.9.1 bit-2 (#40 FR4): the revision is signed. A CDB_SIGNATURE_SIZE
+ * signature is appended after the body (the last bytes of the payload) and
+ * covers the whole payload before it (envelope, summary and body). Set only
+ * when an identity is active under CDB_SIGN_EVERY_REVISION; verified on read,
+ * fail-closed on mismatch. Backward compatible: an absent bit means unsigned
+ * and reads unchanged. */
+#define ENV_FLAG_SIGNED 0x04u
 
 /* Head index value: revision, page, chain length, kind. */
 #define HEAD_SIZE 21u
@@ -429,6 +444,25 @@ static cdb_status read_revision(cdb_db *db, uint64_t lid, envelope *e, uint8_t *
     p = pl + ENV_SIZE;
     if (e->kind > CDB_REV_TOMBSTONE)
         return CDB_E_CORRUPT;
+    /* #40 FR4: a signed revision carries its signature in the last
+     * CDB_SIGNATURE_SIZE bytes of the payload, over everything before it.
+     * Carve it off so summary/body parse the real body, and verify it
+     * fail-closed: a tampered signature or body fails the read with
+     * CDB_E_SECURITY rather than passing a forged revision off as signed.
+     * Verification uses the active identity's public key (like the audit
+     * read path); with no active identity the signature is not re-checked,
+     * but its bytes are still excluded from the body. */
+    if (e->flags & ENV_FLAG_SIGNED) {
+        const uint8_t *sig;
+        if ((size_t)(end - pl) < ENV_SIZE + (size_t)CDB_SIGNATURE_SIZE)
+            return CDB_E_CORRUPT;
+        sig = end - CDB_SIGNATURE_SIZE;
+        end = sig;
+        if (db->has_identity
+            && cdb_identity_verify(db->active_identity.public_key, pl, (size_t)(end - pl), sig)
+                   != CDB_OK)
+            return CDB_E_SECURITY;
+    }
     /* Optional summary: one string value. */
     if (e->flags & ENV_FLAG_SUMMARY) {
         cdb_value v;
@@ -480,13 +514,29 @@ static size_t summary_bytes(int has_summary, size_t summary_len)
     return has_summary ? 1u + cdb_varint_size(summary_len) + summary_len : 0u;
 }
 
+/* Bytes a revision reserves at the end of its page for a trailing signature
+ * (#40 FR4). A revision is signed when an identity is active under
+ * CDB_SIGN_EVERY_REVISION (spec 12.5); the signature (spec 14.9.1 bit-2) is
+ * appended after the body. Computed from db state so every fit check and the
+ * writer agree. 0 when revisions are not signed. */
+static size_t sig_reserve(const cdb_db *db)
+{
+    return (db->has_identity && db->signing_policy == CDB_SIGN_EVERY_REVISION)
+               ? (size_t)CDB_SIGNATURE_SIZE
+               : 0u;
+}
+
 /* Whether a revision with this summary and body can be written: the
- * envelope and summary fit the revision page, and the body fits there too
- * or, with doc_max set, is at most doc_max bytes (an overflow chain holds
- * the rest, after its length and first page). */
+ * envelope and summary fit the revision page (less any signature reserve),
+ * and the body fits there too or, with doc_max set, is at most doc_max bytes
+ * (an overflow chain holds the rest, after its length and first page). */
 static int revision_fits(const cdb_db *db, int has_summary, size_t summary_len, size_t body_len)
 {
+    size_t sig = sig_reserve(db);
     size_t cap = capacity(db), need = ENV_SIZE;
+    if (cap < sig)
+        return 0;
+    cap -= sig; /* the trailing signature claims the tail of the page */
     if (has_summary && summary_len > cap)
         return 0;
     need += summary_bytes(has_summary, summary_len);
@@ -514,17 +564,22 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
     uint64_t first = 0;
     cdb_page_header t;
     cdb_status s;
+    /* #40 FR4: a signed revision reserves CDB_SIGNATURE_SIZE bytes at the tail
+     * of the page for its signature; build the envelope/summary/body within
+     * the remaining capacity (wcap) so the signature always fits. */
+    size_t sig = sig_reserve(db);
+    size_t wcap = cap >= sig ? cap - sig : 0u;
 
-    if (head > cap)
+    if (head > wcap)
         return CDB_E_OVERFLOW;
-    if (e->body_len > cap - head) {
+    if (e->body_len > wcap - head) {
         if (!revision_fits(db, e->summary != NULL, e->summary_len, e->body_len))
             return CDB_E_OVERFLOW;
         uint8_t okey[17];
         okey[0] = CDB_OVERFLOW_OWNER_DOC_REV;
         cdb_store_u64(okey + 1, e->entry, CDB_ORDER_BIG);
         cdb_store_u64(okey + 9, e->rev, CDB_ORDER_BIG);
-        inline_len = cap - head - 8u - db->pager.addr_width;
+        inline_len = wcap - head - 8u - db->pager.addr_width;
         if ((s = cdb_overflow_write_db(db, &db->pager, pool->slot.store_id, e->body + inline_len,
                                        e->body_len - inline_len, pl, okey, sizeof okey, &first))
             != CDB_OK)
@@ -538,10 +593,11 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
     cdb_store_u64(pl + 32, e->principal, o);
     cdb_store_u32(pl + 40, e->schema, o);
     pl[44] = e->kind;
-    pl[45] = (uint8_t)((e->summary ? ENV_FLAG_SUMMARY : 0u) | (first ? ENV_FLAG_OVERFLOW : 0u));
+    pl[45] = (uint8_t)((e->summary ? ENV_FLAG_SUMMARY : 0u) | (first ? ENV_FLAG_OVERFLOW : 0u)
+                       | (sig ? ENV_FLAG_SIGNED : 0u));
     if (e->summary) {
         cdb_value_writer w;
-        cdb_value_writer_init(&w, pl + len, cap - len, o, CDB_DECIMAL_COMPACT);
+        cdb_value_writer_init(&w, pl + len, wcap - len, o, CDB_DECIMAL_COMPACT);
         if ((s = cdb_value_write_string(&w, (const char *)e->summary, e->summary_len)) != CDB_OK)
             return s == CDB_E_BUFFER_TOO_SMALL ? CDB_E_OVERFLOW : s;
         len += cdb_value_writer_len(&w);
@@ -558,6 +614,19 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
     if (inline_len)
         memmove(pl + len, e->body, inline_len);
     len += inline_len;
+    /* #40 FR4: sign the assembled payload (envelope, summary and body) and
+     * append the signature. pl[45] already carries ENV_FLAG_SIGNED, so it is
+     * covered. Fail-closed: a signing failure under a signing-required policy
+     * aborts the write rather than persisting an unsigned revision that reads
+     * back as "signed". */
+    if (sig) {
+        if (len > wcap)
+            return CDB_E_OVERFLOW;
+        if ((s = cdb_identity_sign_env(&db->env, &db->active_identity, pl, len, pl + len))
+            != CDB_OK)
+            return s;
+        len += sig;
+    }
     /* A small revision becomes a nibblet (spec 16.1), found by its owner
      * key (entry, revision). */
     if (!first && cdb_nib_fits(db, len)) {
@@ -1195,6 +1264,14 @@ static cdb_status apply_change(cdb_db *db, const cdb_delta *d)
     e.rev = found ? head.rev + 1 : 1;
     e.parent = found ? head.rev : 0;
     e.commit = d->commit_number;
+    /* #40 FR4: attribute the revision to the active principal (mirrors the
+     * #37 governance-audit attribution). principal_id is 0 only when no
+     * identity is present -- never a forgeable default. Whether the envelope
+     * is also signed is decided from db state in write_revision (sig_reserve).
+     * NOTE (deferred): the delta carries no principal of its own, so a replay
+     * under recovery attributes the recovering session's identity, not the
+     * original writer's; capturing the writer in the journal is future work. */
+    e.principal = db->has_identity ? (uint64_t)db->active_identity.principal_id : 0u;
     /* Schema changes reconcile first and start a new journal, so the
      * current version is the one the change was validated under. */
     e.schema = pool->schema_version;
@@ -2408,6 +2485,13 @@ cdb_status cdb_doc_overflow_tail_moved(cdb_db *db, uint64_t store, const uint8_t
     if (load_lid(db, pl + off) != old_addr)
         return CDB_E_NOT_FOUND;
     store_lid(db, pl + off, addr);
+    /* #40 FR4 (deferred, documented): the chain-first address lies inside the
+     * signed region, so relocating an overflow tail of a *signed* revision
+     * would invalidate its signature. Re-signing here is not possible (the
+     * original signer's secret key is not available at relocation time), so
+     * signing large overflow bodies under CDB_SIGN_EVERY_REVISION together
+     * with overflow-tail compaction is a known limitation. Small revisions
+     * (the common case) have no overflow chain and are unaffected. */
     return cdb_pager_write(&db->pager, rev_addr, &h, pl, h.payload_len);
 }
 

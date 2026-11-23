@@ -962,6 +962,12 @@ static cdb_status link_get_in(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref
         return CDB_OK;
     if (s != CDB_OK)
         return s;
+    /* #40 FR3: get returns the stored row as-is. A dead end is NOT silent
+     * here -- out->flags carries the explicit, caller-visible dead-state
+     * (CDB_LINK_TOMBSTONE / _SOURCE_GONE / _TARGET_GONE), which is the
+     * documented way to inspect a link's state. The silent-dead-end defect
+     * lived in link_list (a plain neighbour list a consumer treats as live);
+     * that path now filters to live only (link_list_in). */
     return row_get(&db->links, type, source, target, out, found);
 }
 
@@ -1008,14 +1014,19 @@ static cdb_status link_list_in(cdb_db *db, cdb_ref entry, int direction, uint64_
     }
     while (*n < max) {
         int done, found;
+        cdb_link cand;
         if ((s = scan_at(db, reverse ? &ls->rev : &ls->fwd, prefix, plen, pos, &done)) != CDB_OK
             || done)
             return s;
-        if ((s = row_at(ls, reverse, pos, &out[*n], &found)) != CDB_OK)
+        if ((s = row_at(ls, reverse, pos, &cand, &found)) != CDB_OK)
             return s;
         if (!found)
             return CDB_E_CORRUPT;
-        (*n)++;
+        /* #40 FR3: live-only. A tombstoned/removed end is skipped (the scan
+         * still advances past its key), so *n counts live links only and a
+         * consumer never silently receives a dead end as live. */
+        if (state_of(&cand) == LIVE)
+            out[(*n)++] = cand;
         if (!key_succ(pos))
             break;
     }
