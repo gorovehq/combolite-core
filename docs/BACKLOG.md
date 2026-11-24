@@ -50,6 +50,24 @@ bounded/decompression-bomb-guarded read), mirroring the doc-body wiring.
 
 ## Follow-ups
 
+- **Time-series engine extras — deferred from #63 (scope guard, 2026-11-24).** #63 closed only the
+  two focused items — the dormant series-create audit emit (now emits `CDB_AUDIT_SCHEMA`
+  unattributed with principal 0 when no identity is active) and retention-trim-on-write
+  (`ts_append_in` auto-applies configured retention from the trusted server clock, bounded +
+  idempotent) — see `src/cdb_ts.c` and the CHANGELOG. The following larger items were deliberately
+  **not** started and remain follow-ups:
+    - **Downsample-on-write.** #63 Item 2 ships *retention-trim*-on-write only; automatically running
+      configured downsample recipes on the write path (not just the explicit
+      `cdb_ts_downsample_run`) is the larger, separately-scoped half. (→ #63)
+    - **Compaction modes.** Compact & threshold-compaction recipe modes (spec 10.4) on the ts store
+      (`src/cdb_ts.c`), as already noted under *Time series — remaining* below. (→ #63)
+    - **Predicate pushdown.** Reading time-series rollup chunks for a query (rollup/predicate
+      pushdown in range reads), as noted under *No rollup pushdown* below. (→ #63)
+    - **Retention-in-transaction.** Per-series retention/downsample config is written straight to the
+      series index (non-journaled), so a rollback to a savepoint does not undo it (see *A rollback to
+      a savepoint does not undo what is not journaled* below). Making retention config transactional
+      is a larger change. (→ #63)
+  Pick up each as its own effort with design brought to the user.
 - **M27 enclave crypto — left for its own effort (scope guard of #54 PART 1, 2026-11-24).** #54
   wired only the audit-trail residuals (F2 REVISION emit, F3 BATON on reclaim/compact, F4 baton-
   serialized append — see `docs/adr/0005-audit-residual-emit-and-serialize.md` and the CHANGELOG).
