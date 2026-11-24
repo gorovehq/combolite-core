@@ -223,17 +223,25 @@ static void test_collision_large_replaced_value_kept_in_full(void)
     append_field_str(store, series, 1000, 1, 'B', vlen);
     commit();
 
-    /* The audit log must carry the replaced value (the 600 'A's) in full. */
+    /* The audit log now holds the series-create SCHEMA event (#63 Item 1) plus
+     * the COLLISION; the collision must carry the replaced value (600 'A's) in
+     * full. Locate the collision among the events. */
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_audit_query(&db, INT64_MIN, INT64_MAX, payload_buf,
                                                   sizeof payload_buf, events, 4, &count));
-    TEST_ASSERT_EQUAL_size_t(1, count);
-    TEST_ASSERT_EQUAL_UINT16(CDB_AUDIT_COLLISION, events[0].event_type);
-    TEST_ASSERT_EQUAL_UINT64(store, events[0].store_id);
-    TEST_ASSERT_EQUAL_UINT64(series, events[0].entity_id);
+    TEST_ASSERT_EQUAL_size_t(2, count);
     {
+        size_t ci, ncol = 0, col = 0;
         cdb_value obj, v;
         int found = 0;
-        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_value_read(events[0].payload, events[0].payload_len,
+        for (ci = 0; ci < count; ci++)
+            if (events[ci].event_type == CDB_AUDIT_COLLISION) {
+                col = ci;
+                ncol++;
+            }
+        TEST_ASSERT_EQUAL_size_t(1, ncol);
+        TEST_ASSERT_EQUAL_UINT64(store, events[col].store_id);
+        TEST_ASSERT_EQUAL_UINT64(series, events[col].entity_id);
+        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_value_read(events[col].payload, events[col].payload_len,
                                                      db.pager.order, &obj));
         TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_value_object_get(&obj, db.pager.order, 1, &v, &found));
         TEST_ASSERT_TRUE(found);

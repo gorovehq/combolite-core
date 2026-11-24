@@ -13,6 +13,37 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Added
 
+- **Time-series audit-completeness + retention-on-write (#63) — audit follow-up,
+  deferred from #41 (`src/cdb_ts.c`, `tests/`).** Two focused time-series fixes,
+  each at its real engine source site with a red→green regression test:
+    - **Series-create audit event now always emitted (Item 1).** Creating a
+      time-series series (`ts_series_in`) emitted no dedicated `CDB_AUDIT_SCHEMA`
+      event, so the create was unaudited. A new `ts_schema_audit()` helper now
+      records a redacted `CDB_AUDIT_SCHEMA` (store + new series id only), mirroring
+      `db_governance_audit` and the `COLLISION` emit: it fires whenever the audit
+      log is persistable (`has_catalog`), attributed to the active principal when
+      one is registered and to **principal 0 (unattributed)** otherwise — never
+      silently dropped when no identity is active (the same emit-unattributed fix
+      as governance #37 and the single-writer path #54 F2; closes an OWASP A09
+      audit-completeness gap). Best-effort: a failed audit append never fails or
+      undoes the create. (`tests/test_ts_audit_unattributed_63.c`)
+    - **Retention auto-enforced on write (Item 2).** Configured retention was
+      applied only by an explicit `cdb_ts_apply_retention` maintenance call, so a
+      caller that only wrote accumulated over-retention points indefinitely. The
+      write path (`ts_append_in`) now applies the configured retention after
+      journaling the points, using the trusted server clock (`cdb_db_now`,
+      converted to the series' tick precision) — never a client-supplied point
+      timestamp — so an over-retention series is trimmed on the next write with no
+      explicit maintenance. The trim is **bounded** (removes only points older than
+      `now − retention`, never in-window data) and **idempotent** (a no-stale write
+      trims nothing), so it is safe to run on every append. Explicit
+      `cdb_ts_apply_retention` behaviour is unchanged; it and the write path now
+      share the lock-free inner helpers (`ts_get_retention_in` / `ts_drop_before_in`),
+      removing a latent re-lock. (`tests/test_ts_retention_on_write_63.c`)
+  - **Deferred (recorded, not started):** full **downsample-on-write** (Item 2 ships
+    retention-trim-on-write only), **compaction modes**, **predicate pushdown**, and
+    **retention-in-transaction** remain follow-ups — see `docs/BACKLOG.md` (→ #63).
+
 - **Blob-store extras (#56) — audit follow-up to #39
   (`src/cdb_blob.{c,h}`, `src/cdb_doc.{c,h}`, `src/cdb_proc.{c,h}`,
   `src/cdb_compiler.c`, `src/cdb_db.h`).** Three declared-but-unwired blob-store
