@@ -460,6 +460,8 @@ typedef struct cdb_db {
         tx_deltas;    /* data records the open transaction has written, not counting dropped ones */
     uint32_t tx_data; /* data records journaled, dropped ones included: the next ordinal (14.4.9) */
     uint32_t tx_ndrops; /* ranges in tx_drops, in ordinal order */
+    int tx_has_revision; /* F2 (#54): the open tx mutated a document/table store, so its
+                          * commit emits one CDB_AUDIT_REVISION governance event */
     cdb_tx_drop tx_drops[CDB_TX_MAX_DROPS];
     cdb_durability tx_durability;
     unsigned unsynced; /* commits since the journal was last synced */
