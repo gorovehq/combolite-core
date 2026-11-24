@@ -228,6 +228,13 @@ typedef struct cdb_db_config {
      * stay on the CPU, which answers them sooner than a device call.
      * 0 means CDB_ACCEL_MIN_BYTES_DEFAULT; 1 sends everything (spec 18.4). */
     uint64_t accel_min_bytes;
+    /* Documents (#56 FR2, spec 15.3): when non-zero, compress doc bodies with
+     * cdb_codec (LZMA2) on write, keeping the compressed form only when it
+     * saves at least 1/8 and falling back to stored-raw otherwise; reads
+     * transparently decompress. 0 (the default) stores bodies uncompressed, so
+     * existing callers are unaffected. Appended last to preserve the offsets of
+     * every field before it for bindings that mirror them. */
+    uint32_t doc_compress;
 } cdb_db_config;
 
 /* Mirrors of vector collections on the environment's accelerator (spec

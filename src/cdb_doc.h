@@ -157,6 +157,13 @@ cdb_status cdb_doc_set_keep(cdb_db *db, uint64_t store, uint32_t keep);
 size_t cdb_doc_buffer_size(size_t page_size, size_t doc_max);
 size_t cdb_doc_buffers_size(size_t page_size, size_t doc_max);
 
+/* #56 FR2: the envelope flag marking a stored body as cdb_codec-compressed,
+ * and a test hook returning a document head revision's stored envelope flags
+ * (so a test can assert compressed vs. raw storage). Not public API. */
+#define CDB_DOC_ENV_FLAG_COMPRESSED 0x08u
+cdb_status cdb_doc_head_flags_for_test(cdb_db *db, uint64_t store, uint64_t entry,
+                                       uint8_t *out_flags);
+
 /* Engine hooks used by cdb_db. */
 cdb_status cdb_doc_split_payload(const cdb_delta *d, const uint8_t **summary, size_t *slen,
                                  const uint8_t **body, size_t *blen);
