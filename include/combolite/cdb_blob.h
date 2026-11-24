@@ -142,6 +142,42 @@ cdb_status cdb_blob_write_end_db(struct cdb_db *db, cdb_blob_writer *w, uint64_t
 cdb_status cdb_blob_free_db(struct cdb_db *db, uint64_t store_id, uint64_t domain,
                             const cdb_blob_ref *ref, uint8_t *page_buf);
 
+/* ---- External-file-backed blobs (flags bit 0; issue #56 FR1) --------------
+ *
+ * A blob whose body lives in an external companion file under the database's
+ * working directory, routed through the environment's file ops (cdb_env.h) —
+ * never hardcoded POSIX. The file is content-addressed: its name derives from
+ * the body's SHA-256 (or HMAC-SHA-256 in an enclave), so identical content
+ * shares one file and an enclave digest never aliases a public one. The body
+ * is stored ONLY externally (no overflow page chain): out_ref->first_page and
+ * page_count are 0, total_len is the body length, flags carries bit 0
+ * (external) and bit 1 (enclave, when enclave_key is non-NULL), and hash is
+ * the integrity oracle verified on read. */
+
+/* Writes data (len bytes) to the external companion file and fills out_ref.
+ * Durable once the working directory is synced. If the content-addressed file
+ * already exists it already holds these exact bytes, so the store is a no-op
+ * (dedup). enclave_key selects HMAC-SHA-256 over SHA-256. */
+cdb_status cdb_blob_store_external_db(struct cdb_db *db, uint64_t store_id, const void *data,
+                                      size_t len, const uint8_t *enclave_key, cdb_blob_ref *out_ref);
+
+/* Reads an external-file blob (ref must carry flags bit 0) into dest (cap
+ * bytes); *out_len receives the length. Fails closed, returning no bytes, on a
+ * missing file (CDB_E_NOT_FOUND), a size that differs from ref->total_len
+ * (CDB_E_CORRUPT, catches truncation/growth), or — unless verify_hash is
+ * CDB_BLOB_NO_VERIFY — a body that does not hash to ref->hash (CDB_E_CORRUPT,
+ * reusing #39 verify-on-read for the external bytes). cap below total_len is
+ * CDB_E_BUFFER_TOO_SMALL. enclave_key selects HMAC-SHA-256 verification. */
+cdb_status cdb_blob_read_external_db(struct cdb_db *db, const cdb_blob_ref *ref, int verify_hash,
+                                     const uint8_t *enclave_key, void *dest, size_t cap,
+                                     size_t *out_len);
+
+/* Internal test hook (#56 FR1): writes the content-addressed external-file
+ * path for ref into out (cap bytes), so a test can inspect, alter, or remove
+ * the companion file to exercise the fail-closed read paths. Not public API. */
+cdb_status cdb_blob_external_path_for_test(struct cdb_db *db, const cdb_blob_ref *ref, char *out,
+                                           size_t cap);
+
 /* Internal test hook (#39 regression): forwards to the static size-fit check
  * so a test can exercise the total_len > SIZE_MAX guard deterministically on
  * any platform (on an LP64 host SIZE_MAX == UINT64_MAX makes it otherwise

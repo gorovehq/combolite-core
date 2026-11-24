@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include "combolite/cdb_value.h"
+#include "cdb_codec.h"
 #include "cdb_doc.h"
 #include "cdb_endian.h"
 #include "cdb_fts.h"
@@ -53,6 +54,17 @@
  * fail-closed on mismatch. Backward compatible: an absent bit means unsigned
  * and reads unchanged. */
 #define ENV_FLAG_SIGNED 0x04u
+/* #56 FR2 (spec 15.3): the stored body is cdb_codec-compressed (spec 15.2
+ * form). Set on write when compression saves at least 1/8 (else the body is
+ * stored raw, no flag); read decompresses before returning the body, so every
+ * downstream consumer (patch/delta/materialize, signing) is unaffected. */
+#define ENV_FLAG_COMPRESSED 0x08u
+
+/* Largest doc body compressed/decompressed through a stack scratch buffer
+ * (#56 FR2). A body above this is stored raw; a stored compressed body whose
+ * stated length exceeds body_max or this bound is rejected (CDB_E_CORRUPT),
+ * guarding against a decompression bomb (TB2). */
+#define DOC_COMP_SCRATCH 16384u
 
 /* Head index value: revision, page, chain length, kind. */
 #define HEAD_SIZE 21u
@@ -404,11 +416,80 @@ typedef struct envelope {
     size_t chain_len;     /* bytes in that chain */
 } envelope;
 
+/* #56 FR2: a codec work handle using the environment allocator when it has
+ * one (as cdb_rowgroup does); otherwise env is NULL and the codec call fails,
+ * which the callers treat as "store raw" / "cannot read compressed". */
+static void doc_codec_mem(cdb_db *db, cdb_codec_mem *m)
+{
+    memset(m, 0, sizeof *m);
+    if (db->env.ops != NULL && db->env.ops->alloc != NULL && db->env.ops->free != NULL)
+        m->env = &db->env;
+}
+
+/* #56 FR2: tries to compress body_len bytes into out (out_cap bytes). Returns
+ * 1 with *clen set only when compression is enabled, available, worth trying,
+ * fits the scratch bound, and saves at least 1/8; otherwise 0 (store raw). */
+static int doc_try_compress(cdb_db *db, const uint8_t *body, size_t body_len, uint8_t *out,
+                            size_t out_cap, size_t *clen)
+{
+    cdb_codec_mem m;
+    size_t packed = 0;
+    if (!db->cfg.doc_compress || body_len == 0)
+        return 0;
+    if (!cdb_codec_available(CDB_CODEC_LZMA2))
+        return 0;
+    if (body_len > DOC_COMP_SCRATCH || cdb_codec_bound(body_len) > out_cap)
+        return 0;
+    if (!cdb_codec_worth_trying(body_len, db->pager.page_size, 0))
+        return 0;
+    doc_codec_mem(db, &m);
+    if (cdb_codec_compress(&m, CDB_CODEC_LZMA2, body, body_len, out, out_cap, &packed) != CDB_OK)
+        return 0;
+    if (!cdb_codec_keeps(body_len, packed))
+        return 0;
+    *clen = packed;
+    return 1;
+}
+
+/* #56 FR2: e->body points at a stored compressed body (e->body_len bytes).
+ * Decompresses it into dest (a document buffer, sized for a full body) and
+ * repoints e->body there. Fail-closed and bounded: a compressed length past
+ * the scratch bound, a stated plaintext length past body_max, or a damaged
+ * stream is CDB_E_CORRUPT (TB2 decompression-bomb guard). */
+static cdb_status doc_decompress_body(cdb_db *db, envelope *e, uint8_t *dest)
+{
+    cdb_codec_mem m;
+    uint8_t cbuf[DOC_COMP_SCRATCH];
+    size_t plain = 0, out = 0;
+    cdb_status s;
+    if (!cdb_codec_available(CDB_CODEC_LZMA2))
+        return CDB_E_CORRUPT;
+    if (e->body_len == 0 || e->body_len > sizeof cbuf)
+        return CDB_E_CORRUPT;
+    if ((s = cdb_codec_length(e->body, e->body_len, &plain)) != CDB_OK)
+        return s;
+    if (plain > body_max(db))
+        return CDB_E_CORRUPT;
+    /* Copy the compressed bytes out before writing dest: for an overflow body
+     * e->body already aliases dest, so decompressing in place would corrupt. */
+    memcpy(cbuf, e->body, e->body_len);
+    doc_codec_mem(db, &m);
+    if ((s = cdb_codec_decompress(&m, CDB_CODEC_LZMA2, cbuf, e->body_len, dest, body_max(db), &out))
+        != CDB_OK)
+        return s;
+    e->body = dest;
+    e->body_len = out;
+    return CDB_OK;
+}
+
 /* Reads revision page lid into the page buffer and parses its envelope. The
  * body and summary point into the page buffer, except for a body in an
  * overflow chain: with dest it is gathered there (and the summary moves to
  * the summary buffer, since the page buffer reads the chain); without dest,
- * e->body is NULL and only its length is known. */
+ * e->body is NULL and only its length is known. A compressed body (#56 FR2)
+ * is decompressed into dest before it is returned; without dest only its
+ * stored (compressed) length is known, which the metadata-only callers do not
+ * use as a body length. */
 static cdb_status read_revision(cdb_db *db, uint64_t lid, envelope *e, uint8_t *dest)
 {
     cdb_page_header h;
@@ -498,12 +579,19 @@ static cdb_status read_revision(cdb_db *db, uint64_t lid, envelope *e, uint8_t *
         }
         memcpy(dest, p, inline_len);
         e->body = dest;
-        return cdb_overflow_read_db(db, &db->pager, first, h.store_id, dest + inline_len,
-                                    e->body_len - inline_len, buf(db, B_PAGE));
+        if ((s = cdb_overflow_read_db(db, &db->pager, first, h.store_id, dest + inline_len,
+                                      e->body_len - inline_len, buf(db, B_PAGE)))
+            != CDB_OK)
+            return s;
+        if (e->flags & ENV_FLAG_COMPRESSED)
+            return doc_decompress_body(db, e, dest); /* #56 FR2 */
+        return CDB_OK;
     }
     /* Ordinary case: the body is the rest of the payload. */
     e->body = p;
     e->body_len = (size_t)(end - p);
+    if ((e->flags & ENV_FLAG_COMPRESSED) && dest != NULL)
+        return doc_decompress_body(db, e, dest); /* #56 FR2 */
     return CDB_OK;
 }
 
@@ -558,7 +646,16 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
                                  uint64_t *lid)
 {
     uint8_t *pl = buf(db, B_PAGE);
-    size_t cap = capacity(db), len = ENV_SIZE, inline_len = e->body_len;
+    /* #56 FR2: the body actually stored — either e->body, or its compressed
+     * form in cbuf when compression is enabled and keeps. Everything below
+     * (fit check, overflow split, signing, inlining) operates on these,
+     * unchanged, so compression nests inside the existing envelope. */
+    uint8_t cbuf[DOC_COMP_SCRATCH];
+    const uint8_t *body = e->body;
+    size_t body_len = e->body_len;
+    int compressed = 0;
+    size_t clen = 0;
+    size_t cap = capacity(db), len = ENV_SIZE, inline_len;
     size_t head = ENV_SIZE + summary_bytes(e->summary != NULL, e->summary_len);
     cdb_byte_order o = db->pager.order;
     uint64_t first = 0;
@@ -570,18 +667,25 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
     size_t sig = sig_reserve(db);
     size_t wcap = cap >= sig ? cap - sig : 0u;
 
+    if (doc_try_compress(db, e->body, e->body_len, cbuf, sizeof cbuf, &clen)) {
+        body = cbuf;
+        body_len = clen;
+        compressed = 1;
+    }
+    inline_len = body_len;
+
     if (head > wcap)
         return CDB_E_OVERFLOW;
-    if (e->body_len > wcap - head) {
-        if (!revision_fits(db, e->summary != NULL, e->summary_len, e->body_len))
+    if (body_len > wcap - head) {
+        if (!revision_fits(db, e->summary != NULL, e->summary_len, body_len))
             return CDB_E_OVERFLOW;
         uint8_t okey[17];
         okey[0] = CDB_OVERFLOW_OWNER_DOC_REV;
         cdb_store_u64(okey + 1, e->entry, CDB_ORDER_BIG);
         cdb_store_u64(okey + 9, e->rev, CDB_ORDER_BIG);
         inline_len = wcap - head - 8u - db->pager.addr_width;
-        if ((s = cdb_overflow_write_db(db, &db->pager, pool->slot.store_id, e->body + inline_len,
-                                       e->body_len - inline_len, pl, okey, sizeof okey, &first))
+        if ((s = cdb_overflow_write_db(db, &db->pager, pool->slot.store_id, body + inline_len,
+                                       body_len - inline_len, pl, okey, sizeof okey, &first))
             != CDB_OK)
             return s;
     }
@@ -594,7 +698,7 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
     cdb_store_u32(pl + 40, e->schema, o);
     pl[44] = e->kind;
     pl[45] = (uint8_t)((e->summary ? ENV_FLAG_SUMMARY : 0u) | (first ? ENV_FLAG_OVERFLOW : 0u)
-                       | (sig ? ENV_FLAG_SIGNED : 0u));
+                       | (sig ? ENV_FLAG_SIGNED : 0u) | (compressed ? ENV_FLAG_COMPRESSED : 0u));
     if (e->summary) {
         cdb_value_writer w;
         cdb_value_writer_init(&w, pl + len, wcap - len, o, CDB_DECIMAL_COMPACT);
@@ -607,12 +711,12 @@ static cdb_status write_revision(cdb_db *db, struct cdb_doc_pool *pool, const en
     /* With a chain: total length and first chain page come before the
      * inline part of the body. */
     if (first) {
-        cdb_store_u64(pl + len, (uint64_t)e->body_len, o);
+        cdb_store_u64(pl + len, (uint64_t)body_len, o);
         store_lid(db, pl + len + 8, first);
         len += 8u + db->pager.addr_width;
     }
     if (inline_len)
-        memmove(pl + len, e->body, inline_len);
+        memmove(pl + len, body, inline_len);
     len += inline_len;
     /* #40 FR4: sign the assembled payload (envelope, summary and body) and
      * append the signature. pl[45] already carries ENV_FLAG_SIGNED, so it is
@@ -1069,6 +1173,33 @@ static cdb_status doc_get_in(cdb_db *db, uint64_t store, uint64_t entry, uint64_
         info->schema_version = m.target.schema;
     }
     return CDB_OK;
+}
+
+/* Internal test hook (#56 FR2): reports the stored envelope flags of a
+ * document's current head revision, so a test can assert a compressible body
+ * is stored with ENV_FLAG_COMPRESSED and an incompressible one is stored raw.
+ * Not part of the public document API. */
+cdb_status cdb_doc_head_flags_for_test(cdb_db *db, uint64_t store, uint64_t entry, uint8_t *out_flags)
+{
+    struct cdb_doc_pool *pool;
+    head_rec head;
+    envelope e;
+    int found = 0;
+    cdb_status s;
+    if (db == NULL || out_flags == NULL)
+        return CDB_E_INVALID_ARG;
+    cdb_db_lock(db);
+    s = doc_pool(db, store, &pool);
+    if (s == CDB_OK)
+        s = head_get(pool, entry, &head, &found);
+    if (s == CDB_OK && !found)
+        s = CDB_E_NOT_FOUND;
+    if (s == CDB_OK)
+        s = read_revision(db, head.lid, &e, NULL);
+    if (s == CDB_OK)
+        *out_flags = e.flags;
+    cdb_db_unlock(db);
+    return s;
 }
 
 /* -------------------------------------------------------- apply */

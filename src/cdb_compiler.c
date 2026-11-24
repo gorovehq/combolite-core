@@ -3914,6 +3914,42 @@ static cdb_status proc_compile_statement(proc_compiler *pc, cdb_proc_writer *pw)
         return CDB_OK;
     }
 
+    /* create_blob(store, content) (#56 FR3) */
+    if (cdb_token_equals_ci(&tok, "create_blob")) {
+        cdb_lexer_next(&pc->lex, &tok);
+        uint8_t r_store = proc_alloc_temp_reg(pc);
+        uint8_t r_content = proc_alloc_temp_reg(pc);
+        uint8_t m_args[2];
+        proc_expect(pc, CDB_TOK_LPAREN, "Expected '(' after create_blob", NULL);
+        proc_parse_arg(pc, pw, r_store);
+        proc_match(pc, CDB_TOK_COMMA, NULL);
+        proc_parse_arg(pc, pw, r_content);
+        proc_expect(pc, CDB_TOK_RPAREN, "Expected ')'", NULL);
+        m_args[0] = r_store;
+        m_args[1] = r_content;
+        cdb_proc_write_call_mutation_ex(pw, out_reg, CDB_MUT_BLOB_CREATE, 2, m_args);
+        pc->next_reg = base_reg;
+        return CDB_OK;
+    }
+
+    /* read_blob(store, ref) (#56 FR3) */
+    if (cdb_token_equals_ci(&tok, "read_blob")) {
+        cdb_lexer_next(&pc->lex, &tok);
+        uint8_t r_store = proc_alloc_temp_reg(pc);
+        uint8_t r_ref = proc_alloc_temp_reg(pc);
+        uint8_t m_args[2];
+        proc_expect(pc, CDB_TOK_LPAREN, "Expected '(' after read_blob", NULL);
+        proc_parse_arg(pc, pw, r_store);
+        proc_match(pc, CDB_TOK_COMMA, NULL);
+        proc_parse_arg(pc, pw, r_ref);
+        proc_expect(pc, CDB_TOK_RPAREN, "Expected ')'", NULL);
+        m_args[0] = r_store;
+        m_args[1] = r_ref;
+        cdb_proc_write_call_mutation_ex(pw, out_reg, CDB_MUT_BLOB_READ, 2, m_args);
+        pc->next_reg = base_reg;
+        return CDB_OK;
+    }
+
     /* LINK / link(...) */
     if (cdb_token_equals_ci(&tok, "link")
         || (tok.kind == CDB_TOK_KW_LINK && cdb_token_equals_ci(&tok, "LINK"))) {
