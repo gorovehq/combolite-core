@@ -2552,6 +2552,49 @@ static cdb_status vec_live_in_tx_in(cdb_db *db, uint64_t store, uint64_t entry, 
     return db->in_tx ? live_in_tx(db, c, entry, live) : entry_get(c, entry, &r, live);
 }
 
+static cdb_status vec_next_live_in(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry,
+                                   int *done);
+
+cdb_status cdb_vec_next_live(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry, int *done)
+{
+    cdb_status r;
+    if (db == NULL || entry == NULL || done == NULL)
+        return CDB_E_INVALID_ARG;
+    cdb_db_lock(db);
+    r = vec_next_live_in(db, store, after, entry, done);
+    cdb_db_unlock(db);
+    return r;
+}
+
+/* Seeks the entries index to the first key strictly greater than `after` and
+ * returns that entry's ID. The entries index holds exactly the live entries
+ * (delete removes the row at apply), big-endian u64 keys, so the walk is live
+ * by construction and ordered. */
+static cdb_status vec_next_live_in(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry,
+                                   int *done)
+{
+    coll *c;
+    cdb_index_cursor cur;
+    uint8_t k[8], v[ENTRY_VAL];
+    size_t klen, vlen;
+    cdb_status s;
+    *done = 1;
+    if ((s = coll_get(db, store, &c)) != CDB_OK)
+        return s;
+    if (after == UINT64_MAX)
+        return CDB_OK; /* no ID is greater; avoids after + 1 overflow */
+    if ((s = cdb_index_seek(&cur, &c->entries, vbuf(db, V_CURSOR), k, k_u64(k, after + 1u)))
+        != CDB_OK)
+        return s;
+    if ((s = cdb_index_next(&cur, k, sizeof k, &klen, v, sizeof v, &vlen, done)) != CDB_OK || *done)
+        return s;
+    if (klen != 8)
+        return CDB_E_CORRUPT;
+    *entry = cdb_load_u64(k, CDB_ORDER_BIG);
+    *done = 0;
+    return CDB_OK;
+}
+
 /* -------------------------------------------------------- reading */
 
 /* Re-encodes the stored elements as a vector value in out. A small out

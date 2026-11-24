@@ -984,6 +984,59 @@ cdb_status cdb_link_list(cdb_db *db, cdb_ref entry, int direction, uint64_t type
     return r;
 }
 
+static cdb_status link_scan_in(cdb_db *db, const cdb_link *after, cdb_link *out, size_t max,
+                               size_t *n);
+
+cdb_status cdb_link_scan(cdb_db *db, const cdb_link *after, cdb_link *out, size_t max, size_t *n)
+{
+    cdb_status r;
+    if (db == NULL || n == NULL || (out == NULL && max > 0))
+        return CDB_E_INVALID_ARG;
+    cdb_db_lock(db);
+    r = link_scan_in(db, after, out, max, n);
+    cdb_db_unlock(db);
+    return r;
+}
+
+/* Whole forward index, empty prefix: the same walk as link_list_in but
+ * unscoped by a source entry, so it visits every link. The live filter is the
+ * shared state_of()==LIVE (not reimplemented), so a tombstoned/removed-end
+ * link is skipped while paging still advances past its key. */
+static cdb_status link_scan_in(cdb_db *db, const cdb_link *after, cdb_link *out, size_t max,
+                               size_t *n)
+{
+    struct cdb_link_store *ls = &db->links;
+    uint8_t prefix[1] = {0}, pos[KEY_LEN];
+    cdb_status s = open_store(db, 0);
+    *n = 0;
+    if (s == CDB_E_NOT_FOUND)
+        return CDB_OK; /* no link store yet: no links */
+    if (s != CDB_OK)
+        return s;
+    memset(pos, 0, sizeof pos);
+    /* Resume just after the key of the last link returned. */
+    if (after) {
+        k_fwd(pos, after->type, after->source, after->target);
+        if (!key_succ(pos))
+            return CDB_OK;
+    }
+    while (*n < max) {
+        int done, found;
+        cdb_link cand;
+        if ((s = scan_at(db, &ls->fwd, prefix, 0, pos, &done)) != CDB_OK || done)
+            return s;
+        if ((s = row_at(ls, 0, pos, &cand, &found)) != CDB_OK)
+            return s;
+        if (!found)
+            return CDB_E_CORRUPT;
+        if (state_of(&cand) == LIVE)
+            out[(*n)++] = cand;
+        if (!key_succ(pos))
+            break;
+    }
+    return CDB_OK;
+}
+
 static cdb_status link_list_in(cdb_db *db, cdb_ref entry, int direction, uint64_t type,
                                const cdb_link *after, cdb_link *out, size_t max, size_t *n)
 {

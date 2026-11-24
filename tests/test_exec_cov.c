@@ -281,8 +281,9 @@ static uint64_t seed_empty(void)
 
 /* ------------------------------------------------------------ tests */
 
-/* Scan over a VECTOR collection: model-specific scan_read (len forced 0) and
- * the generic entry-counting branch of scan_next. */
+/* Scan over a VECTOR collection: the VECTOR scan_read now materializes the
+ * $vector value and scan_next walks the live entries via cdb_vec_next_live
+ * (#52), so every row carries a non-empty $vector record. */
 static void test_scan_vector_store(void)
 {
     cdb_vec_config c;
@@ -315,29 +316,26 @@ static void test_scan_vector_store(void)
         TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_vec_insert(&db, id, vb, vn, 0, 0, &e));
     }
     commit();
-    /* The generic scan counts entry IDs up to the catalog's bound, which lags
-     * an open store; fold the journal so the two entries are visible. */
-    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_reconcile(&db));
+    /* An open store: cdb_vec_next_live walks the committed entries index, so
+     * the two entries are visible without reconciling (#52). */
 
     q_begin();
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_query_write_scan(&QW, "vemb", 4));
     q_open(); /* scan_open resolves the VECTOR model from the catalog */
-    /* Reading vector records back as values may be unsupported in this build
-     * (CDB_E_UNSUPPORTED); tolerate it. Either way the VECTOR branches of
-     * scan_open/scan_next/scan_read/scan_load are exercised. */
     n = 0;
     {
         cdb_status s;
         int has = 0;
         while ((s = cdb_exec_next(&cur, &row, &has)) == CDB_OK && has) {
             TEST_ASSERT_EQUAL_UINT32(CDB_MODEL_VECTOR, row.model);
-            TEST_ASSERT_NULL(row.record_data); /* vector scan forces record_len 0 */
-            TEST_ASSERT_EQUAL_size_t(0, row.record_len);
+            /* $vector materialized: a non-empty record (#52), no longer forced
+             * to an existence-only empty row. */
+            TEST_ASSERT_NOT_NULL(row.record_data);
+            TEST_ASSERT_TRUE(row.record_len > 0);
             n++;
         }
-        TEST_ASSERT_TRUE(s == CDB_OK || s == CDB_E_UNSUPPORTED);
-        if (s == CDB_OK)
-            TEST_ASSERT_EQUAL_size_t(2, n);
+        TEST_ASSERT_EQUAL_INT(CDB_OK, s);
+        TEST_ASSERT_EQUAL_size_t(2, n);
     }
     cdb_exec_close(&cur);
 }

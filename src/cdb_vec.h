@@ -116,6 +116,16 @@ cdb_status cdb_vec_delete(cdb_db *db, uint64_t store, uint64_t entry);
  * CDB_E_INVALID_ARG: not a vector collection. */
 cdb_status cdb_vec_live_in_tx(cdb_db *db, uint64_t store, uint64_t entry, int *live);
 
+/* The next committed live vector entry with an ID greater than after
+ * (after 0: from the first), ascending by entry ID. *done is 1 when none
+ * remain. Walks the collection's entries index, which delete removes from,
+ * so every yielded entry is live -- there is no next_entry_id arithmetic and
+ * no deleted entry (the authoritative live-entry source for a full scan,
+ * #52). The entry's $vector value is read separately via cdb_vec_get. Not
+ * inside a transaction (the committed view, as cdb_vec_get sees it). */
+cdb_status cdb_vec_next_live(cdb_db *db, uint64_t store, uint64_t after, uint64_t *entry,
+                             int *done);
+
 /* Copies the committed vector as an encoded value, and its source. */
 cdb_status cdb_vec_get(cdb_db *db, uint64_t store, uint64_t entry, void *out, size_t cap,
                        size_t *len, uint64_t *source_store, uint64_t *source_entry);
