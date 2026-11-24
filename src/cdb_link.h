@@ -134,6 +134,15 @@ cdb_status cdb_link_get(cdb_db *db, uint64_t type, cdb_ref source, cdb_ref targe
 cdb_status cdb_link_list(cdb_db *db, cdb_ref entry, int direction, uint64_t type,
                          const cdb_link *after, cdb_link *out, size_t max, size_t *n);
 
+/* Whole-store live-link enumeration: every LIVE link in the link store, in
+ * forward-index key order, starting after `after` (NULL: from the first); at
+ * most max, *n reports how many were written. Reuses the same state_of()==LIVE
+ * filter as cdb_link_list (#40/#60), so tombstoned/removed-end links are
+ * skipped (paging still advances past them). For a full-store executor scan
+ * (#52); the per-entry direction of cdb_link_list does not apply. Not inside a
+ * transaction (the committed view). */
+cdb_status cdb_link_scan(cdb_db *db, const cdb_link *after, cdb_link *out, size_t max, size_t *n);
+
 /* Engine hooks. */
 int cdb_link_is_store(cdb_db *db, uint64_t store);
 cdb_status cdb_link_apply(cdb_db *db, const cdb_delta *d);

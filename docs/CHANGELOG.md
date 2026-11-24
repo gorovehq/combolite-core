@@ -11,6 +11,36 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Executor (#52) — per-model live cursors / scan materialization
+  (`src/cdb_exec.c`, `src/cdb_vec.{h,c}`, `src/cdb_link.{h,c}`).** The query
+  executor's full-store scan is now complete and live-correct for the vector,
+  time-series and link models (relational and document were already correct):
+  - **VECTOR scan materializes `$vector`.** The `scan_read`/`scan_load` VECTOR
+    path no longer force-zeros the record length after `cdb_vec_get`, so each row
+    carries its encoded `$vector` value; large vectors flow through the existing
+    host-profile grow path (`CDB_E_OUT_OF_BUDGET` bound preserved).
+  - **TIME-SERIES and LINK scans emit real records**, not bare
+    `store_id`/`entry_id` rows: the TS branch yields one record per live series
+    (its key bytes) by **reusing the #41 `cdb_ts_list` enumeration** (no second
+    enumerator added), and the LINK branch yields a serialized link record per
+    **live** link via a new whole-store `cdb_link_scan`, which **reuses the
+    #40/#60 `state_of()==LIVE` filter** so tombstoned/removed-end links are
+    skipped.
+  - **Correct live-entry count for an open store.** All three models now
+    enumerate their committed **live** entries — vectors via the new
+    `cdb_vec_next_live` over the entries index (delete removes from it), TS via
+    `cdb_ts_list`, links via `cdb_link_scan` — instead of counting entry IDs up
+    to the catalog's block-claimed `next_entry_id`, which lags an open store and
+    over/under-counted it.
+  - Fail-closed: any enumeration error propagates the model status and emits no
+    row. The time-series/link cursor state lives in an arena allocation taken
+    only for a live scan, so the other models' query memory budget is unchanged.
+  - Red→green regression test `tests/test_exec_live_cursors_f52.c` drives the
+    real executor scan site (missing-`$vector` / bare-ID / open-store miscount
+    were red on the merge-base), green under `core-cpu-debug` (ASan + UBSan).
+
 ### Added
 
 - **Coordinator (#60 B1) — reconciled-write-set ring (`src/cdb_wsring.{h,c}`,
