@@ -787,6 +787,24 @@ static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, siz
                                const cdb_ts_tag *tags, size_t ntags, const cdb_ts_def *def,
                                uint64_t *series, int *created);
 
+/* #63 Item 1 (FR1/FR2): creating a time-series series is a schema event, so
+ * record a redacted CDB_AUDIT_SCHEMA carrying only the store and the new series
+ * id (never tags/field values, master §5). Mirrors db_governance_audit and the
+ * COLLISION emit (collided() above): fire whenever the audit log is persistable
+ * (has_catalog), attributed to the active principal when one is registered and
+ * to principal_id=0 (unattributed) otherwise. Gating the whole emission on
+ * has_identity would silently drop the event when no identity is active,
+ * reopening the exact audit-completeness gap #37/#54 F2 close (OWASP A09).
+ * Best-effort: a failed audit append must never fail or undo the series create. */
+static void ts_schema_audit(cdb_db *db, uint64_t store, uint64_t series)
+{
+    uint32_t principal;
+    if (!db->has_catalog)
+        return;
+    principal = db->has_identity ? (uint32_t)db->active_identity.principal_id : 0u;
+    (void)cdb_audit_log(db, CDB_AUDIT_SCHEMA, principal, store, series, NULL, 0);
+}
+
 cdb_status cdb_ts_series(cdb_db *db, uint64_t store, const char *name, size_t len,
                          const cdb_ts_tag *tags, size_t ntags, const cdb_ts_def *def,
                          uint64_t *series, int *created)
@@ -836,6 +854,7 @@ static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, siz
     *series = cdb_db_take_entry(db, store, &t->next_entry, &t->dirty);
     t->touched_tx = db->tx_id;
     *created = 1;
+    ts_schema_audit(db, store, *series); /* #63 Item 1: emit (unattributed if no identity) */
     return CDB_OK;
 }
 
@@ -1006,6 +1025,11 @@ static int64_t ticks_to_ns(int64_t ticks, unsigned precision)
 static cdb_status ts_append_in(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points,
                                size_t n);
 
+/* #63 Item 2: auto-enforce retention on the write path (forward decl; defined
+ * with the explicit retention path below). */
+static cdb_status ts_apply_retention_in(cdb_db *db, uint64_t store, uint64_t series, int64_t now_ts,
+                                        int64_t *dropped_before);
+
 cdb_status cdb_ts_append(cdb_db *db, uint64_t store, uint64_t series, const cdb_ts_in *points,
                          size_t n)
 {
@@ -1083,6 +1107,30 @@ static cdb_status ts_append_in(cdb_db *db, uint64_t store, uint64_t series, cons
     if ((s = cdb_tx_put(db, store, series, CDB_OP_PATCH, p, at)) != CDB_OK)
         return s;
     t->touched_tx = db->tx_id;
+
+    /* #63 Item 2 (FR3/FR4, ADR-002): auto-enforce the configured retention on
+     * the write path so an over-retention series is trimmed without an explicit
+     * maintenance call. The cutoff is derived from the trusted server clock
+     * (cdb_db_now), converted to this series' tick precision to match stored
+     * timestamps -- never from a client-supplied point ts -- so a crafted point
+     * cannot drive the trim past policy. Bounded: ts_apply_retention_in removes
+     * only points older than now-retention and is a no-op when retention is
+     * unset or nothing is stale, so it is safe to run on every append
+     * (idempotent). Fail closed: a trim error aborts the append. Downsample-on-
+     * write is deferred (FR6 / BACKLOG). When the environment has no clock the
+     * cutoff is unknowable, so the trim is skipped (the explicit maintenance
+     * path still applies retention with a caller-supplied now). */
+    {
+        int64_t now_ns;
+        int have_clk;
+        if ((s = cdb_db_now(db, &now_ns, &have_clk)) != CDB_OK)
+            return s;
+        if (have_clk) {
+            int64_t now_ticks = ticks_of(now_ns, r.def.precision);
+            if ((s = ts_apply_retention_in(db, store, series, now_ticks, NULL)) != CDB_OK)
+                return s;
+        }
+    }
     return CDB_OK;
 }
 
@@ -1244,7 +1292,12 @@ static cdb_status ts_apply_retention_in(cdb_db *db, uint64_t store, uint64_t ser
     if (store == CDB_AUDIT_STORE_ID || (db->audit_store_id && store == db->audit_store_id))
         return CDB_E_SECURITY;
 
-    if ((s = cdb_ts_get_retention(db, store, series, &retention)) != CDB_OK)
+    /* #63 ADR-003: call the lock-free inner lookups/delete. ts_apply_retention_in
+     * runs under cdb_db_lock on both reachable paths -- the explicit
+     * cdb_ts_apply_retention wrapper and the write path (ts_append_in, which
+     * already holds the lock) -- so a re-locking wrapper here would be a latent
+     * re-lock. Explicit-path behaviour is unchanged (same cutoff, same deletes). */
+    if ((s = ts_get_retention_in(db, store, series, &retention)) != CDB_OK)
         return s;
 
     if (retention <= 0) {
@@ -1257,7 +1310,7 @@ static cdb_status ts_apply_retention_in(cdb_db *db, uint64_t store, uint64_t ser
     if (dropped_before)
         *dropped_before = cutoff;
 
-    return cdb_ts_drop_before(db, store, series, cutoff);
+    return ts_drop_before_in(db, store, series, cutoff);
 }
 
 /* -------------------------------------------------------- blocks */
