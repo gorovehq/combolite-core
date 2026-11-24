@@ -82,6 +82,40 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Fixed
 
+- **Audit-trail residuals (#54 PART 1, deferred from #37) — three defined-but-unwired
+  governance-evidence paths closed (`src/cdb_audit.{c,h}`, `src/cdb_db.{c,h}`; spec 12.5/12.7,
+  OWASP A09). ADR-0005.** #37 wired KEY_OP/SCHEMA/BATON emit+sign and verify-on-read; these three
+  fail-open gaps remained, each now wired at its real source site with a red→green test (red on the
+  pre-fix tree, green after the source edit — anti-no-op, #40 FR1):
+  - **F2 — `CDB_AUDIT_REVISION` (type 2) was never emitted.** A committed transaction that mutates a
+    document or table store now emits **exactly one** REVISION event in `tx_commit_locked` (gated on
+    a per-tx `tx_has_revision` flag set at the delta-stage site for `CDB_MODEL_DOCUMENT`/
+    `CDB_MODEL_RELATIONAL` stores, reset in `tx_begin`). Reuses the #37 `db_governance_audit` guard
+    shape: emitted when the audit log is persistable (`has_catalog`), attributed to the active
+    principal **or principal 0** when none is registered (never gated on `has_identity` — that would
+    re-open the #37 governance-no-principal hole); best-effort (a failed append never fails or undoes
+    the commit); the recovery/replay apply path is deliberately **not** a site (would double-emit).
+    `CDB_AUDIT_CUSTOM` (type 6) is confirmed **caller-driven** via the public
+    `cdb_audit_log(CDB_AUDIT_CUSTOM, …)` application-governance hook — no silent dead type.
+    (`tests/test_audit_revision_f2.c`.)
+  - **F3 — BATON audited only on `cdb_db_reconcile`.** `db_reclaim_in` and `db_compact_in` also take
+    the single-writer baton via `reconcile_hold`; they now emit a BATON event on the genuine
+    not-held→held handoff (sampled before `reconcile_hold`, emitted on success), so a
+    reclaim/store-move that seizes the baton is no longer unlogged. A standing-baton op does not
+    double-emit. (`tests/test_audit_baton_f3.c`.)
+  - **F4 — the chain append is now serialized under the coordinator baton.** `cdb_audit_log` brackets
+    its `reload-head → build → index_put → update-head` sequence under the baton (take-if-not-held,
+    append, release only what it took); on token denial it falls back to the existing reload-head
+    floor (private-pager, best-effort) so it **never drops the event and never forks the shared
+    chain**. Verify-on-read stays fail-closed (`CDB_E_SECURITY`), bound to the reader's active key
+    (per-signer registry remains a follow-up). The deterministic oracle asserts the serialization
+    *invariant* — a non-holder's append must acquire the exclusive baton — since a true simultaneous
+    chain *corruption* is only an OS-thread race (non-deterministic); in the coordinator model every
+    persistent append already holds the baton. (`tests/test_audit_serialize_f4.c`.)
+  - **Out of scope (own effort):** M27 enclave crypto (CR5 enclave page encryption, CR2 SEAL/REPL
+    subkey derivation, CR3 `unwrap_key` caller wiring) and the per-signer audit key registry — left
+    untouched here, recorded in `docs/BACKLOG.md`.
+
 - **CRDT replication convergence (silent divergence / data loss)** — multi-master
   replication merged deltas by **arrival order**, not causality, so two peers'
   concurrent writes to the same `(store, entry)` could converge to **different
