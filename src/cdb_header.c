@@ -425,3 +425,41 @@ cdb_status cdb_header_checkpoint(const cdb_storage *st, cdb_header_state *hs, ui
     hs->record.commit_hwm = rec.commit_hwm;
     return CDB_OK;
 }
+
+int cdb_header_region_find(const cdb_header *h, uint8_t feature_index, cdb_region_anchor *out)
+{
+    unsigned i;
+    if (feature_index == CDB_REGION_FEATURE_NONE)
+        return 0;
+    for (i = 0; i < CDB_HEADER_REGION_ANCHORS; i++) {
+        if (h->anchors[i].feature_index == feature_index) {
+            if (out != NULL)
+                *out = h->anchors[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int cdb_header_region_set(cdb_header *h, uint8_t feature_index, uint64_t anchor, uint32_t size_hint)
+{
+    unsigned i, free_slot = CDB_HEADER_REGION_ANCHORS;
+    if (feature_index == CDB_REGION_FEATURE_NONE)
+        return 0;
+    for (i = 0; i < CDB_HEADER_REGION_ANCHORS; i++) {
+        if (h->anchors[i].feature_index == feature_index) {
+            h->anchors[i].anchor = anchor;
+            h->anchors[i].size_hint = size_hint;
+            return 1;
+        }
+        if (h->anchors[i].feature_index == CDB_REGION_FEATURE_NONE
+            && free_slot == CDB_HEADER_REGION_ANCHORS)
+            free_slot = i;
+    }
+    if (free_slot == CDB_HEADER_REGION_ANCHORS)
+        return 0; /* no slot: the feature stays unadvertised (conservative) */
+    h->anchors[free_slot].feature_index = feature_index;
+    h->anchors[free_slot].anchor = anchor;
+    h->anchors[free_slot].size_hint = size_hint;
+    return 1;
+}

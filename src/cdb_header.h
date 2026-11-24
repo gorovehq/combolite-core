@@ -52,6 +52,13 @@ typedef struct cdb_companion_slot {
     uint64_t watermark;   /* reconciled through this global commit number */
 } cdb_companion_slot;
 
+/* Region-anchor feature indices (spec 14.1.6). feature_index 0 marks an unused
+ * anchor slot. Each assigned index roots an optional, versioned archive region;
+ * a reader that predates an index finds it in no slot it understands and simply
+ * ignores it, so the structure is forward/backward compatible. */
+#define CDB_REGION_FEATURE_NONE 0u
+#define CDB_REGION_FEATURE_WRITESET_RING 1u /* reconciled-write-set ring (#60 B1, spec 14.22) */
+
 typedef struct cdb_region_anchor {
     uint8_t feature_index;
     uint32_t size_hint;
@@ -136,5 +143,17 @@ cdb_status cdb_header_commit(const cdb_storage *st, cdb_header_state *hs, const 
  * reservation high-water marks, which must be durable before use (spec 12.1). */
 cdb_status cdb_header_checkpoint(const cdb_storage *st, cdb_header_state *hs, uint64_t page_seq_hwm,
                                  uint64_t commit_hwm);
+
+/* Finds the region anchor rooting the given feature (spec 14.1.6). Returns 1
+ * and fills *out when a non-NONE anchor with that feature_index exists, else 0.
+ * feature_index must not be CDB_REGION_FEATURE_NONE. */
+int cdb_header_region_find(const cdb_header *h, uint8_t feature_index, cdb_region_anchor *out);
+
+/* Roots feature_index at anchor (with size_hint) in h, reusing an existing
+ * anchor slot for that feature or the first free (NONE) slot. Returns 1 on
+ * success, 0 when no slot is free (the feature is then simply not advertised,
+ * and the conservative path applies -- fail-closed). feature_index must not be
+ * CDB_REGION_FEATURE_NONE. The change is durable with the next header write. */
+int cdb_header_region_set(cdb_header *h, uint8_t feature_index, uint64_t anchor, uint32_t size_hint);
 
 #endif
