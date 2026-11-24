@@ -102,6 +102,44 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Fixed
 
+- **Coordinator (#67) — measured per-op-kind completion estimate for the
+  non-baton busy ops (`src/cdb_coord.c`, `tests/`), closing the #42 storage/coord
+  follow-up (spec 5.9.6).** The five non-baton busy op kinds
+  (`RECONCILE`/`COMPACT`/`GRAPH`/`RECOVER`/`REBASE`) previously always published
+  the flat conservative constant (`CDB_COORD_ESTIMATE_CONSERVATIVE_MS`, 30 s)
+  because the measured path in `estimate_of` was gated on holding the baton
+  (`issued != 0`). The #42 bounded prepared-tx waiter (`cdb_db.c`
+  `check_slot_collisions`, spec 5.9.5) therefore read a fictitious 30 s bound for
+  an operation that may be finishing in milliseconds. A new `measured_estimate()`
+  now derives the estimate from progress already in the coord record — **basis
+  A/B:** the elapsed time since `status_start` scaled by work-left over work-done
+  (`x`/`x_total`), the same formula the baton uses, but **without requiring the
+  baton** for the five non-baton kinds; **basis C:** when no work counters are
+  published, the bare elapsed time since `status_start`, **bounded below** the
+  conservative constant. No new stored field: the one-field `cdb_coord.h` option
+  was not needed.
+  - **Finite + fail-closed (FR2/FR3, spec 5.9.6 security).** A non-baton busy op
+    with no measured basis still falls back to the conservative constant (never
+    `UNKNOWN`); `COMMIT` without baton progress and unknown op kinds stay
+    `UNKNOWN`; idle is 0. All basis math guards divide-by-zero, `x_total < x`,
+    and `now_us <= status_start`, and clamps below the `UNKNOWN` sentinel, so a
+    corrupt/hostile peer record can at worst push the wait to the waiter's hard
+    cap (`CDB_TX_WAIT_HARD_CAP_MS`), never beyond and never to `UNKNOWN`
+    (CWE-190/-369 guarded).
+  - **holder_outlasts semantics preserved (FR5).** A measurement is kept distinct
+    from the constant fallback **by construction** — `measured_estimate` never
+    returns exactly `CDB_COORD_ESTIMATE_CONSERVATIVE_MS` (a value landing there is
+    nudged down 1 ms) — so `holder_outlasts`'s existing value test still treats a
+    constant-fallback estimate as "says nothing" and only a genuine measurement
+    may shorten the baton wait, with no stored flag.
+  - Red→green regression test `tests/test_coord_measured_estimate_f67.c`
+    (deterministic faultenv, virtual clock) proves measured ≠ constant & finite,
+    no-basis → constant fallback, the fallback-magnitude collision nudge, and the
+    #42 bounded wait still returning `CDB_E_BUSY` within bound against a measured
+    non-baton holder — red on the merge-base (non-baton estimate was exactly
+    30 000 ms), green under `core-cpu-debug` (ASan + UBSan). #42/#33 guards
+    unchanged and green.
+
 - **Executor (#52) — per-model live cursors / scan materialization
   (`src/cdb_exec.c`, `src/cdb_vec.{h,c}`, `src/cdb_link.{h,c}`).** The query
   executor's full-store scan is now complete and live-correct for the vector,
