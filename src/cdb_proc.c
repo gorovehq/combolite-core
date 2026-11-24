@@ -292,6 +292,9 @@ static int mut_needs_tx(uint8_t op)
     case CDB_MUT_TS_APPLY_RET:
     case CDB_MUT_VEC_INSERT:
     case CDB_MUT_VEC_DELETE: return 1;
+    /* BLOB_CREATE writes blob pages straight through the pager (like the
+     * streaming blob API), so it needs no enclosing transaction; it still runs
+     * inside one when the program already opened a transaction. */
     default: return 0;
     }
 }
@@ -797,6 +800,106 @@ static cdb_status proc_exec_mutation_core(cdb_proc_vm *vm, uint8_t op, uint8_t a
         st = cdb_db_blob_free(vm->db, store, &ref, page_buf);
         if (out_val)
             cdb_eval_make_int(out_val, (int64_t)st);
+        break;
+    }
+
+    case CDB_MUT_BLOB_CREATE: {
+        /* #56 FR3: create a content-addressed blob from a content register
+         * (bytes/string), wired to the real streaming engine (dedup/refcount
+         * of #39 preserved via cdb_db_blob_write_end). Returns a
+         * CDB_TYPE_BLOB_REF the caller can later read or free. */
+        uint64_t store = 0;
+        const char *content = NULL;
+        size_t content_len = 0;
+        cdb_blob_writer w;
+        cdb_blob_ref ref;
+        uint8_t scratch[8192];
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
+        st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
+        if (st != CDB_OK)
+            break;
+        if (vm->regs[args[1]].type != CDB_TYPE_STRING
+            && vm->regs[args[1]].type != CDB_TYPE_BINARY) {
+            st = CDB_E_INVALID_ARG; /* fail closed on a non-bytes content operand */
+            break;
+        }
+        reg_get_str(&vm->regs[args[1]], &content, &content_len);
+        st = cdb_db_blob_write_begin(vm->db, store, scratch, &w);
+        if (st != CDB_OK)
+            break;
+        if (content_len > 0) {
+            st = cdb_db_blob_write_chunk(&w, content, content_len);
+            if (st != CDB_OK) {
+                cdb_db_blob_write_abort(&w);
+                break;
+            }
+        }
+        st = cdb_db_blob_write_end(&w, &ref);
+        if (st != CDB_OK)
+            break;
+        if (out_val) {
+            cdb_eval_make_null(out_val);
+            out_val->type = CDB_TYPE_BLOB_REF;
+            out_val->as.blob = ref;
+        }
+        break;
+    }
+
+    case CDB_MUT_BLOB_READ: {
+        /* #56 FR3: read a whole blob (verify-on-read by default, #39) into the
+         * VM's bounded result buffer and return it as CDB_TYPE_BINARY. A blob
+         * larger than the buffer fails closed (no unbounded amplification). */
+        uint64_t store = 0;
+        cdb_blob_ref ref;
+        cdb_blob_reader r;
+        uint8_t page_buf[8192];
+        size_t total = 0, got = 0, n = 0;
+        if (argc < 2) {
+            st = CDB_E_INVALID_ARG;
+            break;
+        }
+        st = resolve_store_id(vm->db, &vm->regs[args[0]], &store);
+        if (st != CDB_OK)
+            break;
+        if (vm->regs[args[1]].type != CDB_TYPE_BLOB_REF) {
+            st = CDB_E_INVALID_ARG; /* the ref operand must be a blob reference */
+            break;
+        }
+        ref = vm->regs[args[1]].as.blob;
+        if (ref.total_len > (uint64_t)sizeof vm->blob_read_buf) {
+            st = CDB_E_BUFFER_TOO_SMALL;
+            break;
+        }
+        total = (size_t)ref.total_len;
+        st = cdb_db_blob_read_begin(vm->db, store, &ref, page_buf, CDB_BLOB_VERIFY_DEFAULT, &r);
+        if (st != CDB_OK)
+            break;
+        while (got < total) {
+            st = cdb_db_blob_read_chunk(&r, vm->blob_read_buf + got, total - got, &n);
+            if (st != CDB_OK || n == 0)
+                break;
+            got += n;
+        }
+        /* A final zero-length read at EOF triggers the content-hash check even
+         * for an empty blob (idempotent once already verified). */
+        if (st == CDB_OK)
+            st = cdb_db_blob_read_chunk(&r, NULL, 0, &n);
+        cdb_db_blob_read_end(&r);
+        if (st != CDB_OK)
+            break;
+        if (got != total) {
+            st = CDB_E_CORRUPT; /* a short chain is never returned as success */
+            break;
+        }
+        if (out_val) {
+            cdb_eval_make_null(out_val);
+            out_val->type = CDB_TYPE_BINARY;
+            out_val->payload = vm->blob_read_buf;
+            out_val->payload_len = got;
+        }
         break;
     }
 

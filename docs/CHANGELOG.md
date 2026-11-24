@@ -11,6 +11,42 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ## [Unreleased]
 
+### Added
+
+- **Blob-store extras (#56) — audit follow-up to #39
+  (`src/cdb_blob.{c,h}`, `src/cdb_doc.{c,h}`, `src/cdb_proc.{c,h}`,
+  `src/cdb_compiler.c`, `src/cdb_db.h`).** Three declared-but-unwired blob-store
+  capabilities are closed at their real engine/compiler source sites, each with a
+  red→green regression test:
+  - **External-file attachments (FR1, `cdb_blob.c`).** `cdb_blob_store_external_db`
+    / `cdb_blob_read_external_db` store and read a blob body in an external
+    companion file (the `cdb_blob_ref` flags bit 0 that previously had no code
+    path), routed entirely through `cdb_env` file ops — no hardcoded POSIX. The
+    file is content-addressed (name from the SHA-256 / enclave HMAC-SHA-256 of the
+    body). Reads **fail closed**, returning no bytes, when the external file is
+    missing (`CDB_E_NOT_FOUND`), a different size than `ref->total_len`
+    (`CDB_E_CORRUPT`, catches truncation/growth), or — by default — does not hash
+    to `ref->hash` (`CDB_E_CORRUPT`), reusing #39 verify-on-read for the external
+    bytes. Test: `test_blob_external`.
+  - **Doc-body compression (FR2, `cdb_doc.c`).** The document write path now
+    compresses a body through `cdb_codec` (LZMA2, spec 15.2/15.3) when the new
+    opt-in `cdb_db_config.doc_compress` is set, keeping the compressed form only
+    when it saves at least 1/8 and **falling back to stored-raw** otherwise; reads
+    transparently decompress into a bounded buffer (decompression-bomb guarded).
+    A compressible body is stored compressed and reads back byte-identical; an
+    incompressible one is stored raw and also reads back identical. Default off,
+    so existing callers are unaffected. Test: `test_doc_compress`. **Scope:**
+    doc-bodies only — **journal and page compression are deferred** (see
+    `docs/BACKLOG.md`), not half-wired.
+  - **CMBQL blob create + read opcode (FR3, `cdb_proc.c` + `cdb_compiler.c`).**
+    New ISA opcodes `CDB_MUT_BLOB_CREATE` / `CDB_MUT_BLOB_READ` and CMBQL grammar
+    forms `create_blob(store, content)` / `read_blob(store, ref)` (and
+    `CREATE BLOB … CONTENT …` / `READ BLOB … REF …`), wired to the real
+    `cdb_db_blob_*` engine (the query layer could previously only `free_blob`).
+    Operands are validated and fail closed on malformed input; the read is a
+    capped whole-blob-into-register (bounded resource use). Test:
+    `test_proc_blob_opcode`.
+
 ### Fixed
 
 - **Executor (#52) — per-model live cursors / scan materialization
