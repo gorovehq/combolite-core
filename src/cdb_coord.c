@@ -271,12 +271,14 @@ static cdb_status read_file(cdb_coord *c, const char *path, unsigned halves, cdb
     return CDB_OK;
 }
 
-/* #42 FR2: a busy op with no x/x_total progress basis still publishes a
- * finite, conservative estimate for the non-baton op kinds
+/* #42 FR2: a busy op with no measured progress basis still publishes a finite,
+ * conservative estimate for the non-baton op kinds
  * (RECONCILE/COMPACT/GRAPH/RECOVER/REBASE, spec 5.8), so a waiter's bounded
  * wait (spec 5.9.5) has a value to read for any live holder. COMMIT's basis is
  * the baton's x/x_total, so without it COMMIT stays UNKNOWN here; an unknown op
- * is unknown too. */
+ * is unknown too. Returning non-UNKNOWN for exactly the five non-baton kinds is
+ * also how measured_estimate recognises them (measured basis applies to those
+ * five without the baton; #67). */
 static uint32_t conservative_estimate(uint8_t op)
 {
     switch (op) {
@@ -289,24 +291,82 @@ static uint32_t conservative_estimate(uint8_t op)
     }
 }
 
+/* A completion estimate (ms) measured from the operation's own progress, on the
+ * same basis the baton uses: the time elapsed so far scaled by the work left
+ * over the work done (x/x_total); else, for a non-baton op with no work
+ * counters, the bare elapsed time since the operation began, bounded below the
+ * conservative constant. Returns CDB_COORD_ESTIMATE_UNKNOWN when there is no
+ * measured basis (no clock reading, no time elapsed yet, an op kind with no
+ * measurable progress, or a baton op with no progress published), so estimate_of
+ * can fall back.
+ *
+ * #67 (spec 5.9.6): the five non-baton busy op kinds take this measured basis
+ * WITHOUT having to hold the baton (issued), so a waiter's bounded wait (#42)
+ * reads a realistic bound instead of the flat conservative constant. COMMIT
+ * keeps the baton's x/x_total basis (issued required), so a COMMIT without
+ * progress still falls back to UNKNOWN as before. A measurement is kept distinct
+ * from the conservative-constant fallback by construction: this never returns
+ * exactly CDB_COORD_ESTIMATE_CONSERVATIVE_MS (a result landing there is nudged
+ * down 1 ms), so holder_outlasts's value test still tells a genuine measurement
+ * from a fallback without any stored flag (#67 FR5). Every path is finite and
+ * clamped below the UNKNOWN sentinel for any record values, including hostile or
+ * corrupt ones (x_total < x, now_us <= status_start): the waiter's hard cap
+ * (CDB_TX_WAIT_HARD_CAP_MS) remains the absolute bound regardless. */
+static uint32_t measured_estimate(const cdb_coord_rec *me, uint64_t now_us)
+{
+    int non_baton = conservative_estimate(me->status_op) != CDB_COORD_ESTIMATE_UNKNOWN;
+    int baton = me->status_op == CDB_COORD_OP_COMMIT && me->issued != 0;
+    uint64_t elapsed_us;
+    uint32_t ms;
+
+    if (!non_baton && !baton)
+        return CDB_COORD_ESTIMATE_UNKNOWN; /* op kind with no measurable progress */
+    if (me->status_start == 0 || now_us <= me->status_start)
+        return CDB_COORD_ESTIMATE_UNKNOWN; /* no clock reading, or no time elapsed yet */
+    elapsed_us = now_us - me->status_start;
+
+    if (me->x > 0 && me->x_total >= me->x) {
+        /* Basis A/B: the elapsed time scaled by work-left over work-done. */
+        double v = (double)elapsed_us * (double)(me->x_total - me->x) / (double)me->x / 1000.0;
+        if (v >= (double)(CDB_COORD_ESTIMATE_UNKNOWN - 1u))
+            ms = CDB_COORD_ESTIMATE_UNKNOWN - 1u;
+        else
+            ms = (uint32_t)v;
+    } else if (non_baton) {
+        /* Basis C: no work counters — the elapsed time since the op began,
+         * bounded below the conservative constant, so this measured path can
+         * never read as more pessimistic than the flat fallback and a hostile
+         * status_start cannot push a non-baton wait past the constant here. */
+        uint64_t e = elapsed_us / 1000u;
+        if (e >= CDB_COORD_ESTIMATE_CONSERVATIVE_MS)
+            e = CDB_COORD_ESTIMATE_CONSERVATIVE_MS - 1u;
+        ms = (uint32_t)e;
+    } else {
+        /* A COMMIT holding the baton but with no progress published yet. */
+        return CDB_COORD_ESTIMATE_UNKNOWN;
+    }
+
+    /* Keep a measurement distinct from the conservative-constant fallback, so
+     * measured vs. fallback stays decidable by value alone (#67 FR5). */
+    if (ms == CDB_COORD_ESTIMATE_CONSERVATIVE_MS)
+        ms = CDB_COORD_ESTIMATE_CONSERVATIVE_MS - 1u;
+    return ms;
+}
+
 /* The status estimate (spec 5.8, offset 92): how long the current operation
- * still expects to take, in ms, as of now. The baton's progress gives the
- * sharpest basis: the time so far, scaled by the work left over the work done.
- * Without that basis a busy non-baton op falls back to a conservative constant
- * (#42 FR2); idle is 0. */
+ * still expects to take, in ms, as of now. A measured estimate from the op's
+ * own progress is the sharpest basis (measured_estimate); without one a busy
+ * non-baton op falls back to a conservative constant (#42 FR2), and a COMMIT
+ * without baton progress or an unknown op kind stays UNKNOWN; idle is 0. */
 static uint32_t estimate_of(const cdb_coord_rec *me, uint64_t now_us)
 {
-    double ms;
+    uint32_t m;
     if (me->status_op == CDB_COORD_OP_IDLE)
         return 0;
-    if (me->issued == 0 || me->x == 0 || me->x_total < me->x || me->status_start == 0
-        || now_us < me->status_start)
-        return conservative_estimate(me->status_op);
-    ms = (double)(now_us - me->status_start) * (double)(me->x_total - me->x) / (double)me->x
-         / 1000.0;
-    if (ms >= (double)(CDB_COORD_ESTIMATE_UNKNOWN - 1u))
-        return CDB_COORD_ESTIMATE_UNKNOWN - 1u;
-    return (uint32_t)ms;
+    m = measured_estimate(me, now_us);
+    if (m != CDB_COORD_ESTIMATE_UNKNOWN)
+        return m;
+    return conservative_estimate(me->status_op);
 }
 
 /* Writes this coordinator's record to the next half. Every write counts as
