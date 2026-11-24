@@ -834,6 +834,7 @@ static int goes_first(const struct jcursor *a, const struct jcursor *b)
  * never key material, schema bodies, or PII (master §5). */
 #define CDB_GOV_SUBOP_MASTER_KEY 1u
 #define CDB_GOV_SUBOP_BATON_ACQUIRE 1u
+#define CDB_GOV_SUBOP_REVISION 1u
 
 /* Emits a redacted governance audit event (KEY_OP / BATON, spec 12.7).
  *
@@ -2112,6 +2113,7 @@ static cdb_status tx_begin_locked(cdb_db *db, cdb_durability durability)
     db->tx_deltas = 0;
     db->tx_data = 0;
     db->tx_ndrops = 0;
+    db->tx_has_revision = 0; /* F2 (#54): reset per transaction */
     db->n_crdt_pend = 0;
     db->n_crdt_rec_pend = 0; /* #38: staged convergence records are per transaction */
     db->stage_used = 0;
@@ -2285,6 +2287,17 @@ static cdb_status tx_put_in(cdb_db *db, uint64_t store_id, uint64_t entry_id, ui
     if (s == CDB_OK) {
         db->tx_deltas++;
         db->tx_data++;
+        /* F2 (#54): mark the transaction as carrying a document/table revision so
+         * its commit emits exactly one CDB_AUDIT_REVISION governance event. The
+         * catalog lookup runs at most once per tx (gated on !tx_has_revision) and
+         * only for catalog-backed stores; a store with no catalog record, or a
+         * non-revision model (time-series, vector, link), does not mark it. */
+        if (!db->tx_has_revision && db->has_catalog) {
+            cdb_store_info rinfo;
+            if (cdb_catalog_get_store(&db->catalog, store_id, &rinfo) == CDB_OK
+                && (rinfo.model == CDB_MODEL_DOCUMENT || rinfo.model == CDB_MODEL_RELATIONAL))
+                db->tx_has_revision = 1;
+        }
         /* Capture a post-commit trigger event for a matching store mutation
          * (#35, spec 11.9: triggers run after commit). Only data mutations with
          * a matching registered trigger are captured; the ring is drained after
@@ -2976,6 +2989,17 @@ static cdb_status tx_commit_locked(cdb_db *db)
         db->failed = 1;
         return s;
     }
+    /* F2 (#54): a committed transaction that mutated a document/table store emits
+     * exactly one CDB_AUDIT_REVISION governance event, attributed to the active
+     * principal or to 0 when none is registered (db_governance_audit guard shape,
+     * mirroring KEY_OP/SCHEMA/BATON). Emit after the commit is applied and visible
+     * and the tx is closed, so the audit append (which continues the chain) cannot
+     * be discarded. Best-effort: a failed append never fails or undoes the
+     * already-committed revision. */
+    if (db->tx_has_revision) {
+        db->tx_has_revision = 0;
+        db_governance_audit(db, CDB_AUDIT_REVISION, 0, 0, CDB_GOV_SUBOP_REVISION);
+    }
     return CDB_OK;
 }
 
@@ -3566,6 +3590,7 @@ cdb_status cdb_db_reclaim(cdb_db *db, uint64_t *pages_freed, uint64_t *nibblets_
 static cdb_status db_reclaim_in(cdb_db *db, uint64_t *pages_freed, uint64_t *nibblets_freed)
 {
     uint64_t p_freed = 0, n_freed = 0;
+    int acquired;
     cdb_status s;
 
     if (pages_freed != NULL)
@@ -3578,6 +3603,11 @@ static cdb_status db_reclaim_in(cdb_db *db, uint64_t *pages_freed, uint64_t *nib
     if (!db->has_catalog)
         return CDB_OK;
 
+    /* F3/AC6 (#54): reconcile_hold acquires the baton when this process does not
+     * already hold it -- a genuine coordinator handoff. Detect the not-held ->
+     * held transition so the BATON audit event is recorded for the handoff only,
+     * not for a reclaim that ran under a standing baton. */
+    acquired = !cdb_coord_baton_held(&db->coord);
     if ((s = reconcile_hold(db, 0)) != CDB_OK)
         return s;
 
@@ -3587,7 +3617,11 @@ static cdb_status db_reclaim_in(cdb_db *db, uint64_t *pages_freed, uint64_t *nib
     if (nibblets_freed != NULL)
         *nibblets_freed = n_freed;
 
-    return finish_archive_op(db, s);
+    s = finish_archive_op(db, s);
+    /* Emit after the op has committed (mirrors cdb_db_reconcile); best-effort. */
+    if (s == CDB_OK && acquired)
+        db_governance_audit(db, CDB_AUDIT_BATON, 0, 0, CDB_GOV_SUBOP_BATON_ACQUIRE);
+    return s;
 }
 
 static cdb_status db_scrub_in(cdb_db *db, uint64_t budget, int *pass_done);
@@ -3695,15 +3729,22 @@ static cdb_status db_compact_in(cdb_db *db, uint64_t max_moves, uint64_t *moved,
 {
     cdb_status s;
     uint64_t dp = 0, dn = 0;
+    int acquired;
     if (usable(db) != CDB_OK || db->in_tx)
         return CDB_E_STATE;
+    /* F3/AC6 (#54): like reclaim, compaction acquires the baton via reconcile_hold
+     * when not already held; audit the genuine not-held -> held handoff. */
+    acquired = !cdb_coord_baton_held(&db->coord);
     if ((s = reconcile_hold(db, 0)) != CDB_OK)
         return s;
     if (db->has_catalog) {
         if ((s = reclaim_dropped_under_baton(db, &dp, &dn)) != CDB_OK)
             return finish_archive_op(db, s);
     }
-    return finish_archive_op(db, cdb_pager_compact(&db->pager, max_moves, moved, reclaimed));
+    s = finish_archive_op(db, cdb_pager_compact(&db->pager, max_moves, moved, reclaimed));
+    if (s == CDB_OK && acquired)
+        db_governance_audit(db, CDB_AUDIT_BATON, 0, 0, CDB_GOV_SUBOP_BATON_ACQUIRE);
+    return s;
 }
 
 static void db_wipe_crypto(cdb_db *db)

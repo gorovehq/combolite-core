@@ -3,6 +3,7 @@
 
 #include "cdb_audit.h"
 #include "cdb_catroot.h"
+#include "cdb_coord.h"
 #include "cdb_db.h"
 #include "cdb_endian.h"
 #include "cdb_index.h"
@@ -127,10 +128,12 @@ static cdb_status compute_audit_hash(const uint8_t key[16], uint16_t event_type,
  * from the committed index immediately before every append lets concurrent
  * coordinator slots continue the ONE chain rather than forking it: a slot that
  * sees another's reconciled events chains onto the latest, keeping the series
- * single and tamper-evident. (Residual: the append itself is not yet
- * baton-serialized, so a true simultaneous race between two writers that have
- * not reconciled could still interleave; the durable head + reload is the
- * floor the governance spec permits.) */
+ * single and tamper-evident. F4 (#54): the append (reload -> build -> put ->
+ * update-head) now runs under the coordinator baton in cdb_audit_log, so a true
+ * simultaneous race between two un-reconciled writers is serialized rather than
+ * interleaved; this reload is the floor, the baton is the single-writer lock
+ * above it. (Verify-on-read still binds to the reader's active key; a per-signer
+ * key registry remains a follow-up.) */
 static cdb_status audit_reload_head(cdb_db *db)
 {
     cdb_index ix;
@@ -180,8 +183,14 @@ static cdb_status audit_init(cdb_db *db)
     return CDB_OK;
 }
 
-cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id, uint64_t store_id,
-                         uint64_t entity_id, const void *payload, size_t payload_len)
+/* The serialized critical section of an append: reload the durable chain head,
+ * build/sign the event, put it into the audit index, and advance the in-memory
+ * head. F4 (#54): cdb_audit_log runs this under the coordinator baton
+ * (single-writer discipline) so two un-reconciled writers cannot interleave
+ * reload->put and fork the hash chain. The caller owns the take/release. */
+static cdb_status audit_append(cdb_db *db, uint16_t event_type, uint32_t principal_id,
+                               uint64_t store_id, uint64_t entity_id, const void *payload,
+                               size_t payload_len)
 {
     cdb_index ix;
     uint8_t k[16];
@@ -191,14 +200,6 @@ cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
     int64_t now_ts = 0;
     int have_clk = 0, have;
     cdb_status s;
-
-    if (db == NULL)
-        return CDB_E_INVALID_ARG;
-    if (payload_len > AUDIT_MAX_PAYLOAD)
-        return CDB_E_BUFFER_TOO_SMALL;
-
-    if ((s = audit_init(db)) != CDB_OK)
-        return s;
 
     /* FR5: continue the single chain across coordinator slots by reloading the
      * durable head immediately before appending (see audit_reload_head). */
@@ -259,6 +260,40 @@ cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id,
 
     memcpy(db->last_audit_hash, vbuf + AUDIT_OFF_HASH, 32);
     return CDB_OK;
+}
+
+cdb_status cdb_audit_log(cdb_db *db, uint16_t event_type, uint32_t principal_id, uint64_t store_id,
+                         uint64_t entity_id, const void *payload, size_t payload_len)
+{
+    int took_baton = 0, granted = 0;
+    cdb_status s;
+
+    if (db == NULL)
+        return CDB_E_INVALID_ARG;
+    if (payload_len > AUDIT_MAX_PAYLOAD)
+        return CDB_E_BUFFER_TOO_SMALL;
+
+    if ((s = audit_init(db)) != CDB_OK)
+        return s;
+
+    /* F4 (#54): serialize the reload-head -> build -> index_put -> update-head
+     * append under the coordinator baton so concurrent un-reconciled writers
+     * cannot interleave appends and fork/corrupt the hash chain. Take-if-not-held
+     * (a caller already holding a standing baton -- e.g. post-commit, reconcile --
+     * is already the single writer and is used as-is). If the baton is denied
+     * (another live coordinator holds it, or there is no joined coordinator), fall
+     * back to the reload-head floor: best-effort, never corrupt, verify-on-read
+     * stays fail-closed. We release only what we took. */
+    if (!cdb_coord_baton_held(&db->coord)) {
+        if (cdb_coord_baton_take(&db->coord, 0, &granted) == CDB_OK && granted)
+            took_baton = 1;
+    }
+
+    s = audit_append(db, event_type, principal_id, store_id, entity_id, payload, payload_len);
+
+    if (took_baton)
+        (void)cdb_coord_baton_release(&db->coord);
+    return s;
 }
 
 cdb_status cdb_audit_verify(cdb_db *db, int64_t from_ts, int64_t to_ts, int *valid)

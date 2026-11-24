@@ -40,3 +40,5 @@ Use the template below; number sequentially (`NNNN-kebab-title.md`). Status is o
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-no-heap-caller-owned-memory-model.md) | No heap in the core; caller-owned buffers | Accepted |
 | [0003](0003-decimal-downsample-avg-rounding.md) | Exact DECIMAL downsample aggregation and AVG rounding | Accepted |
+| [0004](0004-reconciled-write-set-ring.md) | Reconciled-write-set ring to narrow the commit collision gate | Accepted |
+| [0005](0005-audit-residual-emit-and-serialize.md) | Audit residuals — REVISION/BATON emit sites and single-writer chain serialization | Accepted |
