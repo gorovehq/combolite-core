@@ -150,3 +150,25 @@ the authoritative, current description lives in
 [`docs/dev/testing-and-coverage.md`](dev/testing-and-coverage.md). Contributions
 that extend a module's fault sweep (and turn any finding into a committed regression
 test) are welcome.
+
+## 6. Multiple processes write disjoint data — why do some commits still collide?
+
+Each process writes its own journal; a **baton holder** periodically reconciles
+every journal into the shared archive, which advances the archive's
+`committed_seq`. A commit whose base is behind the current `committed_seq` (a peer
+reconciled while its transaction was open) used to be rejected with
+`CDB_E_COLLISION` **unconditionally**, even when its write set did not overlap what
+was reconciled — because once reconciliation folds a peer's write set into the
+archive, that set leaves every journal and the normal collision scan can no longer
+see it, so rejecting was the only safe choice (spec 5.9.4).
+
+The **reconciled-write-set ring** (ADR-0004, spec 14.22) removes that coarseness
+safely: reconciliation records the keys it folds away, tagged with the
+`committed_seq` at which it did so, and a committer whose write set is **provably
+disjoint** from everything reconciled in the straddled range is allowed through.
+The guarantee is unchanged — a writer whose write set **was** reconciled away is
+still rejected, and so is any case the ring cannot *prove* disjoint (an evicted/
+overflowed, absent, old-format, or torn ring). A rejected commit is safe to retry;
+the engine never silently admits a conflicting write (#33). So you may still see an
+occasional collision under heavy reconcile churn — it is always a retryable false
+positive, never lost data.
