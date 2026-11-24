@@ -3,10 +3,12 @@
  */
 #include "cdb_exec.h"
 #include "cdb_doc.h"
+#include "cdb_endian.h"
 #include "cdb_fts.h"
 #include "cdb_link.h"
 #include "cdb_math.h"
 #include "cdb_table.h"
+#include "cdb_ts.h"
 #include "cdb_varint.h"
 #include "cdb_vec.h"
 
@@ -290,6 +292,49 @@ cdb_status cdb_exec_row_get_field(const cdb_exec_row *row, cdb_eval_ctx *eval_ct
 /* --------------------------------------------------------------------------
  * Operator 0x01: SCAN
  * -------------------------------------------------------------------------- */
+
+/* A cdb_ts_list continuation token holds one series key; this covers the
+ * time-series series-key limit (cdb_ts.c KEY_MAX). */
+#define SCAN_TS_CURSOR_CAP 512u
+
+/* A whole link serialized for a LINK-store scan row: type (8), source ref
+ * (store 8, entry 8, ts 8, flags 4 = 28), target ref (28), weight bits (4),
+ * time (8), flags (1), removal count (4) -- fixed, big-endian, no padding. */
+#define SCAN_LINK_REF_LEN 28u
+#define SCAN_LINK_REC_LEN (8u + 2u * SCAN_LINK_REF_LEN + 4u + 8u + 1u + 4u) /* 81 */
+
+static void scan_link_put_ref(uint8_t *p, const cdb_ref *r)
+{
+    cdb_store_u64(p, r->store, CDB_ORDER_BIG);
+    cdb_store_u64(p + 8, r->entry, CDB_ORDER_BIG);
+    cdb_store_u64(p + 16, (uint64_t)r->ts, CDB_ORDER_BIG);
+    cdb_store_u32(p + 24, r->flags, CDB_ORDER_BIG);
+}
+
+/* Serializes a live link into out (at least SCAN_LINK_REC_LEN bytes), the
+ * whole-link record a LINK scan row carries; returns the byte length. */
+static size_t scan_link_serialize(const cdb_link *l, uint8_t *out)
+{
+    uint32_t wbits;
+    cdb_store_u64(out, l->type, CDB_ORDER_BIG);
+    scan_link_put_ref(out + 8, &l->source);
+    scan_link_put_ref(out + 8 + SCAN_LINK_REF_LEN, &l->target);
+    memcpy(&wbits, &l->weight, sizeof wbits);
+    cdb_store_u32(out + 8 + 2u * SCAN_LINK_REF_LEN, wbits, CDB_ORDER_BIG);
+    cdb_store_u64(out + 12u + 2u * SCAN_LINK_REF_LEN, (uint64_t)l->time, CDB_ORDER_BIG);
+    out[20u + 2u * SCAN_LINK_REF_LEN] = l->flags;
+    cdb_store_u32(out + 21u + 2u * SCAN_LINK_REF_LEN, l->removed, CDB_ORDER_BIG);
+    return SCAN_LINK_REC_LEN;
+}
+
+/* Per-scan enumeration cursor state for the time-series and link models, kept
+ * off the operator struct (and so out of the query memory budget for the other
+ * models): allocated from the arena only for a live scan, like rec_buf. */
+typedef struct cdb_scan_model_cursor {
+    uint8_t ts_token[SCAN_TS_CURSOR_CAP]; /* cdb_ts_list continuation token */
+    cdb_link link_last;                   /* resume cdb_link_scan after this link */
+} cdb_scan_model_cursor;
+
 typedef struct cdb_exec_scan {
     cdb_exec_op base;
     const char *store_name;
@@ -303,6 +348,15 @@ typedef struct cdb_exec_scan {
     uint8_t *rec_buf;
     size_t rec_cap;
     cdb_table_cursor tcur; /* tables: entry order */
+
+    /* Per-model enumeration cursor (#52), allocated from the arena for a live
+     * scan (NULL otherwise). Holds the time-series continuation token and the
+     * last link returned; the lengths/flags that drive them stay inline. */
+    cdb_scan_model_cursor *mc;
+    size_t ts_cursor_len; /* cdb_ts_list token length (0: start / finished) */
+    int ts_done;          /* the per-series enumeration reached its end */
+    int link_started;     /* at least one live link has been returned */
+    int link_done;        /* the link enumeration reached its end */
 
     /* For mock/standalone testing without a live database */
     const cdb_exec_row *mock_rows;
@@ -319,6 +373,10 @@ static cdb_status scan_open(cdb_exec_op *op, cdb_exec_cursor *cur)
     s->cur_entry_id = 0;
     memset(&s->tcur, 0, sizeof s->tcur);
     s->mock_idx = 0;
+    s->ts_cursor_len = 0;
+    s->ts_done = 0;
+    s->link_started = 0;
+    s->link_done = 0;
 
     /* A store the catalog does not have is an error, not an empty result: a
      * misspelt name must not read as "no rows match" */
@@ -346,6 +404,10 @@ static cdb_status scan_reset(cdb_exec_op *op, cdb_exec_cursor *cur)
     s->cur_entry_id = 0;
     memset(&s->tcur, 0, sizeof s->tcur);
     s->mock_idx = 0;
+    s->ts_cursor_len = 0;
+    s->ts_done = 0;
+    s->link_started = 0;
+    s->link_done = 0;
     return CDB_OK;
 }
 
@@ -356,9 +418,10 @@ static void scan_close(cdb_exec_op *op, cdb_exec_cursor *cur)
 }
 
 /* Reads entry eid's committed record into rec_buf: a table row through its
- * current columns, or a document's current revision. A vector entry is only
- * checked for existence. Time series and the link store keep entry-ID rows.
- * CDB_E_NOT_FOUND: no such entry (deleted). */
+ * current columns, a document's current revision, or a vector entry's encoded
+ * $vector value (#52: materialized, no longer force-zeroed). Time series and
+ * the link store do not use this path -- their records come from the per-model
+ * live enumeration in scan_next. CDB_E_NOT_FOUND: no such entry (deleted). */
 static cdb_status scan_read(cdb_exec_scan *s, cdb_exec_cursor *cur, uint64_t eid, size_t *len)
 {
     uint64_t src_store, src_entry;
@@ -370,20 +433,19 @@ static cdb_status scan_read(cdb_exec_scan *s, cdb_exec_cursor *cur, uint64_t eid
     case CDB_MODEL_DOCUMENT:
         return cdb_doc_get(cur->db, s->store_id, eid, 0, s->rec_buf, s->rec_cap, len, NULL, 0, NULL,
                            NULL);
-    case CDB_MODEL_VECTOR: {
-        cdb_status st = cdb_vec_get(cur->db, s->store_id, eid, s->rec_buf, s->rec_cap, len,
-                                    &src_store, &src_entry);
-        if (st != CDB_E_BUFFER_TOO_SMALL)
-            *len = 0;
-        return st;
-    }
+    case CDB_MODEL_VECTOR:
+        /* The encoded $vector value flows to the row record (#52); src_store /
+         * src_entry are read but unused by the scan. On CDB_E_BUFFER_TOO_SMALL
+         * *len holds the needed size so scan_load can grow and re-read. */
+        return cdb_vec_get(cur->db, s->store_id, eid, s->rec_buf, s->rec_cap, len, &src_store,
+                           &src_entry);
     default: return CDB_OK;
     }
 }
 
 /* scan_read, growing the record buffer for a larger record on the host
- * profile (spec 17.3: up to the largest document body); a record past the
- * profile's buffer is CDB_E_OUT_OF_BUDGET */
+ * profile (spec 17.3: up to the largest document body, or a large $vector
+ * value); a record past the profile's buffer is CDB_E_OUT_OF_BUDGET */
 static cdb_status scan_load(cdb_exec_scan *s, cdb_exec_cursor *cur, uint64_t eid, size_t *len)
 {
     cdb_status st = scan_read(s, cur, eid, len);
@@ -397,16 +459,13 @@ static cdb_status scan_load(cdb_exec_scan *s, cdb_exec_cursor *cur, uint64_t eid
     s->rec_cap = *len;
     if (cur->blocks->next != NULL && (uint8_t *)cur->blocks->next + BLOCK_HEAD == old)
         exec_free_one(cur, &cur->blocks, old);
-    if ((st = scan_read(s, cur, eid, len)) == CDB_OK && s->model == CDB_MODEL_VECTOR)
-        *len = 0;
-    return st;
+    return scan_read(s, cur, eid, len);
 }
 
 static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row *out_row,
                             int *has_row)
 {
     cdb_exec_scan *s = (cdb_exec_scan *)op;
-    (void)cur;
 
     *has_row = 0;
 
@@ -417,14 +476,19 @@ static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
         return CDB_OK;
     }
 
-    /* Live store scan if db and catalog are available. Tables and document
-     * pools are walked in entry order over their committed live entries; the
-     * catalog's next_entry_id lags an open store, and IDs are claimed in
-     * blocks. Other models count entry IDs up to the catalog's bound. */
+    /* Live store scan if db and catalog are available. Every model walks its
+     * own committed live entries through the model's live enumeration -- never
+     * counting entry IDs up to the catalog's next_entry_id, which is claimed in
+     * blocks and lags an open store (#52): tables via cdb_table_scan, documents
+     * via cdb_doc_next_live, vectors via cdb_vec_next_live (then the $vector
+     * value via cdb_vec_get), time series per live series via cdb_ts_list (#41),
+     * and links per live link via cdb_link_scan (reusing the #40/#60 live
+     * filter). An enumeration error propagates and emits no row (fail closed). */
     if (cur->db != NULL && s->store_id != 0) {
         for (;;) {
-            uint64_t eid;
-            size_t len = 0;
+            uint64_t eid = 0;
+            const uint8_t *rec = NULL;
+            size_t rlen = 0;
             cdb_status st;
 
             if (s->model == CDB_MODEL_RELATIONAL) {
@@ -435,6 +499,12 @@ static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
                     return st;
                 if (n == 0)
                     break;
+                s->cur_entry_id = eid;
+                if ((st = scan_load(s, cur, eid, &rlen)) == CDB_E_NOT_FOUND)
+                    continue;
+                if (st != CDB_OK)
+                    return st;
+                rec = rlen > 0 ? s->rec_buf : NULL;
             } else if (s->model == CDB_MODEL_DOCUMENT) {
                 int done = 0;
                 if ((st = cdb_doc_next_live(cur->db, s->store_id, s->cur_entry_id, &eid, &done))
@@ -442,24 +512,75 @@ static cdb_status scan_next(cdb_exec_op *op, cdb_exec_cursor *cur, cdb_exec_row 
                     return st;
                 if (done)
                     break;
-            } else {
-                if (s->cur_entry_id + 1 >= s->max_entry_id)
+                s->cur_entry_id = eid;
+                if ((st = scan_load(s, cur, eid, &rlen)) == CDB_E_NOT_FOUND)
+                    continue;
+                if (st != CDB_OK)
+                    return st;
+                rec = rlen > 0 ? s->rec_buf : NULL;
+            } else if (s->model == CDB_MODEL_VECTOR) {
+                int done = 0;
+                if ((st = cdb_vec_next_live(cur->db, s->store_id, s->cur_entry_id, &eid, &done))
+                    != CDB_OK)
+                    return st;
+                if (done)
                     break;
-                eid = s->cur_entry_id + 1;
+                s->cur_entry_id = eid;
+                /* Materialize the $vector value (#52). A concurrent delete
+                 * between enumeration and read leaves the entry missing: skip. */
+                if ((st = scan_load(s, cur, eid, &rlen)) == CDB_E_NOT_FOUND)
+                    continue;
+                if (st != CDB_OK)
+                    return st;
+                rec = rlen > 0 ? s->rec_buf : NULL;
+            } else if (s->model == CDB_MODEL_TIME_SERIES) {
+                cdb_ts_entry ent;
+                size_t got = 0;
+                if (s->ts_done || s->mc == NULL)
+                    break;
+                if ((st = cdb_ts_list(cur->db, s->store_id, s->mc->ts_token, SCAN_TS_CURSOR_CAP,
+                                      &s->ts_cursor_len, &ent, 1, s->rec_buf, s->rec_cap, &got))
+                    != CDB_OK)
+                    return st;
+                if (got == 0) {
+                    s->ts_done = 1;
+                    break;
+                }
+                if (s->ts_cursor_len == 0)
+                    s->ts_done = 1; /* that series was the last */
+                eid = ent.series;
+                rlen = ent.len;
+                rec = ent.len > 0 ? s->rec_buf + ent.off : NULL;
+            } else if (s->model == CDB_MODEL_LINK) {
+                cdb_link one;
+                size_t got = 0;
+                if (s->link_done || s->mc == NULL)
+                    break;
+                if ((st = cdb_link_scan(cur->db, s->link_started ? &s->mc->link_last : NULL, &one,
+                                        1, &got))
+                    != CDB_OK)
+                    return st;
+                if (got == 0) {
+                    s->link_done = 1;
+                    break;
+                }
+                s->mc->link_last = one;
+                s->link_started = 1;
+                /* A link has no single entry ID; its identity is the record. */
+                eid = 0;
+                rlen = scan_link_serialize(&one, s->rec_buf);
+                rec = s->rec_buf;
+            } else {
+                break;
             }
-            s->cur_entry_id = eid;
-            st = scan_load(s, cur, eid, &len);
-            if (st == CDB_E_NOT_FOUND)
-                continue;
-            if (st != CDB_OK)
-                return st;
+
             memset(out_row, 0, sizeof(*out_row));
             out_row->store_id = s->store_id;
             out_row->entry_id = eid;
             out_row->model = s->model;
-            if (len > 0) {
-                out_row->record_data = s->rec_buf;
-                out_row->record_len = len;
+            if (rec != NULL && rlen > 0) {
+                out_row->record_data = rec;
+                out_row->record_len = rlen;
             }
             *has_row = 1;
             return CDB_OK;
@@ -2838,6 +2959,12 @@ static cdb_status build_exec_tree(cdb_exec_cursor *cur, const uint8_t **p, const
             op->rec_cap = CDB_EXEC_SCAN_RECORD_PAGES * cur->db->pager.page_size;
             op->rec_buf = (uint8_t *)cdb_exec_arena_alloc(&cur->arena, op->rec_cap, sizeof(void *));
             if (op->rec_buf == NULL)
+                return CDB_E_OUT_OF_BUDGET;
+            /* Time-series / link enumeration cursor (#52), kept off the budget
+             * of the other models by living here, not inline on the op. */
+            op->mc = (cdb_scan_model_cursor *)cdb_exec_arena_alloc(
+                &cur->arena, sizeof(cdb_scan_model_cursor), sizeof(void *));
+            if (op->mc == NULL)
                 return CDB_E_OUT_OF_BUDGET;
         }
         *out_op = &op->base;
