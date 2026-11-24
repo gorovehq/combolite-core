@@ -136,7 +136,7 @@ doc/table/vector ends. (→ #34, #40)
 | `cdb_ts.c:1013-1048` | retention config non-transactional (not journaled; rollback can't undo) | doc | remediate | med |
 | `cdb_ts.c:1427-1430` | collision replaced-value audit truncated to empty >512 B (spec 10.6) | UNDOC | remediate | low-med |
 | `cdb_ts.c:2027-2127` | downsample FIRST/LAST truncated 128 B; bucket encode no writer-overflow check | UNDOC | remediate | low |
-| `cdb_ts.c:752,838-855,1022` | `nfields==0` accepted (spec 10.1 ≥1); describe/getters incomplete; dormant audit-series guards | UNDOC | remediate/implement | low |
+| `cdb_ts.c:752,838-855,1022` | `nfields==0` accepted (spec 10.1 ≥1); describe/getters incomplete; ~~dormant audit-series guards~~ *(→ #63 Item 1: `ts_series_in` now emits `CDB_AUDIT_SCHEMA` unattributed/principal 0 on series create)* | UNDOC | remediate/implement | low |
 
 ### 6. Blobs / codec / overflow — *overflow + codec solid; blob not content-addressed as advertised*
 `cdb_blob/cdb_overflow/cdb_codec`. Overflow chain + nib-tail + LZMA2 (incl. F4 dict-bound fix)

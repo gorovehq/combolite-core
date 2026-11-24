@@ -245,22 +245,37 @@ static void test_audit_collision_logging(void)
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_ts_append(&db, store, series, &pin, 1));
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_tx_commit(&db));
 
-    /* Collision must have been written to the system audit series with the replaced value */
+    /* The audit series now holds two events: the SCHEMA emitted when the series
+     * was created (#63 Item 1) and the COLLISION written when the duplicate
+     * timestamp replaced the stored value. Locate the collision among them. */
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_audit_query(&db, INT64_MIN, INT64_MAX, payload_buf, sizeof payload_buf, events, 4, &count));
-    TEST_ASSERT_EQUAL_size_t(1, count);
-    TEST_ASSERT_EQUAL_UINT16(CDB_AUDIT_COLLISION, events[0].event_type);
-    TEST_ASSERT_EQUAL_UINT64(store, events[0].store_id);
-    TEST_ASSERT_EQUAL_UINT64(series, events[0].entity_id);
-    TEST_ASSERT_TRUE(events[0].payload_len > 0);
-
-    /* Decode replaced point from payload and verify value 42 was recorded */
+    TEST_ASSERT_EQUAL_size_t(2, count);
     {
-        cdb_value obj, v;
-        int found = 0;
-        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_value_read(events[0].payload, events[0].payload_len, db.pager.order, &obj));
-        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_value_object_get(&obj, db.pager.order, 1, &v, &found));
-        TEST_ASSERT_TRUE(found);
-        TEST_ASSERT_EQUAL_INT64(42, v.as.i64);
+        size_t ci, ncol = 0, nsch = 0, col = 0;
+        for (ci = 0; ci < count; ci++) {
+            if (events[ci].event_type == CDB_AUDIT_COLLISION) {
+                col = ci;
+                ncol++;
+            } else if (events[ci].event_type == CDB_AUDIT_SCHEMA && events[ci].store_id == store
+                       && events[ci].entity_id == series) {
+                nsch++;
+            }
+        }
+        TEST_ASSERT_EQUAL_size_t(1, ncol); /* exactly one collision */
+        TEST_ASSERT_EQUAL_size_t(1, nsch); /* exactly one series-create schema */
+        TEST_ASSERT_EQUAL_UINT64(store, events[col].store_id);
+        TEST_ASSERT_EQUAL_UINT64(series, events[col].entity_id);
+        TEST_ASSERT_TRUE(events[col].payload_len > 0);
+
+        /* Decode replaced point from payload and verify value 42 was recorded */
+        {
+            cdb_value obj, v;
+            int found = 0;
+            TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_value_read(events[col].payload, events[col].payload_len, db.pager.order, &obj));
+            TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_value_object_get(&obj, db.pager.order, 1, &v, &found));
+            TEST_ASSERT_TRUE(found);
+            TEST_ASSERT_EQUAL_INT64(42, v.as.i64);
+        }
     }
 }
 
