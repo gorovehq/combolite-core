@@ -80,6 +80,15 @@ The magic number is `89 43 44 42 0D 0A 1A 0A` (`\x89CDB\r\n\x1A\n`). The `\r\n` 
 | 4 | 4 | Size hint, in pages |
 | 8 | 8 | Anchor logical ID |
 
+Feature-flag index `0` marks an unused anchor slot. Assigned indices:
+
+| Index | Region |
+|---|---|
+| 0 | unused |
+| 1 | reconciled-write-set ring (14.22) |
+
+A reader that predates an assigned index finds it in no anchor slot it understands and ignores the region, so the structure is forward- and backward-compatible: an older binary, or an archive written before the region existed, simply takes the region's conservative fallback.
+
 ### 14.1.7 Capacity of epoch 1
 
 Epoch 1 provides:
@@ -1739,3 +1748,42 @@ Change kinds and bodies (references are store ID 8 · entry ID 8; paths are a 1-
 
 - **Sealed bodies.** The body is encrypted with the file's AEAD algorithm under the domain's replication subkey, derived from the domain key without a session salt (14.2.8), so every copy that holds the domain key can open it. The associated data is the change's header (the bytes before the body). The nonce is the first 12 bytes of HMAC-SHA-256, under the domain's replication nonce subkey, of the header and the plaintext body: it repeats only for an identical change, even between forks that share a copy number. The sealed body is the ciphertext followed by the 16-byte tag.
 - **Holding.** A copy without the domain key holds the change, sealed as received, in the domain's held log (14.4.10), in a held entry of the replication form (14.4.10 rule 9). Holding advances the version vector: the copy has the change and relays it, still sealed, in its own slices. It is merged when a key holder drains the log.
+
+## 14.22 Reconciled-write-set ring (#60 B1)
+
+The ring lets a committer whose base `committed_seq` is behind the archive's current one (a peer reconciled while its transaction was open, 5.9.4) prove its write set is **disjoint** from what was reconciled away, rather than being rejected unconditionally. It is an optional region, rooted by a reserved-region anchor (14.1.6) with feature index 1. An archive written before this feature, or read by a binary that predates it, has no such anchor and uses the conservative gate — the format is forward- and backward-compatible. All multi-byte fields are in the file's byte order (14.1.2).
+
+### 14.22.1 Region header (64 bytes)
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | Magic, ASCII `WSR1` |
+| 4 | 2 | Format version (1) |
+| 6 | 2 | Reserved, zero |
+| 8 | 4 | Capacity (entry slots) |
+| 12 | 4 | Live entry count (≤ capacity) |
+| 16 | 4 | Head index (oldest live entry) |
+| 20 | 4 | Reserved, zero |
+| 24 | 8 | `floor_seq` — highest evicted tag; a range at or below it is not covered |
+| 32 | 8 | `top_seq` — highest recorded reconcile tag (the frontier) |
+| 40 | 20 | Reserved, zero |
+| 60 | 4 | CRC-32C of bytes 0–59 |
+
+### 14.22.2 Entry (40 bytes)
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 | `seq` — the `committed_seq` at which this key was reconciled |
+| 8 | 8 | Store |
+| 16 | 8 | Entry (data key; 0 for a key-hash) |
+| 24 | 8 | Key tag (unique-index key hash; 0 for a data key) |
+| 32 | 1 | Kind — 0 data (store, entry), 1 key-hash (store, key tag) |
+| 33 | 3 | Reserved, zero |
+| 36 | 4 | CRC-32C of bytes 0–35 |
+
+### 14.22.3 Rules
+
+1. **Single-writer, append-only.** Only the reconciling baton holder writes the ring, within the same pager commit that raises `committed_seq` (5.9.2), so it is published durably after fsync and a committer never reads a ring inconsistent with the sequence it tags. Entries are appended in reconcile order, so their `seq` is non-decreasing.
+2. **Bounded.** The capacity is at most a fixed cap (`CDB_WSRING_MAX_ENTRIES`), and never exceeds what the region holds. When full, an append evicts oldest-first, raising `floor_seq` to the evicted entry's tag. A single reconcile batch larger than the cap raises `floor_seq` to its own `seq` (it is not fully retained).
+3. **Coverage.** The ring covers `(base, current]` iff it decodes cleanly, `current > base`, `floor_seq ≤ base`, and `top_seq ≥ current`.
+4. **Gate.** A committer allows a straddle only when the ring covers `(base, current]` and no retained entry tagged in that range matches any of its own write-set keys (same kind and identifying fields). Every other case — incomplete coverage, an absent/old/torn/corrupt region (any header or entry CRC mismatch), or any intersecting key — is the conservative `CDB_E_COLLISION`. The ring never admits a reconciled-away overlap (#33).
