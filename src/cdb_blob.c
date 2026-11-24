@@ -2,9 +2,12 @@
  *
  * Overflow chains of type 0x0007, content-addressed with SHA-256 or HMAC-SHA-256. */
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "combolite/cdb_blob.h"
+#include "combolite/cdb_env.h"
+#include "combolite/cdb_storage.h"
 #include "cdb_db.h"
 #include "cdb_endian.h"
 #include "cdb_index.h"
@@ -354,6 +357,154 @@ static cdb_status blob_len_within(uint64_t total_len, uint64_t size_max)
 cdb_status cdb_blob_len_within_for_test(uint64_t total_len, uint64_t size_max)
 {
     return blob_len_within(total_len, size_max);
+}
+
+/* ---------------------------------- external-file-backed blobs (#56 FR1) --- */
+
+/* Lowercase-hex encodes n bytes into out (needs 2n+1 bytes, terminated). */
+static void blob_hex_encode(const uint8_t *in, size_t n, char *out)
+{
+    static const char d[] = "0123456789abcdef";
+    size_t i;
+    for (i = 0; i < n; i++) {
+        out[2u * i] = d[in[i] >> 4];
+        out[2u * i + 1u] = d[in[i] & 0x0Fu];
+    }
+    out[2u * n] = '\0';
+}
+
+/* Builds the content-addressed external-file path for a content hash under the
+ * database working directory. CDB_E_INVALID_ARG if it would not fit. */
+static cdb_status blob_ext_path(const cdb_db *db, const uint8_t hash[CDB_CRYPTO_HASH_SIZE],
+                                char *path, size_t cap)
+{
+    char hex[2u * CDB_CRYPTO_HASH_SIZE + 1u];
+    int n;
+    blob_hex_encode(hash, CDB_CRYPTO_HASH_SIZE, hex);
+    n = snprintf(path, cap, "%s/blob.%s.ext", db->workdir, hex);
+    if (n < 0 || (size_t)n >= cap)
+        return CDB_E_INVALID_ARG;
+    return CDB_OK;
+}
+
+/* Hashes len bytes into out: HMAC-SHA-256 under enclave_key when set, else
+ * SHA-256. Keeps the external integrity oracle identical to the page-chain one
+ * (#39), so an enclave digest never aliases a public one. */
+static cdb_status blob_ext_hash(const void *data, size_t len, const uint8_t *enclave_key,
+                                uint8_t out[CDB_CRYPTO_HASH_SIZE])
+{
+    if (enclave_key != NULL)
+        return cdb_crypto_hmac_sha256(enclave_key, data, len, out);
+    return cdb_crypto_sha256(data, len, out);
+}
+
+cdb_status cdb_blob_store_external_db(cdb_db *db, uint64_t store_id, const void *data, size_t len,
+                                      const uint8_t *enclave_key, cdb_blob_ref *out_ref)
+{
+    cdb_status s;
+    uint8_t hash[CDB_CRYPTO_HASH_SIZE];
+    char path[CDB_DB_PATH_MAX];
+    cdb_storage st;
+    (void)store_id; /* external files are content-addressed, not page-owned */
+
+    if (db == NULL || out_ref == NULL || (len > 0 && data == NULL))
+        return CDB_E_INVALID_ARG;
+    if (db->env.ops == NULL || db->env.ops->open == NULL || db->env.ops->sync_dir == NULL)
+        return CDB_E_UNSUPPORTED;
+    if ((s = blob_ext_hash(data, len, enclave_key, hash)) != CDB_OK)
+        return s;
+    if ((s = blob_ext_path(db, hash, path, sizeof path)) != CDB_OK)
+        return s;
+
+    memset(out_ref, 0, sizeof *out_ref);
+    memcpy(out_ref->hash, hash, CDB_CRYPTO_HASH_SIZE);
+    out_ref->total_len = len;
+    out_ref->first_page = 0;
+    out_ref->page_count = 0;
+    out_ref->flags = 0x01u | (enclave_key != NULL ? 0x02u : 0u);
+
+    /* Atomic create-or-claim: an existing content-addressed file already holds
+     * exactly these bytes, so the store is a durable no-op (dedup). */
+    s = db->env.ops->open(db->env.ctx, path, CDB_ENV_CREATE | CDB_ENV_EXCL, &st);
+    if (s == CDB_E_EXISTS)
+        return CDB_OK;
+    if (s != CDB_OK)
+        return s;
+    s = (len > 0) ? cdb_storage_program(&st, 0, data, len) : CDB_OK;
+    if (s == CDB_OK)
+        s = cdb_storage_sync(&st);
+    cdb_storage_close(&st);
+    if (s != CDB_OK) {
+        if (db->env.ops->remove != NULL)
+            db->env.ops->remove(db->env.ctx, path); /* best-effort: drop a partial file */
+        return s;
+    }
+    return db->env.ops->sync_dir(db->env.ctx, db->workdir);
+}
+
+cdb_status cdb_blob_read_external_db(cdb_db *db, const cdb_blob_ref *ref, int verify_hash,
+                                     const uint8_t *enclave_key, void *dest, size_t cap,
+                                     size_t *out_len)
+{
+    cdb_status s;
+    char path[CDB_DB_PATH_MAX];
+    cdb_storage st;
+    uint64_t fsize = 0;
+    size_t len;
+    uint8_t hash[CDB_CRYPTO_HASH_SIZE];
+    int do_verify;
+
+    if (db == NULL || ref == NULL || out_len == NULL)
+        return CDB_E_INVALID_ARG;
+    if (cap > 0 && dest == NULL)
+        return CDB_E_INVALID_ARG;
+    if (!(ref->flags & 0x01u))
+        return CDB_E_INVALID_ARG; /* not an external-file blob */
+    if (db->env.ops == NULL || db->env.ops->open == NULL)
+        return CDB_E_UNSUPPORTED;
+    *out_len = 0;
+    do_verify = (verify_hash != CDB_BLOB_NO_VERIFY);
+    if ((s = blob_len_within(ref->total_len, SIZE_MAX)) != CDB_OK)
+        return s;
+    len = (size_t)ref->total_len;
+    if (len > cap)
+        return CDB_E_BUFFER_TOO_SMALL;
+    if ((s = blob_ext_path(db, ref->hash, path, sizeof path)) != CDB_OK)
+        return s;
+
+    s = db->env.ops->open(db->env.ctx, path, CDB_ENV_READONLY, &st);
+    if (s != CDB_OK)
+        return s; /* a missing file is reported CDB_E_NOT_FOUND by the env */
+
+    /* Fail closed on any size mismatch BEFORE reading: a truncated or grown
+     * external file is rejected whole, never partially returned (TB1). */
+    s = cdb_storage_size(&st, &fsize);
+    if (s == CDB_OK && fsize != ref->total_len)
+        s = CDB_E_CORRUPT;
+    if (s == CDB_OK && len > 0)
+        s = cdb_storage_read(&st, 0, dest, len);
+    cdb_storage_close(&st);
+    if (s != CDB_OK)
+        return s;
+
+    /* Verify-on-read (#39 reuse): the external bytes must hash to ref->hash.
+     * A same-size but altered or substituted file is rejected here. */
+    if (do_verify) {
+        if ((s = blob_ext_hash(dest, len, enclave_key, hash)) != CDB_OK)
+            return s;
+        if (memcmp(hash, ref->hash, CDB_CRYPTO_HASH_SIZE) != 0)
+            return CDB_E_CORRUPT;
+    }
+    *out_len = len;
+    return CDB_OK;
+}
+
+cdb_status cdb_blob_external_path_for_test(cdb_db *db, const cdb_blob_ref *ref, char *out,
+                                           size_t cap)
+{
+    if (db == NULL || ref == NULL || out == NULL)
+        return CDB_E_INVALID_ARG;
+    return blob_ext_path(db, ref->hash, out, cap);
 }
 
 cdb_status cdb_blob_free(cdb_pager *p, uint64_t store_id, const cdb_blob_ref *ref,

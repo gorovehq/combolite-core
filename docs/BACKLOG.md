@@ -4,6 +4,23 @@ Features and follow-ups that were agreed and deferred. Each one becomes a milest
 
 ## Features
 
+### Compression for journal and page bodies (deferred from #56 FR2)
+
+**What:** extend `cdb_codec` (LZMA2, spec 15.3) compression — currently wired for
+column chunks (`cdb_rowgroup.c`) and, as of #56, for **document bodies**
+(`cdb_doc.c`, opt-in via `cdb_db_config.doc_compress`) — to the remaining
+uncompressed write paths: **journal records** (`cdb_journal.c`) and **generic
+pages** (`cdb_pager.c` / `cdb_page.c`).
+
+**Status:** deferred. #56 FR2 landed doc-body compression only, scope-bounded by
+the audit. Journal and page compression are cross-cutting (they touch the crash
+recovery / page-cache hot paths and the on-disk journal framing) and are larger
+than a focused change; wiring them partially would leave an un-exercised
+compression path on the journal/page write path, which is exactly the shape #56
+set out to avoid. To be picked up as its own milestone with its own red→green
+tests (compress on write, transparent decompress on read, raw-fallback, and a
+bounded/decompression-bomb-guarded read), mirroring the doc-body wiring.
+
 ### Streaming API for large content
 
 **What:** write and read content a piece at a time, for example "open, append chunk, …, close", so a whole book or file is never held in memory at once.

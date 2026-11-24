@@ -272,3 +272,9 @@ cdb_add_test(test_db_query)
 cdb_add_test(test_cmbql_grammar_abuse)
 cdb_add_test(test_trigger_dispatch_edge)
 cdb_add_test(test_db_query_edge)
+
+# --- #56: blob-store extras (external attachments, doc-body compression,
+#          CMBQL blob create/read opcode) ---
+cdb_add_test(test_blob_external)
+cdb_add_test(test_doc_compress)
+cdb_add_test(test_proc_blob_opcode)

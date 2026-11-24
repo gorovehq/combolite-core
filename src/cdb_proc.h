@@ -19,6 +19,10 @@
 #define CDB_PROC_HEADER_SIZE 8u
 #define CDB_PROC_MAX_REGISTERS 64u
 #define CDB_PROC_MAX_CURSORS 4u
+/* Largest whole-blob a BLOB_READ opcode returns into a register (#56 FR3).
+ * A read whose total_len exceeds this fails closed (CDB_E_BUFFER_TOO_SMALL),
+ * bounding resource use from an untrusted bytecode program (TB3). */
+#define CDB_PROC_BLOB_READ_MAX 8192u
 
 /* Bytecode instruction opcodes */
 #define CDB_BC_NOP 0x00u
@@ -87,6 +91,10 @@ typedef struct cdb_proc_savepoint {
 #define CDB_MUT_RECONCILE 0x23u
 #define CDB_MUT_SET_PEER 0x24u
 #define CDB_MUT_SYNC_IMPORT 0x25u
+/* #56 FR3: content-addressed blob create (a write) and read (capped
+ * whole-blob into a register), wired to the real cdb_db_blob_* engine. */
+#define CDB_MUT_BLOB_CREATE 0x26u
+#define CDB_MUT_BLOB_READ 0x27u
 
 /* Virtual machine context */
 typedef struct cdb_proc_vm {
@@ -117,6 +125,11 @@ typedef struct cdb_proc_vm {
     /* Return value */
     cdb_value ret_val;
     int has_returned;
+
+    /* #56 FR3: whole-blob read result buffer. A BLOB_READ opcode gathers the
+     * blob here and returns a CDB_TYPE_BINARY value pointing into it; it stays
+     * valid for the life of the VM, like the cursor scratch above. */
+    uint8_t blob_read_buf[CDB_PROC_BLOB_READ_MAX];
 } cdb_proc_vm;
 
 /* Initializes the VM context */
