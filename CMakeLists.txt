@@ -109,6 +109,7 @@ add_library(combolite
   src/cdb_decimal_agg.c
   src/cdb_hostfile.c
   src/cdb_header.c
+  src/cdb_wsring.c
   src/cdb_page.c
   src/cdb_pager.c
   src/cdb_overflow.c

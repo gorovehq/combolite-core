@@ -11,6 +11,40 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ## [Unreleased]
 
+### Added
+
+- **Coordinator (#60 B1) — reconciled-write-set ring (`src/cdb_wsring.{h,c}`,
+  spec 14.22).** A bounded, append-only, format-versioned archive structure
+  recording each reconciled transaction's write-set keys — `(store, entry)` data
+  keys and unique-index key hashes — tagged with the `committed_seq` at which
+  reconciliation folded them in. It is the archive-side signal that lets
+  `coordinate_commit` narrow its blanket "`committed_seq` moved →
+  `CDB_E_COLLISION`" gate: a committer whose **disjoint** write set merely
+  *straddles* a peer reconcile can be allowed, while a writer whose write set was
+  **reconciled away** (and so is no longer in any journal for
+  `check_slot_collisions` to see) is still rejected — preserving
+  first-committer-wins / no-silent-loss (#33). Every path is **fail-closed**:
+  the gate admits only on a proven covered-and-disjoint decision; incomplete
+  coverage (oldest-first eviction raising `floor_seq`, or batch overflow), an
+  absent / old-format / torn / corrupt region (per-header and per-entry
+  CRC-32C), a key-kind mismatch, or any intersecting key → `CDB_E_COLLISION`.
+  Rooted by a reserved-region anchor (spec 14.1.6, feature index 1,
+  `CDB_REGION_FEATURE_WRITESET_RING`) and published durably by the same pager
+  commit that raises `committed_seq`; forward- and backward-compatible (a binary
+  or archive predating the feature takes the conservative gate). The intersection
+  + coverage logic is a pure function over a caller-provided byte region and is
+  held to a committed deterministic red→green oracle
+  (`tests/test_coord_writeset_ring_f60.c`): disjoint-allowed / overlap-rejected /
+  reconciled-overlap-rejected / incomplete-coverage-rejected /
+  torn-CRC-rejected / old-format-conservative, green under `core-cpu-debug`
+  (ASan + UBSan). See ADR-0004. The #33 open-path guard
+  (`test_multiwriter_open`) and the #42 bounded wait
+  (`test_coord_bounded_wait_f42`) are unchanged and green. **This increment adds
+  the ring module + format only; `coordinate_commit` and `merge_journals` are not
+  yet wired to it, so the blanket gate is still live and #60 B1 stays open until
+  the (verified, multi-process) live-path wiring lands — see ADR-0004 "Integration
+  status".**
+
 ### Security
 
 - **Query engine (DoS, CWE-674)** — bounded the recursive descents over
