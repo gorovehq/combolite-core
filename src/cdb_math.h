@@ -168,8 +168,10 @@ cdb_status cdb_math_mat_vec_mul(const float *m, size_t rows, size_t cols, const 
 cdb_status cdb_math_mat_mul(const float *a, size_t a_rows, size_t a_cols, const float *b,
                             size_t b_cols, float *out);
 cdb_status cdb_math_mat_transpose(const float *m, size_t rows, size_t cols, float *out);
-/* Determinant for dim 1-3 only; dim >= 4 returns CDB_E_UNSUPPORTED (no general
- * LU path yet -- documented capability cap, #40 FR5). */
+/* Determinant of a square matrix (#65). Dim 1-3 use direct formulae / Rule of
+ * Sarrus; dim 4-32 use LU with partial pivoting (zero-heap, bounded stack
+ * scratch). A singular matrix returns determinant 0.0 with CDB_OK. A dim of 0
+ * or above 32 (CDB_MATH_MAT_DET_MAX_DIM) returns CDB_E_UNSUPPORTED. */
 cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out);
 cdb_status cdb_math_mat_trace(const float *m, size_t dim, float *out);
 

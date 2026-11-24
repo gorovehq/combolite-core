@@ -13,6 +13,28 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Added
 
+- **General matrix determinant for dim ≥ 4 (#65) — audit follow-up, closing the
+  #40 FR5 `cdb_math_mat_det` cap (`src/cdb_math.c`, `tests/`).** `cdb_math_mat_det`
+  previously computed the determinant only for 1×1/2×2 (direct) and 3×3 (Rule of
+  Sarrus), returning `CDB_E_UNSUPPORTED` for any dimension ≥ 4. It now computes
+  the determinant for **dim 4 … `CDB_MATH_MAT_DET_MAX_DIM` (32)** via **LU
+  decomposition with partial pivoting** — determinant = permutation sign × the
+  product of the pivots, accumulated in `double` (matching `mat_mul`/`mat_vec_mul`).
+  A **singular** matrix (a zero/near-zero pivot column) yields a determinant of
+  exactly `0.0` with `CDB_OK` — a valid result, not an error. The elimination
+  runs **in place on a bounded stack copy** (`double[32*32]`, 8 KiB), so the op
+  stays **zero-heap**; the cap is checked **before any dim-derived sizing or
+  indexing**, so an over-large `dim` can neither overflow the size computation
+  (CWE-190) nor overrun the scratch (CWE-787) — above the cap (and `dim == 0`)
+  returns `CDB_E_UNSUPPORTED` (documented cap). The dim 1/2/3 fast paths and the
+  existing `float`/error-return conventions are unchanged. Held to a red→green
+  regression (`tests/test_math_mat_det_general.c`: known 4×4 = 8, known 5×5 =
+  −35, cleanly-singular ⇒ 0, 3×3 Sarrus continuity, above-cap ⇒ `CDB_E_UNSUPPORTED`,
+  null ⇒ `CDB_E_INVALID_ARG`); `tests/test_math_mat_det_cap_f40.c` updated so the
+  unsupported-boundary assertion moves from 4×4 to `MAX_DIM + 1`. **The remaining
+  #65 items stay deferred-with-note** (recovery-replay signed principal, atomic
+  table create, order-preserving keys, collation, document rollback-op, FTS
+  modes, overflow re-sign, vector tuning — see `docs/BACKLOG.md`).
 - **Time-series audit-completeness + retention-on-write (#63) — audit follow-up,
   deferred from #41 (`src/cdb_ts.c`, `tests/`).** Two focused time-series fixes,
   each at its real engine source site with a red→green regression test:

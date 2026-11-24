@@ -906,12 +906,23 @@ cdb_status cdb_math_mat_transpose(const float *m, size_t rows, size_t cols, floa
     return CDB_OK;
 }
 
-/* Determinant of a square matrix. #40 FR5 (documented capability cap, not a
- * defect): only dim 1, 2 and 3 are supported (direct formulae / Rule of
- * Sarrus). A dim of 4 or more returns CDB_E_UNSUPPORTED -- there is no general
- * LU/Gaussian-elimination path yet. Adding one is future work; callers must
- * handle CDB_E_UNSUPPORTED rather than assume every square matrix has a
- * determinant here. */
+/* Largest square dimension cdb_math_mat_det supports (#65, closing the #40 FR5
+ * mat_det cap). Caps the fixed in-place scratch so the routine stays zero-heap:
+ * CDB_MATH_MAT_DET_MAX_DIM^2 doubles live on the stack (32*32*8 = 8 KiB). A
+ * dim above the cap is rejected (CDB_E_UNSUPPORTED) before any dim-derived
+ * sizing or indexing, so an over-large dim can neither overflow the size
+ * computation (CWE-190) nor overrun the scratch (CWE-787). */
+#define CDB_MATH_MAT_DET_MAX_DIM 32
+
+/* Determinant of a square matrix (#65, closing the #40 FR5 cap). Dimensions 1,
+ * 2 and 3 use the direct formulae / Rule of Sarrus unchanged; 4 .. MAX_DIM use
+ * LU decomposition with partial pivoting (determinant = permutation sign times
+ * the product of the pivots), accumulated in double to match the other matrix
+ * ops. A singular matrix (a zero/near-zero pivot column) yields a determinant
+ * of exactly 0.0 with CDB_OK -- that is a valid result, not an error. A dim of
+ * 0 or a dim greater than CDB_MATH_MAT_DET_MAX_DIM returns CDB_E_UNSUPPORTED
+ * (documented cap); callers must still handle it. Zero-heap: the elimination
+ * runs in place on a bounded stack copy, so no allocation occurs. */
 cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out)
 {
     if (m == NULL || out == NULL)
@@ -940,7 +951,64 @@ cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out)
         return CDB_OK;
     }
 
-    return CDB_E_UNSUPPORTED;
+    /* Fail closed on the boundary BEFORE any dim-derived sizing/indexing: dim 0
+     * (no fast path above) and any dim past the cap are unsupported. */
+    if (dim < 4 || dim > CDB_MATH_MAT_DET_MAX_DIM)
+        return CDB_E_UNSUPPORTED;
+
+    {
+        /* General path: LU with partial pivoting on a bounded stack copy. */
+        double lu[CDB_MATH_MAT_DET_MAX_DIM * CDB_MATH_MAT_DET_MAX_DIM];
+        const double eps = 1e-12;
+        double det = 1.0;
+        size_t col, row, k;
+
+        for (row = 0; row < dim * dim; row++)
+            lu[row] = (double)m[row];
+
+        for (col = 0; col < dim; col++) {
+            /* Select the largest-magnitude pivot in this column (rows >= col). */
+            size_t pivot = col;
+            double maxmag = fabs(lu[col * dim + col]);
+            double pivval;
+
+            for (row = col + 1; row < dim; row++) {
+                double mag = fabs(lu[row * dim + col]);
+                if (mag > maxmag) {
+                    maxmag = mag;
+                    pivot = row;
+                }
+            }
+
+            /* A zero/near-zero pivot column means the matrix is singular. */
+            if (maxmag < eps) {
+                *out = 0.0f;
+                return CDB_OK;
+            }
+
+            if (pivot != col) {
+                for (k = 0; k < dim; k++) {
+                    double tmp = lu[col * dim + k];
+                    lu[col * dim + k] = lu[pivot * dim + k];
+                    lu[pivot * dim + k] = tmp;
+                }
+                det = -det; /* each row swap flips the permutation sign */
+            }
+
+            pivval = lu[col * dim + col];
+            det *= pivval;
+
+            /* Eliminate entries below the pivot. */
+            for (row = col + 1; row < dim; row++) {
+                double factor = lu[row * dim + col] / pivval;
+                for (k = col; k < dim; k++)
+                    lu[row * dim + k] -= factor * lu[col * dim + k];
+            }
+        }
+
+        *out = (float)det;
+        return CDB_OK;
+    }
 }
 
 cdb_status cdb_math_mat_trace(const float *m, size_t dim, float *out)
