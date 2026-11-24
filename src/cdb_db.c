@@ -3808,10 +3808,25 @@ cdb_status cdb_db_close(cdb_db *db)
     /* Closing never waits for the baton (spec 5.9.1): only the holder or a
      * process alone reconciles; any other leaves its journal pending. */
     pending = !alone && !cdb_coord_baton_held(&db->coord);
-    if (!pending && (s = reconcile_hold(db, 1)) != CDB_OK) {
-        cdb_coord_release_all(&db->coord);
-        db_unlock(db);
-        return s;
+    if (!pending) {
+        s = reconcile_hold(db, 1);
+        /* #60 B2: a closer that held the baton under live peers can have it
+         * fenced mid-close (CDB_E_BUSY) when a peer took over — in the lock-free
+         * fallback a peer may override a holder judged dead (spec 5.9.6/5.9.8).
+         * on_baton_err has already released the baton and rebased, so nothing is
+         * half-written. Failing the close here would leak this coordinator's
+         * slot and report a false "close busy". Instead fall through to the
+         * pending path: leave the journal pending (spec 5.9.1) for the new baton
+         * holder to merge and always release the slot. No safety is lost — the
+         * journal stays, so no committed transaction is dropped (FR5). */
+        if (s == CDB_E_BUSY && !alone && !cdb_coord_baton_held(&db->coord)
+            && db->coord.live_others > 0) {
+            pending = 1;
+        } else if (s != CDB_OK) {
+            cdb_coord_release_all(&db->coord);
+            db_unlock(db);
+            return s;
+        }
     }
 
     db_unlock(db);
