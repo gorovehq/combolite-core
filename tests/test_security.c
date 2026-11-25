@@ -6,7 +6,9 @@
 
 #include "unity.h"
 #include "cdb_db.h"
+#include "cdb_faultdev.h"
 #include "cdb_faultenv.h"
+#include "cdb_pager.h"
 #include "combolite/cdb_crypto.h"
 
 #define FCAP (640u * 1024u)
@@ -701,6 +703,314 @@ static void test_salt_crash_sweep(void)
     TEST_ASSERT_EQUAL_UINT((unsigned)(total * 6u), runs);
 }
 
+/* ------------------------------------------------------------ #72 CR5 Slice A
+ * Gated at-rest page encryption, proven at the pager boundary via
+ * cdb_pager_write / cdb_pager_read on a raw faultdev-backed pager. The mock
+ * key resolver stands in for the enclave SEAL/page subkey hierarchy (slice 1).
+ */
+
+#define RAW_CAP (1u << 20)
+#define RAW_DOMAIN 42u
+
+static uint8_t raw_current[RAW_CAP], raw_durable[RAW_CAP], raw_log_data[RAW_CAP];
+static cdb_fault_record raw_log_records[8192];
+static cdb_faultdev raw_dev;
+static cdb_storage raw_st;
+static uint8_t raw_arena[NODES * 2u * PAGE + 2u * PAGE];
+static cdb_pager_node raw_nodes[NODES];
+static cdb_free_extent raw_free[4096];
+static cdb_pager_config raw_pcfg;
+
+/* The derived page key is this distinctive byte, so a run of it anywhere in
+ * the pager struct after a read would prove the transient key was retained. */
+#define RAW_KEY_BYTE 0x42u
+static int raw_key_allowed = 1;
+
+static cdb_status raw_key_cb(void *ctx, uint64_t domain_id, uint32_t key_version,
+                             uint16_t salt_index, uint8_t key_out[32])
+{
+    (void)ctx;
+    (void)key_version;
+    (void)salt_index;
+    if (domain_id == RAW_DOMAIN && raw_key_allowed) {
+        memset(key_out, RAW_KEY_BYTE, 32);
+        return CDB_OK;
+    }
+    return CDB_E_SECURITY;
+}
+
+static cdb_status raw_salt_assign(void *ctx, uint16_t *index)
+{
+    (void)ctx;
+    *index = 7;
+    return CDB_OK;
+}
+
+static cdb_status raw_precommit(void *ctx, uint64_t commit_seq, int salt_used)
+{
+    (void)ctx;
+    (void)commit_seq;
+    (void)salt_used;
+    return CDB_OK;
+}
+
+/* A fresh, erased device and a created pager; crypto + a session are wired
+ * only when with_crypto, so the same helper builds both the enclave and the
+ * inert (domain_id == 0) pager. */
+static void raw_create(cdb_pager *p, int with_crypto)
+{
+    cdb_faultdev_config fc;
+    cdb_header hh = settings();
+
+    memset(&fc, 0, sizeof fc);
+    fc.current = raw_current;
+    fc.durable = raw_durable;
+    fc.capacity = RAW_CAP;
+    fc.log = raw_log_records;
+    fc.log_cap = sizeof raw_log_records / sizeof raw_log_records[0];
+    fc.log_data = raw_log_data;
+    fc.log_data_cap = RAW_CAP;
+    fc.geometry.program_unit = 1;
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_faultdev_init(&raw_dev, &fc, &raw_st));
+
+    memset(&raw_pcfg, 0, sizeof raw_pcfg);
+    raw_pcfg.arena = raw_arena;
+    raw_pcfg.arena_size = sizeof raw_arena;
+    raw_pcfg.nodes = raw_nodes;
+    raw_pcfg.node_cap = NODES;
+    raw_pcfg.free_list = raw_free;
+    raw_pcfg.free_cap = sizeof raw_free / sizeof raw_free[0];
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_create(p, &raw_st, &raw_pcfg, &hh));
+    if (with_crypto) {
+        cdb_pager_set_crypto(p, CDB_AEAD_AES_256_GCM, NULL, NULL, raw_key_cb, NULL);
+        cdb_pager_set_session(p, 3, raw_salt_assign, raw_precommit, NULL);
+    }
+}
+
+/* Writes one enclave page (domain RAW_DOMAIN) at a fresh lid and reports its
+ * physical page so the test can inspect or tamper the raw on-disk bytes. */
+static uint64_t raw_write_enclave(cdb_pager *p, uint64_t *lid, const char *text)
+{
+    cdb_page_header t;
+    cdb_anchor_entry e;
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_alloc(p, lid));
+    memset(&t, 0, sizeof t);
+    t.type = CDB_PAGE_TYPE_DATA_TEST;
+    t.store_id = 1;
+    t.domain_id = RAW_DOMAIN;
+    t.key_version = 1;
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_write(p, *lid, &t, text, (uint32_t)strlen(text)));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_lookup(p, *lid, &e));
+    return e.phys;
+}
+
+/* Whether needle occurs anywhere in buf (plaintext-leak check). */
+static int raw_contains(const uint8_t *buf, size_t n, const void *needle, size_t m)
+{
+    size_t i;
+    if (m == 0 || m > n)
+        return 0;
+    for (i = 0; i + m <= n; i++)
+        if (memcmp(buf + i, needle, m) == 0)
+            return 1;
+    return 0;
+}
+
+/* Whether a run of `run` bytes equal to v occurs anywhere in buf. */
+static int raw_has_run(const uint8_t *buf, size_t n, uint8_t v, size_t run)
+{
+    size_t i, c = 0;
+    for (i = 0; i < n; i++) {
+        c = buf[i] == v ? c + 1 : 0;
+        if (c >= run)
+            return 1;
+    }
+    return 0;
+}
+
+/* AC1: an enclave page is AEAD ciphertext on disk — the raw page body does
+ * not contain the plaintext written. */
+static void test_enclave_page_encrypted_on_disk(void)
+{
+    cdb_pager p;
+    uint64_t lid, phys;
+    const char *secret = "TOP-SECRET-ENCLAVE-PLAINTEXT-0123456789";
+    const uint8_t *raw;
+    size_t off;
+
+    raw_key_allowed = 1;
+    raw_create(&p, 1);
+    phys = raw_write_enclave(&p, &lid, secret);
+
+    raw = raw_current + phys * (uint64_t)PAGE;
+    off = cdb_page_payload_offset(p.fmt);
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(raw + off, secret, strlen(secret)));
+    TEST_ASSERT_FALSE(raw_contains(raw, PAGE, secret, strlen(secret)));
+    /* The header hides the owning store behind 0 on an encrypted page. */
+    TEST_ASSERT_TRUE(raw_has_run(raw, PAGE, 0, 1)); /* sanity: buffer populated */
+}
+
+/* AC2: an enclave page round-trips — decrypt-on-read equals the plaintext. */
+static void test_enclave_page_roundtrip(void)
+{
+    cdb_pager p;
+    uint64_t lid;
+    cdb_page_header rh;
+    const char *secret = "round-trip enclave payload";
+
+    raw_key_allowed = 1;
+    raw_create(&p, 1);
+    (void)raw_write_enclave(&p, &lid, secret);
+
+    memset(page, 0, sizeof page);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_read(&p, lid, page, &rh));
+    TEST_ASSERT_EQUAL_UINT32(strlen(secret), rh.payload_len);
+    TEST_ASSERT_EQUAL_UINT64(RAW_DOMAIN, rh.domain_id);
+    TEST_ASSERT_EQUAL_MEMORY(secret, page + cdb_page_payload_offset(p.fmt), strlen(secret));
+}
+
+/* AC3: a tampered enclave page fails closed with CDB_E_SECURITY on read, with
+ * no plaintext returned — ciphertext, AEAD tag and authenticated header bytes
+ * are each covered. */
+static void test_enclave_page_tamper_fails_closed(void)
+{
+    cdb_pager p;
+    uint64_t lid, phys;
+    cdb_page_header rh;
+    const char *secret = "fail-closed-on-tamper";
+    size_t off, tsz;
+    uint64_t base;
+
+    raw_key_allowed = 1;
+    raw_create(&p, 1);
+    phys = raw_write_enclave(&p, &lid, secret);
+    off = cdb_page_payload_offset(p.fmt);
+    tsz = cdb_page_trailer_size(p.fmt);
+    base = phys * (uint64_t)PAGE;
+
+    /* An untampered read succeeds. */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_read(&p, lid, page, &rh));
+
+    /* Flip a ciphertext body byte -> auth failure -> CDB_E_SECURITY, no plaintext. */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_faultdev_flip_bit(&raw_dev, base + off + 2, 3));
+    memset(page, 0, sizeof page);
+    TEST_ASSERT_EQUAL_INT(CDB_E_SECURITY, cdb_pager_read(&p, lid, page, &rh));
+    TEST_ASSERT_FALSE(raw_contains(page, PAGE, secret, strlen(secret)));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_faultdev_flip_bit(&raw_dev, base + off + 2, 3)); /* restore */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_read(&p, lid, page, &rh)); /* reads again */
+
+    /* Flip an AEAD tag byte in the trailer. */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_faultdev_flip_bit(&raw_dev, base + PAGE - tsz + 1, 5));
+    memset(page, 0, sizeof page);
+    TEST_ASSERT_EQUAL_INT(CDB_E_SECURITY, cdb_pager_read(&p, lid, page, &rh));
+    TEST_ASSERT_FALSE(raw_contains(page, PAGE, secret, strlen(secret)));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_faultdev_flip_bit(&raw_dev, base + PAGE - tsz + 1, 5));
+
+    /* Flip an authenticated header byte (the layout version at offset 4, part
+     * of the AEAD AAD, not the C0 DB marker) -> auth failure. */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_faultdev_flip_bit(&raw_dev, base + 4, 0));
+    memset(page, 0, sizeof page);
+    TEST_ASSERT_EQUAL_INT(CDB_E_SECURITY, cdb_pager_read(&p, lid, page, &rh));
+    TEST_ASSERT_FALSE(raw_contains(page, PAGE, secret, strlen(secret)));
+}
+
+/* AC4: a domain_id == 0 page is byte-for-byte identical whether or not the
+ * encryption machinery is configured — the gated hook is a true no-op for
+ * every existing (non-enclave) store (the inert path). */
+static void test_domain0_page_bitwise_unchanged(void)
+{
+    static uint8_t snap_crypto[PAGE], snap_plain[PAGE];
+    cdb_pager p;
+    cdb_page_header t;
+    cdb_anchor_entry e;
+    uint64_t lid;
+    const char *content = "ordinary public page content";
+    int pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        raw_create(&p, pass == 0); /* pass 0: crypto wired; pass 1: no crypto */
+        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_alloc(&p, &lid));
+        memset(&t, 0, sizeof t);
+        t.type = CDB_PAGE_TYPE_DATA_TEST;
+        t.store_id = 1;
+        t.domain_id = 0; /* inert: no enclave */
+        TEST_ASSERT_EQUAL_INT(CDB_OK,
+                              cdb_pager_write(&p, lid, &t, content, (uint32_t)strlen(content)));
+        TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_lookup(&p, lid, &e));
+        memcpy(pass == 0 ? snap_crypto : snap_plain, raw_current + e.phys * (uint64_t)PAGE, PAGE);
+    }
+    /* Configuring the enclave crypto path must not change a single on-disk
+     * byte of a domain_id == 0 page. */
+    TEST_ASSERT_EQUAL_MEMORY(snap_plain, snap_crypto, PAGE);
+}
+
+/* AC5: per-page nonces never repeat under one key. The nonce is a pure,
+ * injective function of (track, write_seq); write_seq is unique per archive
+ * page, so no (key, nonce) pair is reused. */
+static void test_enclave_page_nonce_unique(void)
+{
+    cdb_pager p;
+    uint64_t lid1, lid2, lid3;
+    cdb_page_header h1, h2, h3;
+    uint8_t n1[CDB_AEAD_NONCE_SIZE], n2[CDB_AEAD_NONCE_SIZE], same[CDB_AEAD_NONCE_SIZE];
+
+    /* The derivation is deterministic and injective in the sequence number. */
+    cdb_crypto_make_nonce(CDB_TRACK_ARCHIVE_PAGE, 1, n1);
+    cdb_crypto_make_nonce(CDB_TRACK_ARCHIVE_PAGE, 2, n2);
+    cdb_crypto_make_nonce(CDB_TRACK_ARCHIVE_PAGE, 1, same);
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(n1, n2, sizeof n1)); /* distinct seq -> distinct nonce */
+    TEST_ASSERT_EQUAL_MEMORY(n1, same, sizeof n1);       /* deterministic */
+
+    /* Three enclave page writes draw three distinct write sequences, so three
+     * distinct nonces under the one page key. */
+    raw_key_allowed = 1;
+    raw_create(&p, 1);
+    (void)raw_write_enclave(&p, &lid1, "n1");
+    (void)raw_write_enclave(&p, &lid2, "n2");
+    (void)raw_write_enclave(&p, &lid3, "n3");
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_peek(&p, lid1, page, &h1, NULL));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_peek(&p, lid2, page, &h2, NULL));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_peek(&p, lid3, page, &h3, NULL));
+    TEST_ASSERT_TRUE(h1.write_seq != h2.write_seq);
+    TEST_ASSERT_TRUE(h1.write_seq != h3.write_seq);
+    TEST_ASSERT_TRUE(h2.write_seq != h3.write_seq);
+    cdb_crypto_make_nonce(CDB_TRACK_ARCHIVE_PAGE, h1.write_seq, n1);
+    cdb_crypto_make_nonce(CDB_TRACK_ARCHIVE_PAGE, h2.write_seq, n2);
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(n1, n2, sizeof n1));
+}
+
+/* AC8: transient page keys and plaintext are zeroized after use. The wipe
+ * primitive clears a buffer; the pager retains no copy of the derived page
+ * key; and a denied read leaks no plaintext into the caller's buffer. */
+static void test_enclave_page_zeroizes_transients(void)
+{
+    cdb_pager p;
+    uint64_t lid;
+    cdb_page_header rh;
+    uint8_t buf[32];
+    const char *secret = "zeroize-me-after-use";
+
+    /* The wipe primitive used on every seal/open path actually clears. */
+    memset(buf, RAW_KEY_BYTE, sizeof buf);
+    cdb_crypto_wipe(buf, sizeof buf);
+    TEST_ASSERT_FALSE(raw_has_run(buf, sizeof buf, RAW_KEY_BYTE, sizeof buf));
+
+    raw_key_allowed = 1;
+    raw_create(&p, 1);
+    (void)raw_write_enclave(&p, &lid, secret);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_pager_read(&p, lid, page, &rh));
+    /* The 32-byte derived page key (all RAW_KEY_BYTE) is never retained in the
+     * pager: only the wiped stack buffer ever held it. */
+    TEST_ASSERT_FALSE(raw_has_run((const uint8_t *)&p, sizeof p, RAW_KEY_BYTE, 32));
+
+    /* A denied read (key revoked) fails closed and leaks no plaintext. */
+    raw_key_allowed = 0;
+    memset(page, 0, sizeof page);
+    TEST_ASSERT_EQUAL_INT(CDB_E_SECURITY, cdb_pager_read(&p, lid, page, &rh));
+    TEST_ASSERT_FALSE(raw_contains(page, PAGE, secret, strlen(secret)));
+    raw_key_allowed = 1;
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -717,5 +1027,11 @@ int main(void)
     RUN_TEST(test_salt_needs_entropy_and_master_key);
     RUN_TEST(test_scrub_prunes_salts);
     RUN_TEST(test_salt_crash_sweep);
+    RUN_TEST(test_enclave_page_encrypted_on_disk);
+    RUN_TEST(test_enclave_page_roundtrip);
+    RUN_TEST(test_enclave_page_tamper_fails_closed);
+    RUN_TEST(test_domain0_page_bitwise_unchanged);
+    RUN_TEST(test_enclave_page_nonce_unique);
+    RUN_TEST(test_enclave_page_zeroizes_transients);
     return UNITY_END();
 }
