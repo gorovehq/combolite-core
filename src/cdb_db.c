@@ -737,6 +737,10 @@ static cdb_status apply_range(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64
             d.data = r.payload + 1;
             d.len = r.payload_len - 1u;
             d.commit_number = commit_number;
+            /* #65: thread the stored writer's principal through to the apply so
+             * replay keeps the original attribution (apply_change). */
+            d.principal = r.principal;
+            d.has_principal = (r.flags & CDB_RECORD_FLAG_PRINCIPAL) != 0;
             if ((s = db->cfg.apply(db->cfg.apply_ctx, &db->pager, &d)) != CDB_OK)
                 return s;
         }
@@ -1566,6 +1570,10 @@ static cdb_status rebase_pages(cdb_db *db)
                         d.data = r.payload + 1;
                         d.len = r.payload_len - 1u;
                         d.commit_number = 0; /* assigned at reconciliation (spec 5.9.2) */
+                        /* #65: carry the stored writer's principal through the
+                         * reconciliation apply as well (apply_change). */
+                        d.principal = r.principal;
+                        d.has_principal = (r.flags & CDB_RECORD_FLAG_PRINCIPAL) != 0;
                         if ((s = db->cfg.apply(db->cfg.apply_ctx, &db->pager, &d)) != CDB_OK) {
                             db->failed = 1;
                             break;
@@ -2248,6 +2256,11 @@ static cdb_status tx_put_in(cdb_db *db, uint64_t store_id, uint64_t entry_id, ui
     uint8_t *payload = db->cfg.record_buf + CDB_RECORD_HEADER_SIZE;
     cdb_record r;
     const uint8_t *enc_key = NULL;
+    /* #65: an attributed write reserves 8 body bytes for the stored principal. */
+    size_t princ = db->has_identity ? sizeof(uint64_t) : 0u;
+    /* The op byte plus the largest data the record (header + trailer + optional
+     * principal suffix) leaves room for in record_buf. */
+    size_t avail = db->cfg.record_buf_size - CDB_RECORD_HEADER_SIZE - CDB_RECORD_TRAILER_SIZE - 1u;
     cdb_status s;
 
     if (usable(db) != CDB_OK || !db->in_tx)
@@ -2255,9 +2268,9 @@ static cdb_status tx_put_in(cdb_db *db, uint64_t store_id, uint64_t entry_id, ui
     if (db->rotation_interval_days > 0 && db->rotation_expired
         && db->rotation_policy == CDB_ROTATION_REFUSE_WRITES)
         return CDB_E_SECURITY;
-    /* The whole record (header, op byte, data, trailer) must fit record_buf. */
-    if (len > db->cfg.record_buf_size - CDB_RECORD_HEADER_SIZE - CDB_RECORD_TRAILER_SIZE - 1u
-        || (data == NULL && len != 0))
+    /* The whole record (header, op byte, data, principal suffix, trailer) must
+     * fit record_buf. */
+    if (len > avail - princ || (data == NULL && len != 0))
         return CDB_E_INVALID_ARG;
     payload[0] = op;
     if (len)
@@ -2271,6 +2284,14 @@ static cdb_status tx_put_in(cdb_db *db, uint64_t store_id, uint64_t entry_id, ui
     r.payload_len = (uint32_t)(len + 1u);
     if (db->in_crdt_import)
         r.flags |= (uint8_t)CDB_RECORD_FLAG_REPLICATED;
+    /* #65: capture the writer's principal in the record so recovery replay
+     * attributes the revision to the original writer, not the recovering
+     * session. Only when an identity is active; without one the flag stays
+     * clear and replay falls back to today's behavior (apply_change). */
+    if (db->has_identity) {
+        r.principal = db->active_identity.principal_id;
+        r.flags |= CDB_RECORD_FLAG_PRINCIPAL;
+    }
 
     r.domain_id = store_domain(db, store_id);
     if (r.domain_id != 0 && (enc_key = domain_page_key(db, r.domain_id, &r.key_version)) == NULL)

@@ -136,6 +136,10 @@ cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf
                                      unsigned aead_alg, const uint8_t *key)
 {
     int hide = (r->flags & CDB_RECORD_FLAG_ENCRYPTED) != 0;
+    /* #65: an attributed record appends the writer's principal as an 8-byte
+     * body suffix, so the fixed body overhead grows by sizeof(uint64_t). */
+    int has_principal = (r->flags & CDB_RECORD_FLAG_PRINCIPAL) != 0;
+    size_t princ = has_principal ? sizeof(uint64_t) : 0u;
     size_t ids = hide ? cdb_varint_size(r->store_id) + cdb_varint_size(r->entry_id) : 0u;
     uint32_t body_len;
     size_t size;
@@ -143,9 +147,9 @@ cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf
     uint8_t *trailer;
     cdb_status s;
 
-    if (r->payload_len > UINT32_MAX - ids)
+    if (r->payload_len > UINT32_MAX - ids - princ)
         return CDB_E_OVERFLOW;
-    body_len = (uint32_t)(r->payload_len + ids);
+    body_len = (uint32_t)(r->payload_len + ids + princ);
     /* #23/F6: overflow-checked sizing before the buffer bound (CWE-190). */
     s = cdb_journal_record_size(body_len, &size);
     if (s != CDB_OK)
@@ -173,6 +177,10 @@ cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf
         size_t n = cdb_varint_encode(r->store_id, p + CDB_RECORD_HEADER_SIZE);
         cdb_varint_encode(r->entry_id, p + CDB_RECORD_HEADER_SIZE + n);
     }
+    /* #65: the writer's principal as the body's 8-byte tail, after the payload
+     * and any hidden-target varints; covered by the trailer CRC / AEAD tag. */
+    if (has_principal)
+        cdb_store_u64(p + CDB_RECORD_HEADER_SIZE + ids + r->payload_len, r->principal, j->order);
 
     trailer = p + size - CDB_RECORD_TRAILER_SIZE;
 
@@ -251,6 +259,9 @@ cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf
     if (r->flags & CDB_RECORD_FLAG_ENCRYPTED) {
         uint8_t nonce[CDB_AEAD_NONCE_SIZE];
         uint32_t track_id = ((uint32_t)j->hdr.slot << 16) | (uint32_t)j->hdr.type_id;
+        /* #65: the op+model payload after the hidden-target varints and before
+         * the optional 8-byte principal suffix. */
+        uint32_t body = payload_len;
         if (key == NULL || aead_alg == CDB_AEAD_NONE)
             return CDB_E_SECURITY;
         cdb_crypto_make_nonce(track_id, r->seq, nonce);
@@ -259,19 +270,27 @@ cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf
                                     buf + CDB_RECORD_HEADER_SIZE);
         if (s != CDB_OK)
             return CDB_E_CORRUPT;
+        /* #65: strip the principal suffix (length-checked) before decoding the
+         * front varints, fail-closed on a FLAG_PRINCIPAL body too short to hold it. */
+        if (r->flags & CDB_RECORD_FLAG_PRINCIPAL) {
+            if (body < sizeof(uint64_t))
+                return CDB_E_CORRUPT;
+            body -= (uint32_t)sizeof(uint64_t);
+            r->principal = cdb_load_u64(r->payload + body, j->order);
+        }
         /* The hidden target: two shortest-form varints (spec 14.4.2). */
         {
             uint64_t store, entry;
             size_t n1, n2;
-            if (cdb_varint_decode(r->payload, payload_len, &store, &n1) != CDB_OK
-                || cdb_varint_decode(r->payload + n1, payload_len - n1, &entry, &n2) != CDB_OK
+            if (cdb_varint_decode(r->payload, body, &store, &n1) != CDB_OK
+                || cdb_varint_decode(r->payload + n1, body - n1, &entry, &n2) != CDB_OK
                 || r->entry_id != 0 || r->store_id == 0)
                 return CDB_E_CORRUPT;
             r->domain_id = r->store_id;
             r->store_id = store;
             r->entry_id = entry;
             r->payload += n1 + n2;
-            r->payload_len = payload_len - (uint32_t)(n1 + n2);
+            r->payload_len = body - (uint32_t)(n1 + n2);
         }
     } else {
         size_t i;
@@ -281,6 +300,14 @@ cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf
         for (i = size - CDB_RECORD_TRAILER_SIZE + 4; i < size; i++)
             if (buf[i])
                 return CDB_E_CORRUPT;
+        /* #65: strip the plaintext principal suffix (length-checked), fail-closed
+         * when a FLAG_PRINCIPAL body is too short to carry it. */
+        if (r->flags & CDB_RECORD_FLAG_PRINCIPAL) {
+            if (payload_len < sizeof(uint64_t))
+                return CDB_E_CORRUPT;
+            r->payload_len = payload_len - (uint32_t)sizeof(uint64_t);
+            r->principal = cdb_load_u64(buf + CDB_RECORD_HEADER_SIZE + r->payload_len, j->order);
+        }
     }
 
     *next = offset + size;

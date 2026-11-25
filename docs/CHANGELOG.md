@@ -11,6 +11,49 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Signed/attributed document revisions keep the original writer's principal
+  across crash recovery (#65) — audit follow-up (`src/cdb_doc.c`,
+  `src/cdb_journal.c`/`.h`, `src/cdb_db.c`/`.h`, `tests/`).** A document
+  revision's delta carried no principal of its own, so when recovery re-applied
+  it after a crash, `apply_change` (`src/cdb_doc.c`) attributed the revision to
+  the **recovering** session's active identity (or `0`) rather than the original
+  writer — silently corrupting the audit trail / non-repudiation for every
+  revision recovered after a crash. The writer's `principal_id` is now **captured
+  in the journal data record at write time** (`tx_put_in`, `src/cdb_db.c`) and
+  **used on replay** so the recovered revision keeps its original attribution.
+  - **Record format (versioned, backward-compatible).** A new record flag
+    `CDB_RECORD_FLAG_PRINCIPAL` (`0x20`) marks a record that stores the 8-byte
+    principal as a suffix of the record **body** — inside the region already
+    covered by the trailer CRC (plaintext) or AEAD tag (encrypted), so the stored
+    value inherits the record envelope's integrity. `cdb_journal_append_crypto`
+    writes it (body grows by 8 when the flag is set); `cdb_journal_read_crypto`
+    strips and validates it (length-checked, before the encrypted hidden-target
+    varint decode). The flag *is* the version signal: a record written without it
+    (an old journal, or a write under no active identity) decodes exactly as
+    before. No header, epoch, or record-kind change.
+  - **Fail-closed.** A record that claims `FLAG_PRINCIPAL` but whose body is too
+    short to hold the 8-byte suffix is rejected `CDB_E_CORRUPT` (never an
+    under-read). A record with **no** stored principal (`cdb_delta.has_principal`
+    is the explicit tri-state, so a legitimately-attributed `0` stays distinct
+    from "absent") falls back to today's documented behavior — the active identity
+    or `0` — and never crashes.
+  - **Live path unchanged.** On a normal commit the stored principal equals the
+    active principal, so the non-recovery hot path attributes exactly as before
+    (#40). Cross-identity **re-signing** of a recovered signed revision under the
+    original key remains deferred (`docs/BACKLOG.md`): this change carries the
+    principal and preserves the original stored envelope signature; it does not
+    re-sign under the recovering session.
+  - Held to `tests/test_doc_principal_sig_f40.c`: `test_recovery_replay_keeps_original_principal`
+    (red→green — write under A, recover under B, recovered principal is A not
+    B/0), `test_old_format_record_falls_back` (no stored principal → non-crashing
+    fallback), `test_record_principal_roundtrip_versioned` (new- and old-format
+    records decode; principal round-trips), and `test_principal_short_body_rejected`
+    (DoS edge → `CDB_E_CORRUPT`). The existing #40 roundtrip/no-identity/
+    mismatched-signature tests, the #37/#54 audit suites, and the #33 guard stay
+    green. **Every other #65 item stays deferred** (see `docs/BACKLOG.md`).
+
 ### Added
 
 - **General matrix determinant for dim ≥ 4 (#65) — audit follow-up, closing the
