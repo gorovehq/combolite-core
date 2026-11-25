@@ -263,6 +263,116 @@ static void test_store_slot_hidden_and_salt(void)
                                                                   key, CDB_TRACK_ARCHIVE_PAGE, &h));
 }
 
+/* #72 CR5 Slice A (AC6): the on-disk marker identifies an encrypted page by
+ * its domain_id and salt index, a legacy plaintext page (domain 0, no salt)
+ * still opens, and an encrypted page that is downgraded or whose tag fails
+ * fails closed with no silent plaintext fallback. */
+static void test_page_marker_version_compat(void)
+{
+    static uint8_t page[1024];
+    static uint8_t downgraded[1024];
+    uint8_t key[32];
+    cdb_page_header h, back;
+    size_t hsize = cdb_page_payload_offset(CDB_PAGE_FMT_FULL64);
+    const char *secret = "enclave-marked-page";
+
+    memset(key, 0x5A, sizeof key);
+
+    /* A legacy plaintext page: domain 0, no salt; opens and reads as before. */
+    h = sample();
+    h.domain_id = 0;
+    h.salt_index = 0;
+    memset(page, 0, sizeof page);
+    memcpy(page + hsize, "legacy", 6);
+    h.payload_len = 6;
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_page_seal(page, sizeof page, CDB_PAGE_FMT_FULL64,
+                                                CDB_ORDER_LITTLE, CDB_CHECKSUM_CRC32C, &h));
+    TEST_ASSERT_EQUAL_INT(
+        CDB_OK, cdb_page_peek(page, sizeof page, CDB_PAGE_FMT_FULL64, CDB_ORDER_LITTLE, &back));
+    TEST_ASSERT_EQUAL_UINT64(0, back.domain_id);
+    TEST_ASSERT_EQUAL_UINT16(0, back.salt_index); /* plaintext marker */
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_page_open(page, sizeof page, CDB_PAGE_FMT_FULL64,
+                                                CDB_ORDER_LITTLE, CDB_CHECKSUM_CRC32C, &back));
+    TEST_ASSERT_EQUAL_MEMORY("legacy", page + hsize, 6);
+
+    /* An encrypted page: domain != 0 with a salt index; identifiable by peek
+     * alone, and its store is hidden behind the encryption. */
+    h = sample();
+    h.domain_id = 42;
+    h.salt_index = 1;
+    h.write_seq = 7;
+    memset(page, 0, sizeof page);
+    memcpy(page + hsize, secret, strlen(secret));
+    h.payload_len = (uint32_t)strlen(secret);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_page_seal_crypto(page, sizeof page, CDB_PAGE_FMT_FULL64,
+                                                       CDB_ORDER_LITTLE, CDB_CHECKSUM_CRC32C,
+                                                       CDB_AEAD_AES_256_GCM, key,
+                                                       CDB_TRACK_ARCHIVE_PAGE, &h));
+    TEST_ASSERT_EQUAL_INT(
+        CDB_OK, cdb_page_peek(page, sizeof page, CDB_PAGE_FMT_FULL64, CDB_ORDER_LITTLE, &back));
+    TEST_ASSERT_EQUAL_UINT64(42, back.domain_id);
+    TEST_ASSERT_NOT_EQUAL(0, back.salt_index);  /* encrypted marker */
+    TEST_ASSERT_EQUAL_UINT64(0, back.store_id); /* store hidden behind the encryption */
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(page + hsize, secret, strlen(secret))); /* ciphertext */
+
+    /* Downgrade: zero the salt marker to coax a plaintext read. Fails closed
+     * (malformed) and never returns plaintext. */
+    memcpy(downgraded, page, sizeof downgraded);
+    cdb_store_u16(downgraded + 50, 0, CDB_ORDER_LITTLE); /* the salt_index field (spec 14.2.8) */
+    TEST_ASSERT_EQUAL_INT(CDB_E_MALFORMED,
+                          cdb_page_open_crypto(downgraded, sizeof downgraded, CDB_PAGE_FMT_FULL64,
+                                               CDB_ORDER_LITTLE, CDB_CHECKSUM_CRC32C,
+                                               CDB_AEAD_AES_256_GCM, key, CDB_TRACK_ARCHIVE_PAGE,
+                                               &back));
+
+    /* Tamper the ciphertext: fails closed (auth failure); no plaintext. The
+     * codec reports it as CDB_E_CORRUPT — the pager layer elevates an enclave
+     * page's auth failure to CDB_E_SECURITY at its trust boundary (ADR-002). */
+    page[hsize + 2] ^= 0x40;
+    TEST_ASSERT_EQUAL_INT(CDB_E_CORRUPT,
+                          cdb_page_open_crypto(page, sizeof page, CDB_PAGE_FMT_FULL64,
+                                               CDB_ORDER_LITTLE, CDB_CHECKSUM_CRC32C,
+                                               CDB_AEAD_AES_256_GCM, key, CDB_TRACK_ARCHIVE_PAGE,
+                                               &back));
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(page + hsize, secret, strlen(secret))); /* no plaintext */
+}
+
+/* #72 CR5 Slice A (AC7): the compact format's 8-byte trailer cannot hold a
+ * 16-byte AEAD tag, so a compact enclave page is refused (CDB_E_UNSUPPORTED),
+ * never written unprotected; the full format encrypts. Compact-page enclave
+ * encryption is deferred (see cdb_page.c protection(), docs/BACKLOG.md). */
+static void test_compact_enclave_encrypt_refused(void)
+{
+    static uint8_t page[512];
+    uint8_t key[32];
+    cdb_page_header h;
+
+    memset(key, 0x11, sizeof key);
+
+    h = sample();
+    h.domain_id = 42;
+    h.salt_index = 1;
+    h.payload_len = 4;
+    memset(page, 0, sizeof page);
+    TEST_ASSERT_EQUAL_INT(CDB_E_UNSUPPORTED,
+                          cdb_page_seal_crypto(page, sizeof page, CDB_PAGE_FMT_COMPACT,
+                                               CDB_ORDER_LITTLE, CDB_CHECKSUM_CRC32C,
+                                               CDB_AEAD_AES_256_GCM, key, CDB_TRACK_ARCHIVE_PAGE,
+                                               &h));
+
+    /* The same enclave page in the full format encrypts fine. */
+    h = sample();
+    h.domain_id = 42;
+    h.salt_index = 1;
+    h.payload_len = 4;
+    memset(page, 0, sizeof page);
+    memcpy(page + cdb_page_payload_offset(CDB_PAGE_FMT_FULL64), "ok!!", 4);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_page_seal_crypto(page, sizeof page, CDB_PAGE_FMT_FULL64,
+                                                       CDB_ORDER_LITTLE, CDB_CHECKSUM_CRC32C,
+                                                       CDB_AEAD_AES_256_GCM, key,
+                                                       CDB_TRACK_ARCHIVE_PAGE, &h));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -275,5 +385,7 @@ int main(void)
     RUN_TEST(test_tamper_evident_page_roundtrip);
     RUN_TEST(test_store_slot_public);
     RUN_TEST(test_store_slot_hidden_and_salt);
+    RUN_TEST(test_page_marker_version_compat);
+    RUN_TEST(test_compact_enclave_encrypt_refused);
     return UNITY_END();
 }
