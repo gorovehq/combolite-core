@@ -577,6 +577,8 @@ typedef struct cdb_db {
         uint8_t page_key[32]; /* under this session's salt */
         uint8_t hash_key[32];
         uint8_t index_key[32];
+        uint8_t seal_key[32]; /* HKDF "cdb seal" from enclave_key (audit #72) */
+        uint8_t repl_key[32]; /* HKDF "cdb repl" from enclave_key; consumer = next slice */
         int in_use;
     } enclaves[16];
     struct {
@@ -777,6 +779,15 @@ cdb_status cdb_db_rotate_master_key(cdb_db *db, const char *new_master_key_uri);
 cdb_status cdb_db_rotate_enclave_key(cdb_db *db, uint64_t enclave_id,
                                      const char *new_enclave_key_uri);
 cdb_status cdb_db_check_key_rotation(cdb_db *db);
+
+/* Read counterpart to cdb_crypto_wrap_key_env (audit #72, CR3): unwraps a
+ * stored nonce||tag||ciphertext wrapped enclave key under master_key. Fails
+ * closed (CDB_E_SECURITY) on any auth/tag failure and writes no key bytes to
+ * enclave_key_out on failure. Internal (not part of the public ABI); exposed
+ * here so the keystore read path and its red->green tests can reach it. */
+cdb_status db_enclave_unwrap_stored_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
+                                        const uint8_t wrapped_in[CDB_WRAPPED_KEY_SIZE],
+                                        uint8_t enclave_key_out[CDB_CRYPTO_KEY_SIZE]);
 
 /* RBAC and principal identities (spec 12.5). */
 cdb_status cdb_db_register_principal(cdb_db *db, uint64_t principal_id, uint32_t tenant_id,

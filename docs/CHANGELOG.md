@@ -56,6 +56,17 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Added
 
+- **M27 enclave key plumbing (#72 slice 1) — CR3 + CR2.** The in-core keystore
+  now reads back a stored wrapped enclave key via a new unwrap caller
+  (`db_enclave_unwrap_stored_key`, the counterpart to `cdb_crypto_wrap_key`),
+  fail-closed `CDB_E_SECURITY` on a bad tag / wrong master with no key bytes
+  written on the failure path (CR3); and the SEAL and REPL subkeys are now
+  derived (HKDF) from the enclave key during key setup and held, wiped in
+  `db_wipe_crypto` (CR2). **Deferred to later #72 slices:** CR5 (at-rest page
+  encryption — wiring `domain_id` through every model's page-write path) and
+  the consumer that actually encrypts CRDT replication slices with the REPL
+  subkey. Tests: unwrap round-trip + tamper-fails-closed (`tests/test_crypto.c`)
+  and the SEAL/REPL HKDF KAT (`tests/test_crypto_kat.c`).
 - **General matrix determinant for dim ≥ 4 (#65) — audit follow-up, closing the
   #40 FR5 `cdb_math_mat_det` cap (`src/cdb_math.c`, `tests/`).** `cdb_math_mat_det`
   previously computed the determinant only for 1×1/2×2 (direct) and 3×3 (Rule of
