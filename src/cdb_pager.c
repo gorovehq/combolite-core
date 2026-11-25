@@ -224,7 +224,15 @@ static uint32_t page_track(const cdb_pager *p, int overlay)
 
 /* Seals buf with h. An encrypted page names its salt (spec 14.2.8): an
  * overlay page the overlay's own, an archive page the session's index in
- * the salt table, assigned at the first such page since the last commit. */
+ * the salt table, assigned at the first such page since the last commit.
+ *
+ * The encrypt-on-write hook is gated purely on the caller's h->domain_id
+ * (#72 CR5): domain_id == 0 takes the legacy CRC32C/tamper-evident path,
+ * byte-for-byte as before, so the mechanism is inert for every existing
+ * store. #72 CR5 Slice A DEFER: no data model's create path sets a non-zero
+ * domain_id yet (document, table, link, time-series, vector) — that per-model
+ * wiring is the following CR5 slices (see docs/BACKLOG.md). The transient
+ * per-page key lives only in key_buf and is wiped on every return path. */
 static cdb_status pager_seal_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h, int overlay)
 {
     const uint8_t *key = NULL;
@@ -272,17 +280,29 @@ static cdb_status pager_seal_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h
 
 /* Verifies the page in buf and decrypts it when it is encrypted. The
  * header, read without verifying it first, names the domain and salt whose
- * key opens the page; only an overlay page names the overlay's salt. */
+ * key opens the page; only an overlay page names the overlay's salt.
+ *
+ * Fail-closed boundary (#72 CR5 Slice A, ADR-002): the on-disk page is
+ * attacker-tamperable, so an enclave page (domain_id > 0) whose AEAD tag does
+ * not verify is a *security* failure, not a benign corruption. The page codec
+ * reports an authentication failure as CDB_E_CORRUPT (its integrity-codec
+ * contract, kept for the direct unit tests); here, at the trust boundary that
+ * knows the page is encrypted, that result is elevated to CDB_E_SECURITY. A
+ * structural decode failure (CDB_E_MALFORMED — e.g. a downgraded salt marker)
+ * stays as is; it is already fail-closed and no plaintext is ever returned.
+ * The transient domain key in key_buf is wiped on every return path. */
 static cdb_status pager_open_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h, int overlay)
 {
     const uint8_t *key = NULL;
     uint8_t key_buf[32];
     unsigned aead_alg = CDB_AEAD_NONE;
+    int enclave = 0;
     cdb_status s;
 
     if ((s = cdb_page_peek(buf, p->page_size, p->fmt, p->order, h)) != CDB_OK)
         return s;
     if (h->domain_id > 0 && p->aead_alg != CDB_AEAD_NONE) {
+        enclave = 1;
         if (h->salt_index == 0 || (h->salt_index == CDB_SALT_INDEX_FILE) != (overlay != 0))
             return CDB_E_MALFORMED;
         if (p->domain_key_fn == NULL)
@@ -302,6 +322,10 @@ static cdb_status pager_open_page(cdb_pager *p, uint8_t *buf, cdb_page_header *h
     s = cdb_page_open_crypto(buf, p->page_size, p->fmt, p->order, p->checksum_alg, aead_alg, key,
                              page_track(p, overlay), h);
     cdb_crypto_wipe(key_buf, sizeof key_buf);
+    /* ADR-002: an enclave page that fails authentication fails closed as a
+     * security error (never plaintext, never a silent plaintext fallback). */
+    if (enclave && s == CDB_E_CORRUPT)
+        s = CDB_E_SECURITY;
     return s;
 }
 
