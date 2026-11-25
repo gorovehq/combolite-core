@@ -21,12 +21,12 @@
  *        committed-seq gate (coordinate_commit) catches it. Permanent safety
  *        assertion: a straddling overlap is never silently accepted (#33 cardinal
  *        risk). This must hold forever, including after #67.
- *   B1   A reconciled straddle of a DISJOINT writer is ALSO rejected today
- *        (the gate is write-set-blind). This is the documented B1 over-rejection,
- *        reported as design fork #67, NOT relaxed. The assertion encodes the
- *        current fail-closed-but-conservative contract; when #67 lands an
- *        archive-side reconciled-write-set signal, the DISJOINT straddle becomes
- *        CDB_OK and this one assertion is updated — the overlap one above stays.
+ *   B1   A reconciled straddle of a DISJOINT writer now COMMITS (#60 B1,
+ *        ADR-0004): the reconciled-write-set ring (populated by merge_journals,
+ *        consulted by coordinate_commit) proves the straddle covered and
+ *        disjoint, narrowing the write-set-blind committed-seq gate. The overlap
+ *        and reconciled-overlap assertions above stay CDB_E_COLLISION — detection
+ *        is narrowed, never relaxed, and the consult is fail-closed.
  *   AC9  The #42 bounded-wait constant is not weakened: the pure bound function
  *        clamps an absent/huge (untrusted) holder estimate to the hard cap.
  */
@@ -247,14 +247,14 @@ static void test_reconciled_overlap_straddle_rejected(void)
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&p1.db));
 }
 
-/* B1 current contract / reproduction (reported as fork #67, NOT relaxed): a
- * DISJOINT writer that straddles a peer's reconcile is ALSO rejected today,
- * because the committed-seq gate is write-set-blind. This is the over-rejection
- * B1 describes — fail-closed (safe) but too conservative. The assertion pins the
- * landed behavior; when #67 adds an archive-side reconciled-write-set signal
- * this DISJOINT straddle becomes CDB_OK and THIS assertion flips to CDB_OK
- * (the overlap-straddle test above stays CDB_E_COLLISION). */
-static void test_disjoint_straddle_rejected_b1_fork67(void)
+/* B1 FIXED (#60 B1, ADR-0004): a DISJOINT writer that straddles a peer's
+ * reconcile now COMMITS. The reconciled-write-set ring, populated by
+ * merge_journals and consulted by coordinate_commit, proves the straddle is
+ * covered and disjoint, so the committed-seq gate is narrowed from write-set-
+ * blind to write-set-aware. This is the red->green flip the signal exists to
+ * make; the overlap-straddle and reconciled-overlap tests above STAY
+ * CDB_E_COLLISION (detection not relaxed, fail-closed preserved). */
+static void test_disjoint_straddle_now_commits_b1_fixed(void)
 {
     cdb_status s;
     open_two();
@@ -269,8 +269,8 @@ static void test_disjoint_straddle_rejected_b1_fork67(void)
 
     s = cdb_tx_commit(&p2.db);
     TEST_ASSERT_EQUAL_INT_MESSAGE(
-        CDB_E_COLLISION, s,
-        "B1 (#67): disjoint straddle is conservatively rejected today — fail-closed, not relaxed");
+        CDB_OK, s,
+        "B1 fixed: a disjoint straddle is proven covered-and-disjoint by the ring and commits");
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&p2.db));
     TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&p1.db));
 }
@@ -295,7 +295,7 @@ int main(void)
     RUN_TEST(test_disjoint_writers_commit_concurrently);
     RUN_TEST(test_overlapping_writers_collide);
     RUN_TEST(test_reconciled_overlap_straddle_rejected);
-    RUN_TEST(test_disjoint_straddle_rejected_b1_fork67);
+    RUN_TEST(test_disjoint_straddle_now_commits_b1_fixed);
     RUN_TEST(test_bounded_wait_cap_not_weakened);
     return UNITY_END();
 }

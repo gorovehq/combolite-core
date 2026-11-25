@@ -299,4 +299,37 @@ void cdb_pager_set_reuse_below(cdb_pager *p, uint64_t seq);
  * margin of spec 5.9.8). NULL removes it. */
 void cdb_pager_set_guard(cdb_pager *p, cdb_status (*guard)(void *ctx), void *ctx);
 
+
+/* Reconciled-write-set ring region, rooted by the header region anchor for
+ * feature CDB_REGION_FEATURE_WRITESET_RING (#60 B1, spec 14.22). The region is
+ * one pinned archive page holding the ring's own self-describing, CRC-protected
+ * bytes (not wrapped in a page frame), so a committer can read it directly from
+ * an archive snapshot without resolving the anchor map, and a torn or
+ * half-published region is caught by the ring's own CRC (fail-closed). */
+
+/* Reads the ring region bytes consistent with the committed header snapshot hs
+ * into buf[0, cap). The anchor is located by cdb_header_region_find on
+ * hs->record; its physical page is read verbatim from archive_st (the same file
+ * p maps), so the read reflects exactly the state hs committed. *len is set to
+ * the bytes delivered.
+ *
+ * FAIL-CLOSED: an absent anchor, an out-of-range physical page, a size that
+ * does not fit buf, or a short read yields a non-OK status and *len = 0, so the
+ * caller takes the conservative reject (exactly today's behaviour). Integrity of
+ * the bytes themselves is the ring's own per-header/per-entry CRC, validated by
+ * the ring decode on use. */
+cdb_status cdb_pager_read_wsring_region(const cdb_pager *p, const cdb_storage *archive_st,
+                                        const cdb_header_state *hs, uint8_t *buf, size_t cap,
+                                        size_t *len);
+
+/* Publishes region[0, len) (a formatted ring image) as the archive's ring:
+ * allocates a fresh pinned page (copy-on-write), writes the bytes there, frees
+ * the previous ring page, and roots the region anchor at the new page in the
+ * pager's in-memory committed header. The write is made durable by the next
+ * cdb_pager_commit's step-1 barrier, before that commit raises committed_seq
+ * (publish-after-sync), so a peer never sees a committed_seq whose covering ring
+ * is not yet durable. Single-writer (baton holder) only; call inside a pending
+ * pager commit (p->dirty already set). len must be one page. */
+cdb_status cdb_pager_wsring_publish(cdb_pager *p, const uint8_t *region, size_t len);
+
 #endif
