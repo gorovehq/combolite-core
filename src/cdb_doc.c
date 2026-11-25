@@ -1395,14 +1395,20 @@ static cdb_status apply_change(cdb_db *db, const cdb_delta *d)
     e.rev = found ? head.rev + 1 : 1;
     e.parent = found ? head.rev : 0;
     e.commit = d->commit_number;
-    /* #40 FR4: attribute the revision to the active principal (mirrors the
-     * #37 governance-audit attribution). principal_id is 0 only when no
-     * identity is present -- never a forgeable default. Whether the envelope
-     * is also signed is decided from db state in write_revision (sig_reserve).
-     * NOTE (deferred): the delta carries no principal of its own, so a replay
-     * under recovery attributes the recovering session's identity, not the
-     * original writer's; capturing the writer in the journal is future work. */
-    e.principal = db->has_identity ? (uint64_t)db->active_identity.principal_id : 0u;
+    /* #40 FR4 / #65: attribute the revision to the original writer. The journal
+     * record now carries the writer's principal (captured at write time in
+     * tx_put_in), so recovery replay keeps the original attribution instead of
+     * laundering the recovering session's identity onto it (the #65 defect).
+     * Fail-closed legacy fallback: a record written before this change has no
+     * stored principal (has_principal == 0), so it falls back to the active
+     * identity (or 0) -- today's documented behavior, never a crash. On the live
+     * commit path the stored principal equals the active principal, so the hot
+     * path is unchanged (#40). Whether the envelope is also signed is decided
+     * from db state in write_revision (sig_reserve); cross-identity re-signing on
+     * replay stays deferred (docs/BACKLOG.md). */
+    e.principal = d->has_principal
+                      ? d->principal
+                      : (db->has_identity ? (uint64_t)db->active_identity.principal_id : 0u);
     /* Schema changes reconcile first and start a new journal, so the
      * current version is the one the change was validated under. */
     e.schema = pool->schema_version;
