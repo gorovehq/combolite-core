@@ -1958,3 +1958,73 @@ void cdb_pager_set_guard(cdb_pager *p, cdb_status (*guard)(void *ctx), void *ctx
     p->guard = guard;
     p->guard_ctx = ctx;
 }
+
+/* -------------------------------------------------- reconciled-write-set ring */
+
+/* See cdb_pager.h. The ring region is one pinned page of the ring's own
+ * self-describing, CRC-protected bytes, rooted by the header region anchor for
+ * CDB_REGION_FEATURE_WRITESET_RING. It is not wrapped in a sealed page frame, so
+ * a committer reads it verbatim from an archive snapshot (no anchor-map walk),
+ * and a torn or half-published region is caught by the ring's own CRC on decode
+ * (fail-closed) rather than requiring page-frame verification here. */
+
+cdb_status cdb_pager_read_wsring_region(const cdb_pager *p, const cdb_storage *archive_st,
+                                        const cdb_header_state *hs, uint8_t *buf, size_t cap,
+                                        size_t *len)
+{
+    cdb_region_anchor a;
+    size_t rlen;
+    cdb_status s;
+
+    if (len != NULL)
+        *len = 0;
+    if (p == NULL || archive_st == NULL || hs == NULL || buf == NULL || len == NULL)
+        return CDB_E_INVALID_ARG;
+    if (!cdb_header_region_find(&hs->record, CDB_REGION_FEATURE_WRITESET_RING, &a))
+        return CDB_E_NOT_FOUND; /* absent anchor: the conservative gate applies */
+    /* The region is one pinned page; a size that does not fit the page or the
+     * caller's buffer, or a page below the data area, is a cannot-read -> the
+     * caller takes the conservative reject (fail-closed). */
+    rlen = a.size_hint;
+    if (rlen == 0 || rlen > p->page_size || rlen > cap || a.anchor < p->data_start)
+        return CDB_E_CORRUPT;
+    s = cdb_storage_read(archive_st, phys_offset(p, a.anchor), buf, rlen);
+    if (s != CDB_OK)
+        return s == CDB_E_TRUNCATED ? CDB_E_CORRUPT : s; /* short/torn -> reject */
+    *len = rlen;
+    return CDB_OK;
+}
+
+cdb_status cdb_pager_wsring_publish(cdb_pager *p, const uint8_t *region, size_t len)
+{
+    uint64_t old_phys = 0, new_phys;
+    cdb_region_anchor a;
+    cdb_status s;
+
+    if (p == NULL || region == NULL)
+        return CDB_E_INVALID_ARG;
+    if (p->read_only || p->private_mode)
+        return CDB_E_STATE; /* only the baton holder publishes (spec 5.9.1) */
+    if (len == 0 || len > p->page_size)
+        return CDB_E_INVALID_ARG;
+    if (cdb_header_region_find(&p->hs.record, CDB_REGION_FEATURE_WRITESET_RING, &a))
+        old_phys = a.anchor;
+
+    /* Copy-on-write: a fresh page, so a committer reading the old anchor from a
+     * still-pinned snapshot keeps seeing intact bytes. */
+    new_phys = alloc_phys(p);
+    if (p->guard != NULL && (s = p->guard(p->guard_ctx)) != CDB_OK)
+        return s;
+    if ((s = cdb_storage_program(&p->st, phys_offset(p, new_phys), region, len)) != CDB_OK)
+        return s;
+    if (!cdb_header_region_set(&p->hs.record, CDB_REGION_FEATURE_WRITESET_RING, new_phys,
+                               (uint32_t)len))
+        return CDB_E_STATE; /* no anchor slot free: stays unadvertised (conservative) */
+    /* Reclaim the previous ring page. A full free list is not fatal here: the
+     * new ring is already rooted, so the worst case is one unreclaimed page
+     * (space, never correctness). */
+    if (old_phys != 0 && old_phys >= p->data_start)
+        (void)free_push(p, old_phys, 1);
+    p->dirty = 1;
+    return CDB_OK;
+}
