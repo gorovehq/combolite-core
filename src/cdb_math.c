@@ -919,10 +919,14 @@ cdb_status cdb_math_mat_transpose(const float *m, size_t rows, size_t cols, floa
  * LU decomposition with partial pivoting (determinant = permutation sign times
  * the product of the pivots), accumulated in double to match the other matrix
  * ops. A singular matrix (a zero/near-zero pivot column) yields a determinant
- * of exactly 0.0 with CDB_OK -- that is a valid result, not an error. A dim of
- * 0 or a dim greater than CDB_MATH_MAT_DET_MAX_DIM returns CDB_E_UNSUPPORTED
- * (documented cap); callers must still handle it. Zero-heap: the elimination
- * runs in place on a bounded stack copy, so no allocation occurs. */
+ * of exactly 0.0 with CDB_OK -- that is a valid result, not an error. If the LU
+ * pivot product overflows the float range (or a non-finite caller input
+ * propagates through the elimination), the result cannot be represented as a
+ * determinant and the failure is signalled OUT as CDB_E_OVERFLOW -- never a
+ * non-finite value behind a CDB_OK. A dim of 0 or a dim greater than
+ * CDB_MATH_MAT_DET_MAX_DIM returns CDB_E_UNSUPPORTED (documented cap); callers
+ * must still handle it. Zero-heap: the elimination runs in place on a bounded
+ * stack copy, so no allocation occurs. */
 cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out)
 {
     if (m == NULL || out == NULL)
@@ -1006,8 +1010,20 @@ cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out)
             }
         }
 
-        *out = (float)det;
-        return CDB_OK;
+        {
+            /* The pivot product (or a non-finite caller input propagating
+             * through the elimination) can overflow the representable range.
+             * A non-finite result is a failure the caller must see, not a
+             * determinant: signal it OUT as CDB_E_OVERFLOW rather than returning
+             * CDB_OK with an Inf/NaN value indistinguishable from a real result
+             * (robustness -- signal failure to the caller). *out is left
+             * untouched on this path, per the CDB_OK-only output contract. */
+            float result = (float)det;
+            if (!isfinite(result))
+                return CDB_E_OVERFLOW;
+            *out = result;
+            return CDB_OK;
+        }
     }
 }
 
