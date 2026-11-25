@@ -29,6 +29,7 @@
 #include "cdb_table.h"
 #include "cdb_ts.h"
 #include "cdb_vec.h"
+#include "cdb_wsring.h"   /* #60 B1: reconciled-write-set ring (populate + consult) */
 #include "cdb_compiler.h" /* #35: cdb_db_query compiles CMBQL text */
 #include "cdb_exec.h"     /* #35: cdb_db_query opens a streaming cursor */
 
@@ -701,15 +702,66 @@ static cdb_status collect_drops(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint
     return CDB_OK;
 }
 
+/* #60 B1 populate: the bounded accumulator merge_journals uses to gather the
+ * write-set keys of every transaction a reconcile folds into the archive, so
+ * they can be appended to the reconciled-write-set ring tagged with the new
+ * committed_seq (ADR-0004). Collection is reused from apply_range's existing
+ * record walk (no second pass). Fail-closed overflow: a reconcile whose write
+ * set exceeds the accumulator sets .overflow, and publish then raises the ring's
+ * floor past the new seq so no straddle over it is ever proven covered (a missed
+ * key could otherwise be a silent reconciled-overlap -- the #33 loss class). */
+#define WS_RING_ACC_CAP 128u
+
+struct ws_ring_acc {
+    int active;   /* 0 disables collection (recovery/self-apply, or ring inactive) */
+    int overflow; /* a single reconcile's write set exceeded the accumulator */
+    size_t n;
+    cdb_wsring_key keys[WS_RING_ACC_CAP];
+};
+
+/* Maps one folded data/write-key record to a ring key and adds it. Data records
+ * carry a (store, entry) key; write-key records carry a (store, key_tag) hash
+ * key (its 8-byte payload, little-endian, as in ws_from_record). Other records
+ * contribute nothing. */
+static void ws_ring_acc_add(struct ws_ring_acc *acc, const cdb_record *r)
+{
+    cdb_wsring_key k;
+    if (acc == NULL || !acc->active || acc->overflow)
+        return;
+    if (r->kind == CDB_RECORD_DATA) {
+        k.store = r->store_id;
+        k.entry = r->entry_id;
+        k.key_tag = 0;
+        k.kind = CDB_WSRING_KIND_DATA;
+    } else if (r->kind == CDB_RECORD_WRITE_KEY && r->payload_len == CDB_WRITE_KEY_PAYLOAD_SIZE) {
+        k.store = r->store_id;
+        k.entry = 0;
+        k.key_tag = cdb_load_u64(r->payload, CDB_ORDER_LITTLE);
+        k.kind = CDB_WSRING_KIND_KEYHASH;
+    } else {
+        return;
+    }
+    if (acc->n >= WS_RING_ACC_CAP) {
+        acc->overflow = 1; /* fail-closed: handled by raising the ring floor */
+        return;
+    }
+    acc->keys[acc->n++] = k;
+}
+
 /* Applies the data records of transaction tx_id found between start and end.
  * Used both by a live commit and by recovery, so both run exactly the same
  * code on exactly the same bytes. Each data record's payload is one op byte
  * (CDB_OP_*) followed by the model-specific data (spec 14.4.5). With
  * rollbacks (the commit record's flag), the records rollback records dropped
  * are skipped (spec 14.4.9). Reads into cfg.record_buf, so the delta's data
- * pointer is only valid during the apply call. */
+ * pointer is only valid during the apply call.
+ *
+ * #60 B1: when acc is non-NULL and active, each folded record's write-set key is
+ * collected for the reconciled-write-set ring (dropped data records are excluded,
+ * matching what is actually folded; write-key records are never dropped). */
 static cdb_status apply_range(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64_t start,
-                              uint64_t end, uint64_t commit_number, int rollbacks)
+                              uint64_t end, uint64_t commit_number, int rollbacks,
+                              struct ws_ring_acc *acc)
 {
     cdb_tx_drop drops[CDB_TX_MAX_DROPS];
     uint32_t ndrops = 0, ord = 0;
@@ -725,7 +777,7 @@ static cdb_status apply_range(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64
             return s;
         if (r.kind == CDB_RECORD_DATA && r.tx_id == tx_id && drops_has(drops, ndrops, ord++)) {
             off = next;
-            continue;
+            continue; /* dropped by a rollback: not folded, not collected */
         }
         if (r.kind == CDB_RECORD_DATA && r.tx_id == tx_id) {
             cdb_delta d;
@@ -743,6 +795,9 @@ static cdb_status apply_range(cdb_db *db, cdb_journal *j, uint64_t tx_id, uint64
             d.has_principal = (r.flags & CDB_RECORD_FLAG_PRINCIPAL) != 0;
             if ((s = db->cfg.apply(db->cfg.apply_ctx, &db->pager, &d)) != CDB_OK)
                 return s;
+            ws_ring_acc_add(acc, &r);
+        } else if (r.kind == CDB_RECORD_WRITE_KEY && r.tx_id == tx_id) {
+            ws_ring_acc_add(acc, &r); /* write-set hash key (never dropped, rule 7) */
         }
         off = next;
     }
@@ -1174,6 +1229,91 @@ static cdb_status release_held_blocks(cdb_db *db)
     return CDB_OK;
 }
 
+/* #60 B1: the reconciled-write-set ring is populated and consulted only for the
+ * plain archive layout. An encrypted (AEAD) or tamper-evident (governance)
+ * archive would need the ring page sealed like every other page to stay
+ * confidential and forgery-resistant; until then those layouts take the
+ * conservative gate (absent ring -> reject), which is fail-closed and
+ * no-worse-than-current. */
+static int wsring_active(const cdb_db *db)
+{
+    return db->pager.aead_alg == CDB_AEAD_NONE
+           && !(db->pager.hs.record.layout_flags & CDB_LAYOUT_GOVERNANCE);
+}
+
+/* #60 B1 populate: builds the ring image for the reconcile about to commit (new
+ * committed_seq = current + 1, tagging seq) and publishes it as a pinned archive
+ * page. Best-effort by contract: any failure leaves the previous anchor in
+ * place, so the ring's top_seq merely lags the new committed_seq and a straddling
+ * committer takes the conservative reject (fail-closed, never a false allow).
+ *
+ * Builds in the pager scratch page, which is free at the call site (after the
+ * marks/journal-slot writes, before fence_and_pins). The write is made durable
+ * by the subsequent cdb_pager_commit's step-1 barrier before committed_seq is
+ * raised (publish-after-sync, FR4). Sentinels use an unrepresentable-as-user
+ * (store, entry) key, so a primed-floor sentinel can never false-match a real
+ * write-set key. */
+static void wsring_publish_reconcile(cdb_db *db, const struct ws_ring_acc *acc)
+{
+    uint8_t *ring = db->pager.scratch;
+    size_t rlen = db->pager.page_size;
+    cdb_byte_order order = db->pager.order;
+    uint64_t seq = db->pager.hs.record.committed_seq + 1u;
+    cdb_wsring_key sentinel;
+    uint32_t cap = 0, i;
+    size_t got = 0;
+
+    sentinel.store = UINT64_MAX;
+    sentinel.entry = UINT64_MAX;
+    sentinel.key_tag = UINT64_MAX;
+    sentinel.kind = CDB_WSRING_KIND_DATA;
+
+    if (acc->overflow) {
+        /* Incomplete write set -> the ring must prove NOTHING about this seq: a
+         * fresh ring plus (cap+1) sentinels at seq evicts everything and raises
+         * floor_seq to seq, so covers((<seq), ...) fails and no straddle over
+         * this uncertain reconcile is ever admitted (#33 no-silent-loss). */
+        if (cdb_wsring_format(ring, rlen, order, &cap) != CDB_OK || cap == 0)
+            return;
+        for (i = 0; i <= cap; i++)
+            if (cdb_wsring_append(ring, rlen, order, seq, &sentinel, 1) != CDB_OK)
+                return;
+        (void)cdb_pager_wsring_publish(&db->pager, ring, rlen);
+        return;
+    }
+
+    if (cdb_pager_read_wsring_region(&db->pager, &db->archive_st, &db->pager.hs, ring, rlen, &got)
+            == CDB_OK
+        && got == rlen) {
+        /* Continue the committed ring (its floor was set honestly at creation):
+         * append this reconcile's keys, or just advance the frontier to seq. */
+        cdb_status s = acc->n > 0 ? cdb_wsring_append(ring, rlen, order, seq, acc->keys, acc->n)
+                                  : cdb_wsring_append(ring, rlen, order, seq, NULL, 0);
+        if (s != CDB_OK)
+            return; /* old ring unusable -> leave anchor: top lags -> reject */
+        (void)cdb_pager_wsring_publish(&db->pager, ring, rlen);
+        return;
+    }
+
+    /* Fresh ring. Prime floor_seq to seq-1 so it honestly covers only from its
+     * own inception, never reconciles that predate it (retrofit / lost ring):
+     * fill with (seq-1)-tagged sentinels, then append this reconcile's keys at
+     * seq, which evict the sentinels and raise floor_seq to seq-1 -- the ring
+     * then covers exactly (seq-1, seq] with this reconcile's write set. */
+    if (cdb_wsring_format(ring, rlen, order, &cap) != CDB_OK || cap == 0)
+        return;
+    for (i = 0; i < cap; i++)
+        if (cdb_wsring_append(ring, rlen, order, seq - 1u, &sentinel, 1) != CDB_OK)
+            return;
+    if (acc->n > 0) {
+        if (cdb_wsring_append(ring, rlen, order, seq, acc->keys, acc->n) != CDB_OK)
+            return;
+    } else if (cdb_wsring_append(ring, rlen, order, seq, &sentinel, 1) != CDB_OK) {
+        return; /* no keys this reconcile: one sentinel at seq advances top, floor=seq-1 */
+    }
+    (void)cdb_pager_wsring_publish(&db->pager, ring, rlen);
+}
+
 /* Merges every slot's committed transactions above its mark onto the
  * archive in (stamp, slot, counter) order and commits them with the new
  * marks (spec 5.9.1, 5.9.2, 14.4.7 rules 5 and 7). Other slots' files stay:
@@ -1189,8 +1329,12 @@ static cdb_status merge_journals(cdb_db *db, int keep_in_use)
     int exists, usable, marks_moved = 0, has_blocks = 0, removed = 0;
     uint64_t base_wm = watermark_of(db);
     unsigned n = 0, slot, i;
+    struct ws_ring_acc ws_acc; /* #60 B1: folded write-set keys for the ring */
     cdb_status s;
 
+    ws_acc.active = wsring_active(db);
+    ws_acc.overflow = 0;
+    ws_acc.n = 0;
     db->applied = base_wm;
     for (slot = 0; slot < db->coord.cfg.max_coords; slot++) {
         cdb_coord_rec srec;
@@ -1237,7 +1381,7 @@ static cdb_status merge_journals(cdb_db *db, int keep_in_use)
         if ((s = open_journal(db, best->slot)) != CDB_OK)
             return s;
         s = apply_range(db, &db->rj, best->tx_id, best->start, best->commit_at, db->applied + 1u,
-                        best->rollbacks);
+                        best->rollbacks, &ws_acc);
         cdb_storage_close(&db->rj_st);
         if (s != CDB_OK)
             return s;
@@ -1269,6 +1413,14 @@ static cdb_status merge_journals(cdb_db *db, int keep_in_use)
         if ((s = stage_own_mark(db)) != CDB_OK)
             return s;
         set_journal_slot(db, keep_in_use, db->applied);
+        /* #60 B1 populate: publish this reconcile's write-set keys into the
+         * header-anchored ring, tagged with the committed_seq this commit will
+         * raise, before cdb_pager_commit makes that seq durable and visible
+         * (publish-after-sync). Only on the plain layout; best-effort (any
+         * failure leaves the ring lagging -> conservative reject). The pager
+         * scratch is free here, before fence_and_pins/cdb_pager_commit use it. */
+        if (ws_acc.active && db->pager.dirty)
+            wsring_publish_reconcile(db, &ws_acc);
         if ((s = fence_and_pins(db)) != CDB_OK || (s = cdb_pager_commit(&db->pager)) != CDB_OK)
             return s;
         cdb_vec_accel_committed(db); /* the mirrors had all of it (spec 18.6) */
@@ -2817,6 +2969,83 @@ static cdb_status check_collisions(cdb_db *db, uint64_t own_end, uint64_t my_sta
     return CDB_OK;
 }
 
+/* #60 B1 consult: gathers this transaction's own write-set keys (data keys and
+ * unique-index key-hash keys, dropped data records excluded) into out[0, cap),
+ * mirroring check_collisions' own-key scan. On more than cap keys *overflow is
+ * set and the caller rejects fail-closed (an uncounted key could be a missed
+ * overlap -- the #33 loss class). Returns CDB_OK unless a journal read fails. */
+static cdb_status gather_own_wsring_keys(cdb_db *db, cdb_wsring_key *out, size_t cap, size_t *nout,
+                                         int *overflow)
+{
+    uint64_t off = db->tx_start, end = db->journal.end;
+    cdb_status s;
+    *nout = 0;
+    *overflow = 0;
+    while (off < end) {
+        cdb_record r;
+        uint64_t next, at = off;
+        if ((s = read_record(db, &db->journal, off, db->cfg.record_buf, db->cfg.record_buf_size, &r,
+                             &next))
+            != CDB_OK)
+            return s;
+        off = next;
+        if (r.tx_id != db->tx_id || cdb_tx_dropped(db, at))
+            continue;
+        if (r.kind == CDB_RECORD_DATA) {
+            if (*nout >= cap) {
+                *overflow = 1;
+                return CDB_OK;
+            }
+            out[*nout].store = r.store_id;
+            out[*nout].entry = r.entry_id;
+            out[*nout].key_tag = 0;
+            out[*nout].kind = CDB_WSRING_KIND_DATA;
+            (*nout)++;
+        } else if (r.kind == CDB_RECORD_WRITE_KEY && r.payload_len == CDB_WRITE_KEY_PAYLOAD_SIZE) {
+            if (*nout >= cap) {
+                *overflow = 1;
+                return CDB_OK;
+            }
+            out[*nout].store = r.store_id;
+            out[*nout].entry = 0;
+            out[*nout].key_tag = cdb_load_u64(r.payload, CDB_ORDER_LITTLE);
+            out[*nout].kind = CDB_WSRING_KIND_KEYHASH;
+            (*nout)++;
+        }
+    }
+    return CDB_OK;
+}
+
+/* #60 B1 consult: narrows the blanket "committed_seq moved -> COLLISION" gate.
+ * When the archive sequence advanced from this transaction's base to the current
+ * snapshot, read the reconciled-write-set ring from that snapshot and allow only
+ * when it provably covers (base, current] AND none of this transaction's own
+ * write-set keys intersect a reconciled key in that range; otherwise reject.
+ * FAIL-CLOSED: the decision is carried solely in *allow, which the ring leaves 0
+ * on any error/ambiguity (absent/torn/old ring, incomplete coverage, overflow),
+ * so any path that cannot prove disjointness takes today's conservative reject
+ * -- provably no-worse-than-current. */
+static int wsring_allows_straddle(cdb_db *db, const cdb_header_state *hs)
+{
+    cdb_wsring_key own[WS_CACHE_CAP];
+    uint8_t *region = db->pager.scratch; /* free during coordinate_commit */
+    size_t nown = 0, rlen = 0;
+    int overflow = 0, allow = 0;
+
+    if (!wsring_active(db))
+        return 0;
+    if (gather_own_wsring_keys(db, own, WS_CACHE_CAP, &nown, &overflow) != CDB_OK || overflow)
+        return 0; /* read error or too many own keys -> conservative reject */
+    if (cdb_pager_read_wsring_region(&db->pager, &db->archive_st, hs, region, db->pager.page_size,
+                                     &rlen)
+        != CDB_OK)
+        return 0; /* absent/unreadable ring -> conservative reject */
+    (void)cdb_wsring_straddle_disjoint(region, rlen, db->pager.order, own, nown,
+                                       db->pager.hs.record.committed_seq, hs->record.committed_seq,
+                                       &allow);
+    return allow;
+}
+
 /* The coordination half of a commit (spec 5.9.4), run while the transaction
  * is still marked open so that heartbeats taken while it waits (the settle
  * interval, a joiner's first-commit wait, waiting out a later prepare) never
@@ -2843,12 +3072,18 @@ static cdb_status coordinate_commit(cdb_db *db, uint64_t *stamp)
 
     /* If another process reconciled into the archive while this transaction
      * was open, its view was older than the archive and the reconciled write
-     * sets are no longer in any journal: it is rejected (spec 5.9.4). */
+     * sets are no longer in any journal (spec 5.9.4). #60 B1: rather than
+     * reject every such straddle, consult the reconciled-write-set ring: allow
+     * only a proven covered-and-disjoint straddle, otherwise reject. The ring
+     * consult is fail-closed, so a disjoint writer proceeds while a
+     * reconciled-away overlap -- and anything the ring cannot prove -- is still
+     * rejected, exactly as before (ADR-0004). */
     if (!cdb_coord_baton_held(&db->coord) || db->coord.live_others > 0) {
         cdb_header_state hs;
         if ((s = cdb_header_open(&db->archive_st, &hs)) != CDB_OK)
             return s;
-        if (hs.record.committed_seq != db->pager.hs.record.committed_seq)
+        if (hs.record.committed_seq != db->pager.hs.record.committed_seq
+            && !wsring_allows_straddle(db, &hs))
             return CDB_E_COLLISION;
     }
 
@@ -2976,7 +3211,7 @@ static cdb_status tx_commit_locked(cdb_db *db)
      * commit number is the one reconciliation will give it while this
      * session is the only one contributing, and 0 on an overlay (spec 5.9.2). */
     s = apply_range(db, &db->journal, db->tx_id, db->tx_start, record_at,
-                    db->fresh ? db->applied + 1u : 0u, db->tx_ndrops > 0);
+                    db->fresh ? db->applied + 1u : 0u, db->tx_ndrops > 0, NULL);
     if (s == CDB_E_BUSY && cdb_coord_baton_held(&db->coord)) {
         /* A standing baton expired while applying: give it up and replay
          * onto the overlay instead (spec 5.9.8). */

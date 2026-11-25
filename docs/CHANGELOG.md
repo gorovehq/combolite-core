@@ -13,6 +13,45 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Fixed
 
+- **Disjoint-writer false collisions eliminated: the reconciled-write-set ring is
+  wired into the live commit path (#60 B1) — `#33` DATA-LOSS-CRITICAL gate
+  narrowed, not relaxed (`src/cdb_db.c`, `src/cdb_pager.c`/`.h`,
+  `tests/test_coord_writeset_ring_e2e_f60.c`, ADR-0004).** `coordinate_commit`
+  rejected every commit whose archive `committed_seq` had advanced past the
+  transaction's base, **regardless of write-set overlap**, so a peer's frequent
+  reconcile made **disjoint** writers that merely straddle it false-collide
+  (≈3–6 % of commits). The reconciled-write-set ring (module + format + unit
+  tests, #60 B1 / PR#70) is now **populated and consulted** on the live path:
+  - **Populate** (`merge_journals`, inside the existing `cdb_pager_commit`):
+    each folded transaction's write-set keys (data `(store, entry)` keys and
+    unique-index key-hash keys) are collected from `apply_range`'s record walk
+    and appended to the header-anchored ring, tagged with the new
+    `committed_seq`. The ring is one pinned archive page of the ring's own
+    CRC-protected bytes, published by the same pager commit that raises
+    `committed_seq` (**publish-after-sync**), so a peer never sees a
+    `committed_seq` whose covering ring entry is not yet durable. A fresh ring
+    primes its `floor_seq` to inception so it never claims coverage of reconciles
+    that predate it (retrofit-safe).
+  - **Consult** (`coordinate_commit`): when the sequence advanced, the committer
+    reads the ring from the archive snapshot it sees
+    (`cdb_pager_read_wsring_region`, PART 0) and calls
+    `cdb_wsring_straddle_disjoint`; it **allows** only a straddle the ring
+    provably covers **and** that is disjoint from every reconciled key in the
+    range, otherwise rejects.
+  - **Fail-closed (non-negotiable, #33).** Any absent/torn/old/corrupt or
+    half-published region, incomplete coverage, accumulator or own-key overflow,
+    or read error leaves the decision `0` → `CDB_E_COLLISION` — exactly today's
+    conservative reject, so the wiring is **provably no-worse-than-current**. A
+    reconciled-away overlap (the #33 cardinal case) is still rejected; the #33
+    open-path genuine-loss guard and the #42 bounded wait are untouched.
+  - **Scope.** Narrowing applies to the plain archive layout only; encrypted
+    (AEAD) and tamper-evident (governance) archives take the conservative gate
+    (absent ring) until the ring page is sealed like every other page.
+  - **Proof.** `tests/test_coord_writeset_ring_e2e_f60.c` — a disjoint straddle
+    now **SUCCEEDS** (red→green; the prior `CDB_E_COLLISION` assertion in
+    `tests/test_coord_contention_collision_f60.c` is flipped to `CDB_OK`), while
+    overlap, reconciled-overlap, and an unreadable region stay
+    `CDB_E_COLLISION`; full `ctest` green under `core-cpu-debug` (ASan + UBSan).
 - **Signed/attributed document revisions keep the original writer's principal
   across crash recovery (#65) — audit follow-up (`src/cdb_doc.c`,
   `src/cdb_journal.c`/`.h`, `src/cdb_db.c`/`.h`, `tests/`).** A document
