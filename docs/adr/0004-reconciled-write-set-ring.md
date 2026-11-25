@@ -95,23 +95,42 @@ untouched.
 
 ## Integration status
 
-The ring module, its header-anchor rooting helpers (`cdb_header_region_find` /
-`cdb_header_region_set`), the format/version note, and the red→green unit test land in this
-change, all green under `core-cpu-debug` (ASan + UBSan). The live-path wiring —
-`merge_journals` populating the ring and `coordinate_commit` consulting it through a read-only
-archive snapshot — is the pure functions' two call sites:
+**Wired (#60 B1).** The ring module, its header-anchor rooting helpers
+(`cdb_header_region_find` / `cdb_header_region_set`), the format/version note, the red→green
+unit test, **and the live-path wiring** are all landed and green under `core-cpu-debug`
+(ASan + UBSan). The two pure-function call sites, plus the one missing primitive, are now in
+the engine:
 
-1. **Populate** (`merge_journals`, inside the existing `cdb_pager_commit`): collect each folded
-   transaction's write-set keys during the apply loop and `cdb_wsring_append(seq = new
-   committed_seq)` into the anchored region, extending the region (and rooting the anchor via
-   `cdb_header_region_set`) the first time.
+0. **Snapshot region read** (`cdb_pager_read_wsring_region`, `src/cdb_pager.c`, PART 0): reads
+   the ring region bytes from the archive at the anchor located by `cdb_header_region_find` on
+   the committed snapshot `hs`. The region is one pinned page of the ring's own CRC-protected
+   bytes (not wrapped in a page frame), so the read reflects exactly the state `hs` committed
+   with no anchor-map walk. Absent/out-of-range/short read → cannot-read → the conservative
+   reject; a torn or half-published region fails the ring's own CRC on decode (fail-closed).
+
+1. **Populate** (`merge_journals`, inside the existing `cdb_pager_commit`): each folded
+   transaction's write-set keys are collected from `apply_range`'s record walk and appended
+   (`cdb_wsring_append(seq = committed_seq + 1)`) into the ring, published to a fresh pinned
+   page via `cdb_pager_wsring_publish` and rooted with `cdb_header_region_set` — durable by the
+   same commit's step-1 barrier before `committed_seq` is raised (publish-after-sync). A fresh
+   ring primes `floor_seq` to inception so it never claims coverage of reconciles that predate
+   it (retrofit-safe); an incomplete write set (accumulator overflow) raises `floor_seq` past
+   the new seq so no straddle over it is ever admitted.
+
 2. **Consult** (`coordinate_commit`, replacing the blanket reject at the `committed_seq`-moved
-   branch): read the region from the archive snapshot `hs` via the feature anchor, gather the
-   tx's own write-set keys, and call `cdb_wsring_straddle_disjoint(base =
-   db->pager.hs.record.committed_seq, current = hs.record.committed_seq)`; fall through on
+   branch): reads the region from the archive snapshot `hs` via PART 0, gathers the tx's own
+   write-set keys, and calls `cdb_wsring_straddle_disjoint(base =
+   db->pager.hs.record.committed_seq, current = hs.record.committed_seq)`; falls through on
    `*allow`, else `CDB_E_COLLISION`.
 
-Because the consult call is fail-closed (absent/unreadable region → the exact current
-behavior), the wiring is provably no-worse-than-current and is landed only once verified
-against the full multi-process `ctest` under ASan+UBSan — a bug on this critical path is the
-#33 data-loss class the signal exists to prevent, so it is not landed unverified.
+The narrowing applies to the plain archive layout only; encrypted (AEAD) and tamper-evident
+(governance) layouts take the conservative gate (absent ring) until the ring page is sealed
+like every other page — a documented, fail-closed scope limit, no-worse-than-current.
+
+Because the consult is fail-closed (absent/unreadable region → the exact current behavior), the
+wiring is provably no-worse-than-current. It was landed only after verification against the full
+multi-process `ctest` under ASan+UBSan, with the mandatory red→green on the disjoint straddle
+(`tests/test_coord_writeset_ring_e2e_f60.c::test_disjoint_straddle_now_succeeds`;
+`tests/test_coord_contention_collision_f60.c` flipped from `CDB_E_COLLISION` to `CDB_OK`) and
+overlap / reconciled-overlap / unreadable-region staying rejected — a bug on this critical path
+is the #33 data-loss class the signal exists to prevent.
