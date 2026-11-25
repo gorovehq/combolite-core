@@ -106,6 +106,13 @@ typedef struct cdb_delta {
     const uint8_t *data; /* the model-specific payload after the op byte */
     size_t len;
     uint64_t commit_number; /* of the transaction this change belongs to */
+    /* #65: the original writer's principal, captured in the journal record at
+     * write time. has_principal is the explicit tri-state: when true, principal
+     * is the stored writer (a legitimately-attributed 0 is distinct from
+     * absent); when false the record predates the field, so the apply falls
+     * back to the active identity (documented legacy behavior). */
+    uint64_t principal;
+    int has_principal;
 } cdb_delta;
 
 /* Full-text search (spec 8.10, 14.14; cdb_fts.h). */

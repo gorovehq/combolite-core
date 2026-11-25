@@ -54,6 +54,8 @@
 #define CDB_RECORD_FLAG_REPLICATED 0x08u
 #define CDB_RECORD_FLAG_ROLLBACKS \
     0x10u /* commit record: the transaction holds a rollback record (14.4.9) */
+#define CDB_RECORD_FLAG_PRINCIPAL \
+    0x20u /* #65: the record body carries the writer's principal (8-byte suffix) */
 
 /* Data-change operation codes (spec 14.4.5). */
 #define CDB_OP_INSERT 1u
@@ -82,7 +84,13 @@ typedef struct cdb_journal_header {
  * domain_id and its entry field 0, and the real store and entry IDs lead
  * the encrypted plaintext as two varints. Append and read do this, so
  * store_id and entry_id are always the real ones here, and payload and
- * payload_len never include the varints. */
+ * payload_len never include the varints.
+ *
+ * #65: a record whose flags carry CDB_RECORD_FLAG_PRINCIPAL stores the writing
+ * session's principal id as an 8-byte suffix of the record body (inside the
+ * CRC/AEAD-covered region). append writes it from principal; read strips it,
+ * leaving payload/payload_len as the op+model bytes only, and fills principal.
+ * Without the flag the field is 0 and the body carries no suffix (old format). */
 typedef struct cdb_record {
     uint8_t kind;       /* CDB_RECORD_* */
     uint8_t flags;      /* encrypted, compressed (none used yet) */
@@ -92,6 +100,7 @@ typedef struct cdb_record {
     uint64_t entry_id;  /* target entry, or 0 */
     uint64_t domain_id; /* encryption domain of an encrypted record; 0 otherwise */
     uint32_t key_version;
+    uint64_t principal; /* #65: writing principal, valid iff CDB_RECORD_FLAG_PRINCIPAL; else 0 */
     const uint8_t *payload;
     uint32_t payload_len;
 } cdb_record;
