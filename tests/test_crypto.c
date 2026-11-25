@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include "unity.h"
+#include "cdb_db.h"
+#include "cdb_faultenv.h"
 #include "combolite/cdb_crypto.h"
 #include "cdb_endian.h"
 
@@ -281,6 +283,207 @@ static void test_key_wrapping_nonce_unique(void)
     TEST_ASSERT_EQUAL_MEMORY(key_b, rec, CDB_CRYPTO_KEY_SIZE);
 }
 
+/* ---------------------------------------------- CR3 keystore read path (#72) */
+
+/* AC1/AC3: wrap an enclave key under a master key, then read it back through
+ * the in-core keystore unwrap caller db_enclave_unwrap_stored_key. It must
+ * round-trip byte-for-byte. Red against the pre-slice state (the symbol does
+ * not exist -> link failure); green once CR3 is wired. */
+static void test_unwrap_roundtrip(void)
+{
+    uint8_t master[CDB_CRYPTO_KEY_SIZE];
+    uint8_t enclave[CDB_CRYPTO_KEY_SIZE];
+    uint8_t wrapped[CDB_WRAPPED_KEY_SIZE];
+    uint8_t recovered[CDB_CRYPTO_KEY_SIZE];
+    size_t i;
+
+    for (i = 0; i < sizeof master; i++)
+        master[i] = (uint8_t)(0x10u + i);
+    for (i = 0; i < sizeof enclave; i++)
+        enclave[i] = (uint8_t)(0xA0u ^ i);
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crypto_wrap_key(master, enclave, wrapped));
+
+    memset(recovered, 0, sizeof recovered);
+    TEST_ASSERT_EQUAL_INT(CDB_OK, db_enclave_unwrap_stored_key(master, wrapped, recovered));
+    TEST_ASSERT_EQUAL_MEMORY(enclave, recovered, CDB_CRYPTO_KEY_SIZE);
+}
+
+/* AC2/AC6: a tampered wrapped blob (any region) or the wrong master key must
+ * fail closed with CDB_E_SECURITY, and NO key bytes may be written to the
+ * output on failure (the sentinel is left intact). */
+static void test_unwrap_tamper_fails_closed(void)
+{
+    uint8_t master[CDB_CRYPTO_KEY_SIZE];
+    uint8_t wrong_master[CDB_CRYPTO_KEY_SIZE];
+    uint8_t zero_master[CDB_CRYPTO_KEY_SIZE];
+    uint8_t enclave[CDB_CRYPTO_KEY_SIZE];
+    uint8_t wrapped[CDB_WRAPPED_KEY_SIZE];
+    uint8_t out[CDB_CRYPTO_KEY_SIZE];
+    uint8_t sentinel[CDB_CRYPTO_KEY_SIZE];
+    /* Representative byte in each region: nonce[0], tag (nonce+0), ct (nonce+tag). */
+    const size_t off_nonce = 0;
+    const size_t off_tag = (size_t)CDB_AEAD_NONCE_SIZE;
+    const size_t off_ct = (size_t)CDB_AEAD_NONCE_SIZE + (size_t)CDB_AEAD_TAG_SIZE;
+    size_t regions[3];
+    size_t r;
+
+    regions[0] = off_nonce;
+    regions[1] = off_tag;
+    regions[2] = off_ct;
+
+    memset(master, 0x12, sizeof master);
+    memset(wrong_master, 0x56, sizeof wrong_master);
+    memset(zero_master, 0x00, sizeof zero_master);
+    memset(enclave, 0x34, sizeof enclave);
+    memset(sentinel, 0xC7, sizeof sentinel);
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_crypto_wrap_key(master, enclave, wrapped));
+
+    /* Wrong master key: fail closed, no key written. */
+    memcpy(out, sentinel, sizeof out);
+    TEST_ASSERT_EQUAL_INT(CDB_E_SECURITY, db_enclave_unwrap_stored_key(wrong_master, wrapped, out));
+    TEST_ASSERT_EQUAL_MEMORY(sentinel, out, CDB_CRYPTO_KEY_SIZE);
+
+    /* Zeroed master key: fail closed, no key written. */
+    memcpy(out, sentinel, sizeof out);
+    TEST_ASSERT_EQUAL_INT(CDB_E_SECURITY, db_enclave_unwrap_stored_key(zero_master, wrapped, out));
+    TEST_ASSERT_EQUAL_MEMORY(sentinel, out, CDB_CRYPTO_KEY_SIZE);
+
+    /* Tamper one byte in each region (nonce, tag, ciphertext) in turn. */
+    for (r = 0; r < 3; r++) {
+        uint8_t blob[CDB_WRAPPED_KEY_SIZE];
+        memcpy(blob, wrapped, sizeof blob);
+        blob[regions[r]] ^= 0xFFu;
+        memcpy(out, sentinel, sizeof out);
+        TEST_ASSERT_EQUAL_INT(CDB_E_SECURITY, db_enclave_unwrap_stored_key(master, blob, out));
+        TEST_ASSERT_EQUAL_MEMORY(sentinel, out, CDB_CRYPTO_KEY_SIZE);
+    }
+
+    /* NULL arguments fail closed before any pointer-offset arithmetic. */
+    TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, db_enclave_unwrap_stored_key(NULL, wrapped, out));
+    TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, db_enclave_unwrap_stored_key(master, NULL, out));
+    TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, db_enclave_unwrap_stored_key(master, wrapped, NULL));
+}
+
+/* -------------------------------------- CR2 enclave subkey setup harness (#72) */
+
+#define H72_FCAP (640u * 1024u)
+#define H72_PAGE_LOG2 9u
+#define H72_PAGE (1u << H72_PAGE_LOG2)
+#define H72_NODES 16u
+/* Fixed enclave key (matches the KAT): 11223344...eeff repeated twice. */
+#define H72_ENC_KEY_HEX "11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+
+static uint8_t h72_env_arena[CDB_FAULTENV_MAX_FILES * 3u * H72_FCAP];
+static cdb_fault_record h72_env_records[CDB_FAULTENV_MAX_FILES * 4096u];
+static cdb_faultenv h72_fe;
+static uint8_t h72_arena[H72_NODES * 2u * H72_PAGE + 2u * H72_PAGE];
+static cdb_pager_node h72_nodes[H72_NODES];
+static cdb_free_extent h72_free_list[8192];
+static uint8_t h72_record_buf[1024];
+static uint8_t h72_cat_work[16384];
+static cdb_index_entry h72_cat_entries[512];
+static uint8_t h72_cat_page[H72_PAGE];
+
+static cdb_status h72_apply(void *ctx, cdb_pager *p, const cdb_delta *d)
+{
+    (void)ctx;
+    (void)p;
+    (void)d;
+    return CDB_OK;
+}
+
+/* Open a db under a fresh fault env with a fixed master key and create one
+ * enclave keyed with H72_ENC_KEY_HEX, returning its enclave-table index. */
+static int h72_open_with_enclave(cdb_db *db, cdb_env *env, const char *name)
+{
+    cdb_faultenv_config c;
+    cdb_db_config cfg;
+    cdb_header h;
+    unsigned i;
+    int idx = -1;
+
+    setenv("CDB_H72_MK", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", 1);
+    setenv("CDB_H72_ENC", H72_ENC_KEY_HEX, 1);
+
+    c.arena = h72_env_arena;
+    c.file_capacity = H72_FCAP;
+    c.records = h72_env_records;
+    c.records_per_file = 4096;
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_faultenv_init(&h72_fe, &c, env));
+
+    memset(&cfg, 0, sizeof cfg);
+    cfg.pager.arena = h72_arena;
+    cfg.pager.arena_size = sizeof h72_arena;
+    cfg.pager.nodes = h72_nodes;
+    cfg.pager.node_cap = H72_NODES;
+    cfg.pager.free_list = h72_free_list;
+    cfg.pager.free_cap = sizeof h72_free_list / sizeof h72_free_list[0];
+    cfg.record_buf = h72_record_buf;
+    cfg.record_buf_size = sizeof h72_record_buf;
+    cfg.apply = h72_apply;
+    cfg.catalog_work.bytes = h72_cat_work;
+    cfg.catalog_work.bytes_size = sizeof h72_cat_work;
+    cfg.catalog_work.entries = h72_cat_entries;
+    cfg.catalog_work.entries_cap = 512;
+    cfg.catalog_page = h72_cat_page;
+    cfg.durability = CDB_DURABILITY_FULL;
+    cfg.master_key_uri = "env://CDB_H72_MK";
+
+    memset(&h, 0, sizeof h);
+    h.order = CDB_ORDER_LITTLE;
+    h.layout_flags = CDB_LAYOUT_ADDR64;
+    h.default_page_log2 = (uint8_t)H72_PAGE_LOG2;
+    for (i = 0; i < 16; i++)
+        h.db_id[i] = (uint8_t)(0x30 + i);
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_open(db, env, name, &cfg, &h));
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_create_enclave(db, 42, "env://CDB_H72_ENC"));
+
+    for (i = 0; i < sizeof(db->enclaves) / sizeof(db->enclaves[0]); i++) {
+        if (db->enclaves[i].in_use && db->enclaves[i].enclave_id == 42) {
+            idx = (int)i;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(idx >= 0);
+    return idx;
+}
+
+static int h72_is_zero(const uint8_t *b, size_t len)
+{
+    size_t i;
+    for (i = 0; i < len; i++)
+        if (b[i] != 0)
+            return 0;
+    return 1;
+}
+
+/* AC4: after enclave key setup the enclave holds derived SEAL and REPL subkeys
+ * (non-zero), distinct from each other and from the enclave/page/hash/index
+ * keys. */
+static void test_enclave_set_key_derives_seal_repl(void)
+{
+    static cdb_env env;
+    static cdb_db db;
+    int idx = h72_open_with_enclave(&db, &env, "h72_derive");
+
+    TEST_ASSERT_FALSE(h72_is_zero(db.enclaves[idx].seal_key, 32));
+    TEST_ASSERT_FALSE(h72_is_zero(db.enclaves[idx].repl_key, 32));
+
+    /* Distinct from each other and from the enclave key and sibling subkeys. */
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(db.enclaves[idx].seal_key, db.enclaves[idx].repl_key, 32));
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(db.enclaves[idx].seal_key, db.enclaves[idx].enclave_key, 32));
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(db.enclaves[idx].repl_key, db.enclaves[idx].enclave_key, 32));
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(db.enclaves[idx].seal_key, db.enclaves[idx].page_key, 32));
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(db.enclaves[idx].seal_key, db.enclaves[idx].hash_key, 32));
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(db.enclaves[idx].seal_key, db.enclaves[idx].index_key, 32));
+    TEST_ASSERT_NOT_EQUAL(0, memcmp(db.enclaves[idx].repl_key, db.enclaves[idx].index_key, 32));
+
+    TEST_ASSERT_EQUAL_INT(CDB_OK, cdb_db_close(&db));
+}
+
 static cdb_status custom_mock_provider(const char *uri, uint8_t key_out[CDB_CRYPTO_KEY_SIZE], void *user_data)
 {
     (void)user_data;
@@ -379,6 +582,9 @@ int main(void)
     RUN_TEST(test_subkey_known_answers);
     RUN_TEST(test_key_wrapping);
     RUN_TEST(test_key_wrapping_nonce_unique);
+    RUN_TEST(test_unwrap_roundtrip);
+    RUN_TEST(test_unwrap_tamper_fails_closed);
+    RUN_TEST(test_enclave_set_key_derives_seal_repl);
     RUN_TEST(test_key_providers);
     RUN_TEST(test_identities_and_signatures);
     RUN_TEST(test_crypto_wipe);
