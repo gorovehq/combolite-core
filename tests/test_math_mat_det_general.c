@@ -5,8 +5,10 @@
  *
  * Coverage: a known 4x4 (AC1), a known 5x5 (AC2), a cleanly-singular dim-4
  * matrix => 0.0 (AC3), a 3x3 that still matches the Rule-of-Sarrus fast path
- * (AC4, continuity), a dim past the cap => CDB_E_UNSUPPORTED (AC5), and null
- * arguments => CDB_E_INVALID_ARG (AC6). Expected determinants were computed
+ * (AC4, continuity), a dim past the cap => CDB_E_UNSUPPORTED (AC5), null
+ * arguments => CDB_E_INVALID_ARG (AC6), and an overflowing determinant =>
+ * CDB_E_OVERFLOW with *out untouched (AC7, signal failure to the caller --
+ * never a non-finite value behind CDB_OK). Expected determinants were computed
  * exactly with rational Gaussian elimination. */
 #include "unity.h"
 #include "cdb_math.h"
@@ -77,6 +79,21 @@ static void test_det_null_args(void)
     TEST_ASSERT_EQUAL_INT(CDB_E_INVALID_ARG, cdb_math_mat_det(m, 4, NULL));
 }
 
+/* AC7 (rule_0379 -- signal failure to the caller): a determinant that overflows
+ * the float range must NOT come back as a non-finite value behind CDB_OK. A
+ * diagonal matrix with large finite entries has det = (1e20)^4 = 1e80, which is
+ * finite as a double but overflows float -> the function signals CDB_E_OVERFLOW
+ * OUT and leaves *out untouched, so the caller cannot mistake a failed
+ * computation for a real result. */
+static void test_det_overflow_signals_error(void)
+{
+    const float m[16] = {1e20f, 0, 0, 0, 0, 1e20f, 0, 0, 0, 0, 1e20f, 0, 0, 0, 0, 1e20f};
+    float out = -5.0f;
+    TEST_ASSERT_EQUAL_INT(CDB_E_OVERFLOW, cdb_math_mat_det(m, 4, &out));
+    /* Output is meaningful only on CDB_OK: it must be left as the caller set it. */
+    TEST_ASSERT_EQUAL_FLOAT(-5.0f, out);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -86,5 +103,6 @@ int main(void)
     RUN_TEST(test_det_3x3_continuity);
     RUN_TEST(test_det_above_cap_unsupported);
     RUN_TEST(test_det_null_args);
+    RUN_TEST(test_det_overflow_signals_error);
     return UNITY_END();
 }
