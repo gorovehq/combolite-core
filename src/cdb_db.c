@@ -3780,6 +3780,8 @@ static void db_wipe_crypto(cdb_db *db)
             cdb_crypto_wipe(db->enclaves[i].page_key, 32);
             cdb_crypto_wipe(db->enclaves[i].hash_key, 32);
             cdb_crypto_wipe(db->enclaves[i].index_key, 32);
+            cdb_crypto_wipe(db->enclaves[i].seal_key, 32); /* audit #72 (CR2) */
+            cdb_crypto_wipe(db->enclaves[i].repl_key, 32); /* audit #72 (CR2) */
             db->enclaves[i].in_use = 0;
         }
     }
@@ -3964,6 +3966,47 @@ cdb_status cdb_db_close(cdb_db *db)
 
 /* -------------------------------------------------------- security & RBAC */
 
+/* Constant-time byte equality for key material: no early exit, so comparing a
+ * recovered key against the expected one leaks no timing oracle. Returns 1 iff
+ * the two buffers are equal over len bytes. */
+static int ct_bytes_equal(const uint8_t *a, const uint8_t *b, size_t len)
+{
+    volatile uint8_t diff = 0;
+    size_t i;
+    for (i = 0; i < len; i++)
+        diff = (uint8_t)(diff | (uint8_t)(a[i] ^ b[i]));
+    return diff == 0;
+}
+
+/* CR3 (audit #72): the in-core keystore read counterpart to
+ * cdb_crypto_wrap_key_env. Unwraps a persisted nonce||tag||ciphertext wrapped
+ * enclave key under master_key via AES-256-GCM auth_decrypt, into a transient
+ * buffer. Fails closed: any auth/tag failure -> CDB_E_SECURITY with NO key
+ * bytes written to enclave_key_out (no partial/garbage key), and the transient
+ * is zeroized on every path. */
+cdb_status db_enclave_unwrap_stored_key(const uint8_t master_key[CDB_CRYPTO_KEY_SIZE],
+                                        const uint8_t wrapped_in[CDB_WRAPPED_KEY_SIZE],
+                                        uint8_t enclave_key_out[CDB_CRYPTO_KEY_SIZE])
+{
+    uint8_t tmp[CDB_CRYPTO_KEY_SIZE];
+    cdb_status s;
+
+    /* #15/#23 discipline: validate pointers before any use; fail closed. */
+    if (master_key == NULL || wrapped_in == NULL || enclave_key_out == NULL)
+        return CDB_E_INVALID_ARG;
+
+    s = cdb_crypto_unwrap_key(master_key, wrapped_in, tmp);
+    if (s != CDB_OK) {
+        /* On a bad tag the crypto layer returns CDB_E_CORRUPT and tmp may hold
+         * unauthenticated bytes; wipe and emit NO key to the caller. */
+        cdb_crypto_wipe(tmp, sizeof tmp);
+        return CDB_E_SECURITY;
+    }
+    memcpy(enclave_key_out, tmp, sizeof tmp);
+    cdb_crypto_wipe(tmp, sizeof tmp);
+    return CDB_OK;
+}
+
 /* Keeps an enclave's key and derives its subkeys: the page subkey under
  * this session's salt, the others without one (spec 12.2, 14.2.8). */
 static cdb_status enclave_set_key(cdb_db *db, int idx, const uint8_t raw_key[32])
@@ -3977,6 +4020,18 @@ static cdb_status enclave_set_key(cdb_db *db, int idx, const uint8_t raw_key[32]
                                      db->enclaves[idx].hash_key);
     if (s == CDB_OK)
         s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_INDEX, NULL, db->enclaves[idx].index_key);
+    /* CR2 (audit #72 slice 1): derive the SEAL and REPL subkeys from the
+     * enclave key so later slices can consume them. Unsalted (domain-separated
+     * by the HKDF info label only), mirroring the hash/index subkeys.
+     *
+     * DEFERRED to audit #72 slice 2 (do NOT implement here): CR5 cross-model
+     * at-rest page encryption / domain_id page-write plumbing, and the CRDT
+     * replication-slice encryption that CONSUMES repl_key. This slice only
+     * DERIVES and HOLDS the subkeys; wiping is handled in db_wipe_crypto. */
+    if (s == CDB_OK)
+        s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_SEAL, NULL, db->enclaves[idx].seal_key);
+    if (s == CDB_OK)
+        s = cdb_crypto_derive_subkey(raw_key, CDB_SUBKEY_REPL, NULL, db->enclaves[idx].repl_key);
     return s;
 }
 
@@ -4117,10 +4172,21 @@ static cdb_status db_rotate_master_key_in(cdb_db *db, const char *new_master_key
     if (s != CDB_OK)
         return s;
 
-    /* Verify re-wrapping for all active enclaves under new master key */
+    /* Verify re-wrapping for all active enclaves under the new master key, and
+     * (CR3, audit #72) read it straight back with the in-core keystore unwrap
+     * caller. The wrap+unwrap round-trip is the keystore read-path counterpart
+     * to cdb_crypto_wrap_key_env: if a wrapped enclave key does not unwrap to
+     * the original under new_mk, rotation fails closed (CDB_E_SECURITY) BEFORE
+     * new_mk is committed, so a persisted key can never become unreadable. */
     for (i = 0; i < sizeof(db->enclaves) / sizeof(db->enclaves[0]); i++) {
         if (db->enclaves[i].in_use) {
+            uint8_t back[32];
             s = cdb_crypto_wrap_key_env(&db->env, new_mk, db->enclaves[i].enclave_key, wrapped);
+            if (s == CDB_OK)
+                s = db_enclave_unwrap_stored_key(new_mk, wrapped, back);
+            if (s == CDB_OK && !ct_bytes_equal(back, db->enclaves[i].enclave_key, 32))
+                s = CDB_E_SECURITY;
+            cdb_crypto_wipe(back, sizeof back);
             if (s != CDB_OK) {
                 cdb_crypto_wipe(new_mk, sizeof new_mk);
                 cdb_crypto_wipe(wrapped, sizeof wrapped);
