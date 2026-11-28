@@ -775,6 +775,19 @@ cdb_status cdb_db_scrub(cdb_db *db, uint64_t budget, int *pass_done);
 /* Security, enclaves, and key rotation (spec 12). */
 cdb_status cdb_db_create_enclave(cdb_db *db, uint64_t enclave_id, const char *key_ref);
 cdb_status cdb_db_open_enclave(cdb_db *db, uint64_t enclave_id, const char *key_ref);
+/* Assigns store_id to an already-open enclave (audit #72 CR5 slice 1), persisting
+ * the store's encryption domain in the catalog so its subsequent pages seal under
+ * the enclave's key (store_domain path (a)). Fail-closed contract:
+ *   - CDB_E_INVALID_ARG   : db NULL, store_id == 0, or enclave_id == 0
+ *   - CDB_E_SECURITY      : the enclave is not open in this session (its key is
+ *                           underivable, or the active principal lacks write on it)
+ *   - CDB_E_NOT_FOUND     : the store is unknown or dropped
+ *   - CDB_E_STATE         : the store already holds committed entries (retroactive
+ *                           join / re-encryption is deferred; never half-encrypt)
+ * The enclave key is never read, written, or logged by this call. Takes the db
+ * lock like the other enclave calls. Single-user (no active identity) is allowed;
+ * with an identity, the caller must hold CDB_PERM_WRITE on the enclave scope. */
+cdb_status cdb_db_store_set_enclave(cdb_db *db, uint64_t store_id, uint64_t enclave_id);
 cdb_status cdb_db_rotate_master_key(cdb_db *db, const char *new_master_key_uri);
 cdb_status cdb_db_rotate_enclave_key(cdb_db *db, uint64_t enclave_id,
                                      const char *new_enclave_key_uri);

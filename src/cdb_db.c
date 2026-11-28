@@ -4677,6 +4677,72 @@ static cdb_status db_check_perm_in(cdb_db *db, uint64_t principal_id,
     return CDB_E_SECURITY;
 }
 
+static cdb_status db_store_set_enclave_in(cdb_db *db, uint64_t store_id, uint64_t enclave_id);
+
+/* Audit #72 CR5 slice 1: assign a store to an open enclave, persisting its
+ * encryption domain so later pages seal under the enclave key. Serialized under
+ * the db lock like the other cdb_db_* enclave calls. */
+cdb_status cdb_db_store_set_enclave(cdb_db *db, uint64_t store_id, uint64_t enclave_id)
+{
+    cdb_status r;
+    cdb_db_lock(db);
+    r = db_store_set_enclave_in(db, store_id, enclave_id);
+    cdb_db_unlock(db);
+    return r;
+}
+
+static cdb_status db_store_set_enclave_in(cdb_db *db, uint64_t store_id, uint64_t enclave_id)
+{
+    cdb_store_info info;
+    cdb_status s;
+
+    /* Deterministic, fail-closed precedence (ADR-3):
+     * INVALID_ARG -> SECURITY -> RBAC -> NOT_FOUND -> STATE -> persist. */
+
+    /* 1. INVALID_ARG: a bad handle or a reserved/zero id. */
+    if (db == NULL || store_id == 0 || enclave_id == 0)
+        return CDB_E_INVALID_ARG;
+
+    /* 2. SECURITY: never bind a store to an enclave whose key this session cannot
+     * derive. enclave_index < 0 means it is not open here. Checked before the
+     * catalog is touched so an unopened enclave is refused regardless of store
+     * state. */
+    if (enclave_index(db, enclave_id) < 0)
+        return CDB_E_SECURITY;
+
+    /* 3. RBAC / complete mediation: when a principal context is active, the caller
+     * must hold write on the enclave scope. No-identity single-user use is
+     * allowed (db_check_perm_in itself permits the no-grants case). */
+    if (db->has_identity) {
+        s = db_check_perm_in(db, db->active_identity.principal_id, enclave_id, CDB_PERM_WRITE);
+        if (s != CDB_OK)
+            return s;
+    }
+
+    /* Catalog-change preconditions (no open tx, a catalog is configured, and
+     * everything applied so far is reconciled under the baton). */
+    if ((s = catalog_ready(db)) != CDB_OK)
+        return s;
+
+    /* 4. NOT_FOUND: the store must exist and be live. */
+    if ((s = cdb_catalog_get_store(&db->catalog, store_id, &info)) != CDB_OK)
+        return finish_archive_op(db, s);
+    if (info.flags & CDB_STORE_DROPPED)
+        return finish_archive_op(db, CDB_E_NOT_FOUND);
+
+    /* 5. STATE: retroactively joining a store that already holds committed
+     * entries would leave its existing plaintext pages un-encrypted (a
+     * re-encrypt pass is deferred to a later slice). Fail closed rather than
+     * half-encrypt. A freshly created store has head_root, rev_root and
+     * next_entry_id all at their 0 baseline (cdb_catalog_create_store_ex). */
+    if (info.head_root != 0 || info.rev_root != 0 || info.next_entry_id != 0)
+        return finish_archive_op(db, CDB_E_STATE);
+
+    /* 6. Persist the membership. store_domain() now returns enclave_id for this
+     * store, so its subsequent record/page writes seal under the enclave key. */
+    return finish_archive_op(db, cdb_catalog_set_domain(&db->catalog, store_id, enclave_id));
+}
+
 static cdb_status db_trigger_register_in(cdb_db *db, const char *name, size_t name_len,
                                          uint64_t store_id, uint8_t events, const char *proc_name,
                                          size_t proc_len, uint8_t max_depth);

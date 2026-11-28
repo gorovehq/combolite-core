@@ -104,6 +104,11 @@ uint64_t cdb_catalog_next_store_id(const cdb_catalog *cat);
 /* Replaces a vector collection's settings and commits immediately. */
 cdb_status cdb_catalog_set_vector(cdb_catalog *cat, uint64_t store_id, const void *settings,
                                   size_t len);
+/* Sets a store's encryption domain (audit #72 CR5) and commits immediately.
+ * CDB_E_NOT_FOUND for an unknown or dropped store. domain_id is a non-secret
+ * identifier (the owning enclave's id, or 0 for the public domain); no key is
+ * stored. */
+cdb_status cdb_catalog_set_domain(cdb_catalog *cat, uint64_t store_id, uint64_t domain_id);
 /* Records a store's next entry ID without committing (like stage_pool). */
 cdb_status cdb_catalog_stage_next_entry(cdb_catalog *cat, uint64_t store_id,
                                         uint64_t next_entry_id);
