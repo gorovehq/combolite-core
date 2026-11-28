@@ -11,6 +11,38 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ## [Unreleased]
 
+### Added
+
+- **Enclave store membership — at-rest page encryption can now be switched on
+  (#72 CR5, slice A; ADR-0006).** The AEAD page-encryption mechanism already
+  existed (the pager seal/open hook gated on `domain_id`, the enclave lifecycle,
+  key derivation, and central record tagging via `store_domain`) but was
+  **inert**: nothing assigned a store a non-zero `domain_id`, so every page was
+  written in plaintext. This adds the missing link — a public API that joins a
+  store to an enclave and persists the membership, so the store's pages seal
+  under the enclave key:
+  - `cdb_db_store_set_enclave(db, store_id, enclave_id)` (`src/cdb_db.c`/`.h`)
+    assigns a store to an **open** enclave, persisting `cdb_store_info.domain_id`
+    through the new `cdb_catalog_set_domain` mutator (`src/cdb_catalog.c`/`.h`).
+    After the join, new page writes for that store are AEAD-encrypted at rest and
+    round-trip through the pager; the enclave key never reaches the database file.
+  - **Fail-closed** (no silent half-encryption): enclave not open →
+    `CDB_E_SECURITY`; unknown/dropped store → `CDB_E_NOT_FOUND`; **non-empty
+    store → `CDB_E_STATE`** (retroactive join / online re-encryption is deferred);
+    RBAC-gated (`CDB_PERM_WRITE`) when a principal is active. Keys stay with the
+    application/KMS.
+  - A store never joined (`domain_id == 0`) is byte-for-byte unchanged (the inert
+    legacy path).
+  - Proof: `tests/test_enclave_membership_72.c` — a joined store's plaintext is
+    absent from the at-rest archive yet round-trips; membership persists across a
+    close/reopen; a page read under the wrong enclave key fails closed
+    (`CDB_E_SECURITY`); the fail-closed statuses hold; no key material reaches
+    disk; the inert path stays plaintext. red→green on the domain persist; full
+    `ctest` green under `core-cpu-debug` (ASan+UBSan).
+  - **Deferred** (future issues): the per-store convenience wrapper (slice B,
+    `cdb_db_store_set_encrypted`), online re-encryption of a non-empty store, and
+    the CRDT REPL-subkey consumer.
+
 ### Fixed
 
 - **Disjoint-writer false collisions eliminated: the reconciled-write-set ring is
