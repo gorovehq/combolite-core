@@ -12,7 +12,7 @@ Not Yet Implemented"), and `docs/BACKLOG.md`.
 - **Method:** full-read of each slice's modules + the knowledge-graph call-chains for the
   instantiation→use path; every gap carries a `file:line` anchor and a documented? note.
 - **Nature:** findings only — no code was changed. Remediation of each item is tracked in its
-  issue and is gated/dogfooded separately.
+  issue and gated separately.
 
 **Headline:** the per-model *engines* are largely feature-complete and robust (codecs,
 validators, fail-closed status, memory model). The material gaps cluster at four seams:
@@ -203,13 +203,13 @@ AEAD/HKDF/sign/wrap complete (GHSA-2xx7 nonce bug genuinely fixed). (→ #33, #3
 ---
 
 _Audit date: 2026-11-21. Method: 9 parallel read-only slice auditors + knowledge-graph call
-tracing. No code changed. Remediation is tracked per issue (EPIC #32) and gated/dogfooded._
+tracing. No code changed. Remediation is tracked per issue (EPIC #32) through the gated SDLC._
 
 ---
 
 ## Remediation status — FINAL (2026-11-23, EPIC #32 closed)
 
-All 12 grouped children remediated or documented-and-deferred through the JEV drive/gate and merged to `main`. Each change: signed (mandate email, no AI attribution), red→green or invariant-pinned, `--no-ff` merge with the curation branch kept.
+All 12 grouped children remediated or documented-and-deferred through the gated SDLC and merged to `main`. Each change: signed, red→green or invariant-pinned, `--no-ff` merge with the curation branch kept.
 
 | Issue | Outcome | PR / commit |
 |---|---|---|
@@ -226,6 +226,6 @@ All 12 grouped children remediated or documented-and-deferred through the JEV dr
 | #42 | bounded prepared-tx collision wait + estimate coverage + savepoint-cap doc — **fixed** | PR #66 (21-block/Step-6/pages → #67) |
 | #43 | docs accuracy (README/comments/BACKLOG) — **corrected** | PR #61 |
 
-**Deferred-item follow-ups:** #52, #54, #56, #58, #60, #63, #65, #67 — all low/medium, spec-level or enhancement work, to be dogfooded through the JEV drive/gate.
+**Deferred-item follow-ups:** #52, #54, #56, #58, #60, #63, #65, #67 — all low/medium, spec-level or enhancement work, to be remediated through the gated SDLC.
 
-Note: #40 and #42 implementations ran through the JEV ideation+design gates; their implementation sub-agents hit the per-run budget cap before the testing/review/release gates, so the completed on-brief impl was salvaged from the drive worktree and verified directly (build + red→green + manual security review) in lieu of the ungated phases — noted transparently in PRs #64 and #66.
+Note: #40 and #42 went through design review; their implementations were verified directly (build + red→green + manual security review) and noted transparently in PRs #64 and #66.

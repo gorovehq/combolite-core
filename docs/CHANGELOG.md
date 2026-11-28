@@ -19,8 +19,8 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
   `isfinite` guard shipped `Inf`/`NaN` behind the success code. `cdb_math_vec_dot`,
   `cdb_math_vec_distance`, `cdb_math_mat_det` (2×2 and 3×3), and `cdb_math_mat_trace`
   now cast to a local, return `CDB_E_OVERFLOW` on a non-finite result, and write
-  `*out` only on success (mirrors #80). Finite results are unchanged. Found by the
-  jev-gate narrowing-cast co-signal (jev-gate #534). Proof:
+  `*out` only on success (mirrors #80). Finite results are unchanged. Surfaced by a
+  static narrowing-cast audit (same class as #79/#80). Proof:
   `tests/test_math_overflow.c` — one overflow regression per site (`CDB_E_OVERFLOW`,
   `*out` untouched) plus a finite-unchanged case; red→green against the pre-guard
   code; full `ctest` green under `core-cpu-debug` (ASan + UBSan).

@@ -51,7 +51,7 @@ struct cdb_db;
  * signing policy is in effect and an identity is active, the event's self-hash
  * is signed and stored as a fixed-size trailer (spec 12.5 default: audit-series
  * events are signed). Payloads must be redacted: event type, sequence, hashes
- * and non-secret references only, never key material or PII (master §5). */
+ * and non-secret references only, never key material or PII. */
 cdb_status cdb_audit_log(struct cdb_db *db, uint16_t event_type, uint32_t principal_id,
                          uint64_t store_id, uint64_t entity_id, const void *payload,
                          size_t payload_len);
