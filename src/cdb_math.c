@@ -781,8 +781,19 @@ cdb_status cdb_math_vec_dot(const float *u, const float *v, size_t n, float *out
     for (i = 0; i < n; i++)
         acc += (double)u[i] * (double)v[i];
 
-    *out = (float)acc;
-    return CDB_OK;
+    /* The accumulated dot product can overflow the float range (or a non-finite
+     * caller input can propagate through the sum). A non-finite result is a
+     * failure the caller must see, not a dot product: signal it OUT as
+     * CDB_E_OVERFLOW rather than returning CDB_OK with an Inf/NaN value
+     * indistinguishable from a real result. *out is written only on success,
+     * per the CDB_OK-only output contract (#81, mirroring #80). */
+    {
+        float result = (float)acc;
+        if (!isfinite(result))
+            return CDB_E_OVERFLOW;
+        *out = result;
+        return CDB_OK;
+    }
 }
 
 cdb_status cdb_math_vec_norm(const float *v, size_t n, float *out)
@@ -825,8 +836,18 @@ cdb_status cdb_math_vec_distance(const float *u, const float *v, size_t n, float
         acc += diff * diff;
     }
 
-    *out = (float)sqrt(acc);
-    return CDB_OK;
+    /* A non-finite caller input (Inf/NaN) propagates through the squared-distance
+     * sum and survives the square root, so the narrowed result can be Inf/NaN.
+     * A non-finite result is a failure the caller must see, not a distance:
+     * signal it OUT as CDB_E_OVERFLOW rather than returning CDB_OK with an
+     * Inf/NaN value. *out is written only on success (#81, mirroring #80). */
+    {
+        float result = (float)sqrt(acc);
+        if (!isfinite(result))
+            return CDB_E_OVERFLOW;
+        *out = result;
+        return CDB_OK;
+    }
 }
 
 cdb_status cdb_math_vec_scale(const float *v, float s, size_t n, float *out)
@@ -942,7 +963,15 @@ cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out)
         double b = (double)m[1];
         double c = (double)m[2];
         double d = (double)m[3];
-        *out = (float)(a * d - b * c);
+        /* The 2x2 determinant can overflow the float range (or a non-finite
+         * entry can propagate). Signal a non-finite result OUT as
+         * CDB_E_OVERFLOW rather than returning CDB_OK with an Inf/NaN behind it;
+         * *out is written only on success (#81, mirroring #80). A legitimately
+         * zero determinant stays finite -> CDB_OK, unchanged. */
+        float result = (float)(a * d - b * c);
+        if (!isfinite(result))
+            return CDB_E_OVERFLOW;
+        *out = result;
         return CDB_OK;
     }
     if (dim == 3) {
@@ -951,7 +980,15 @@ cdb_status cdb_math_mat_det(const float *m, size_t dim, float *out)
         double d = (double)m[3], e = (double)m[4], f = (double)m[5];
         double g = (double)m[6], h = (double)m[7], i = (double)m[8];
         double det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-        *out = (float)det;
+        /* The 3x3 determinant can overflow the float range (or a non-finite
+         * entry can propagate). Signal a non-finite result OUT as
+         * CDB_E_OVERFLOW rather than returning CDB_OK with an Inf/NaN behind it;
+         * *out is written only on success (#81, mirroring #80). A legitimately
+         * zero determinant stays finite -> CDB_OK, unchanged. */
+        float result = (float)det;
+        if (!isfinite(result))
+            return CDB_E_OVERFLOW;
+        *out = result;
         return CDB_OK;
     }
 
@@ -1037,8 +1074,19 @@ cdb_status cdb_math_mat_trace(const float *m, size_t dim, float *out)
     for (i = 0; i < dim; i++)
         acc += (double)m[i * dim + i];
 
-    *out = (float)acc;
-    return CDB_OK;
+    /* The accumulated trace can overflow the float range (or a non-finite
+     * diagonal entry can propagate through the sum). A non-finite result is a
+     * failure the caller must see, not a trace: signal it OUT as
+     * CDB_E_OVERFLOW rather than returning CDB_OK with an Inf/NaN value. *out is
+     * written only on success, per the CDB_OK-only output contract (#81,
+     * mirroring #80). */
+    {
+        float result = (float)acc;
+        if (!isfinite(result))
+            return CDB_E_OVERFLOW;
+        *out = result;
+        return CDB_OK;
+    }
 }
 
 /* ---------------------------------------------------------------- Astronomy & Telescope Mount */
