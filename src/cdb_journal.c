@@ -9,11 +9,20 @@
 #include <string.h>
 
 #include "combolite/cdb_crypto.h"
+#include "cdb_codec.h"
 #include "cdb_crc32c.h"
 #include "cdb_endian.h"
 #include "cdb_journal.h"
 #include "cdb_journal_internal.h"
 #include "cdb_varint.h"
+
+/* #75: body compression bounds. The on-stack scratch holds either the
+ * compressed output (append) or a copy of the compressed input (read); the
+ * plaintext ceiling bounds a decompression bomb (CWE-190/-787). Both mirror
+ * the doc-body path (DOC_COMP_SCRATCH). Payloads larger than the scratch
+ * simply store raw (fail open). */
+#define JOURNAL_COMP_SCRATCH 16384u
+#define JOURNAL_COMP_MAX JOURNAL_COMP_SCRATCH
 
 /* "\x89CDBCMP\n", the companion-file magic (spec 14.4.1). */
 static const uint8_t journal_magic[8] = {0x89, 0x43, 0x44, 0x42, 0x43, 0x4D, 0x50, 0x0A};
@@ -127,11 +136,102 @@ cdb_status cdb_journal_record_size(uint32_t payload_len, size_t *out_size)
                                 (size_t)payload_len, out_size);
 }
 
+/* #75: a codec work handle using the journal's env allocator when it has one
+ * (as doc_codec_mem does). Without an env allocator m->env stays NULL and the
+ * callers treat that as "store raw" / "cannot read compressed" (fail open). */
+static void journal_codec_mem(const cdb_journal *j, cdb_codec_mem *m)
+{
+    memset(m, 0, sizeof *m);
+    if (j->codec_env != NULL && j->codec_env->ops != NULL && j->codec_env->ops->alloc != NULL
+        && j->codec_env->ops->free != NULL)
+        m->env = j->codec_env;
+}
+
+/* #75: tries to compress in_len bytes of in into out (out_cap bytes). Returns
+ * 1 with *clen set only when compression is enabled, an env allocator is
+ * present, the codec is available and worth trying, the input and its bound fit
+ * the scratch, and the result saves at least 1/8; otherwise 0 (store raw).
+ * Mirrors doc_try_compress; fail-open to today's uncompressed behaviour. */
+static int journal_try_compress(const cdb_journal *j, const uint8_t *in, size_t in_len, uint8_t *out,
+                                size_t out_cap, size_t *clen)
+{
+    cdb_codec_mem m;
+    size_t packed = 0;
+    if (!j->compress || in_len == 0)
+        return 0;
+    if (!cdb_codec_available(CDB_CODEC_LZMA2))
+        return 0;
+    if (in_len > JOURNAL_COMP_SCRATCH || cdb_codec_bound(in_len) > out_cap)
+        return 0;
+    if (!cdb_codec_worth_trying(in_len, j->page_size, 0))
+        return 0;
+    journal_codec_mem(j, &m);
+    if (m.env == NULL) /* no env allocator wired: fail open, never risk the no-scratch path */
+        return 0;
+    if (cdb_codec_compress(&m, CDB_CODEC_LZMA2, in, in_len, out, out_cap, &packed) != CDB_OK)
+        return 0;
+    if (!cdb_codec_keeps(in_len, packed))
+        return 0;
+    *clen = packed;
+    return 1;
+}
+
+/* #75: r->payload points at the stored (compressed) op+model body of
+ * r->payload_len bytes inside the caller's buf; decompress it back into that
+ * same slot and repoint r->payload/r->payload_len at the plaintext. Called
+ * only after the record is verified/decrypted and stripped of its hidden-target
+ * varints and #65 principal suffix, so r->payload is the compressed body alone.
+ * Fail-closed and bounded: an unavailable codec, a compressed length past the
+ * scratch, a stated plaintext length past the ceiling or the remaining buffer,
+ * or a damaged stream is CDB_E_CORRUPT (TB2 decompression-bomb guard,
+ * CWE-190/-787). */
+static cdb_status journal_decompress_payload(const cdb_journal *j, cdb_record *r, uint8_t *buf,
+                                             size_t buf_size)
+{
+    cdb_codec_mem m;
+    uint8_t cbuf[JOURNAL_COMP_SCRATCH];
+    size_t plain = 0, out = 0, off, avail;
+    uint8_t *dest;
+    cdb_status s;
+
+    if (!cdb_codec_available(CDB_CODEC_LZMA2))
+        return CDB_E_CORRUPT;
+    if (r->payload_len == 0 || r->payload_len > sizeof cbuf)
+        return CDB_E_CORRUPT;
+    if ((s = cdb_codec_length(r->payload, r->payload_len, &plain)) != CDB_OK)
+        return CDB_E_CORRUPT;
+    /* r->payload always points into buf (both read branches set it so). */
+    off = (size_t)(r->payload - buf);
+    dest = buf + off;
+    avail = buf_size - off;
+    if (plain > JOURNAL_COMP_MAX || plain > avail)
+        return CDB_E_CORRUPT;
+    /* Copy the compressed bytes out before writing dest: dest aliases the
+     * source, so decompressing in place would corrupt the input mid-stream. */
+    memcpy(cbuf, r->payload, r->payload_len);
+    journal_codec_mem(j, &m);
+    if ((s = cdb_codec_decompress(&m, CDB_CODEC_LZMA2, cbuf, r->payload_len, dest, avail, &out))
+        != CDB_OK)
+        return CDB_E_CORRUPT;
+    r->payload = dest;
+    r->payload_len = (uint32_t)out;
+    r->flags = (uint8_t)(r->flags & ~CDB_RECORD_FLAG_BODY_CODEC); /* returned view is plaintext */
+    return CDB_OK;
+}
+
 /* Builds the record in buf (header at offset 0, payload at offset 48, then
  * the trailer) and writes it at the journal's end. The trailer is the
  * CRC32C over header and payload, padded with 12 zero bytes; the space is
  * sized for a future AEAD tag (spec 14.4.2). The handle's end and sequence
- * advance only if the write succeeds. */
+ * advance only if the write succeeds.
+ *
+ * #75: the op+model payload is optionally compressed before assembly, gated
+ * like the doc-body path; on success the body carries the compressed bytes and
+ * the record is marked CDB_RECORD_FLAG_BODY_CODEC. Compression runs on the
+ * plaintext before the body is AEAD-encrypted, so the stored order is
+ * compress-then-encrypt and the CRC/AEAD covers the compressed(-then-encrypted)
+ * bytes. If the gate is not met the payload is written raw with the flag clear
+ * (fail open, never larger than plaintext). */
 cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf, size_t buf_size,
                                      unsigned aead_alg, const uint8_t *key)
 {
@@ -141,15 +241,30 @@ cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf
     int has_principal = (r->flags & CDB_RECORD_FLAG_PRINCIPAL) != 0;
     size_t princ = has_principal ? sizeof(uint64_t) : 0u;
     size_t ids = hide ? cdb_varint_size(r->store_id) + cdb_varint_size(r->entry_id) : 0u;
+    /* #75: start from the caller's plaintext payload; the compression gate may
+     * replace it with the compressed form. The incoming CDB_RECORD_FLAG_BODY_CODEC
+     * bit is cleared so append is authoritative: a record read back (flag set)
+     * and re-appended compresses afresh or stores raw, never mislabels raw bytes. */
+    const uint8_t *src = r->payload;
+    uint32_t plen = r->payload_len;
+    uint8_t flags = (uint8_t)(r->flags & ~CDB_RECORD_FLAG_BODY_CODEC);
+    uint8_t cbuf[JOURNAL_COMP_SCRATCH];
+    size_t packed = 0;
     uint32_t body_len;
     size_t size;
     uint8_t *p = buf;
     uint8_t *trailer;
     cdb_status s;
 
-    if (r->payload_len > UINT32_MAX - ids - princ)
+    if (journal_try_compress(j, r->payload, r->payload_len, cbuf, sizeof cbuf, &packed)) {
+        src = cbuf;
+        plen = (uint32_t)packed;
+        flags |= CDB_RECORD_FLAG_BODY_CODEC;
+    }
+
+    if (plen > UINT32_MAX - ids - princ)
         return CDB_E_OVERFLOW;
-    body_len = (uint32_t)(r->payload_len + ids + princ);
+    body_len = (uint32_t)(plen + ids + princ);
     /* #23/F6: overflow-checked sizing before the buffer bound (CWE-190). */
     s = cdb_journal_record_size(body_len, &size);
     if (s != CDB_OK)
@@ -164,15 +279,17 @@ cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf
     p[0] = RECORD_MARKER_0;
     p[1] = RECORD_MARKER_1;
     p[2] = r->kind;
-    p[3] = r->flags;
+    p[3] = flags;
     cdb_store_u32(p + 4, body_len, j->order);
     cdb_store_u64(p + 8, r->seq, j->order);
     cdb_store_u64(p + 16, r->tx_id, j->order);
     cdb_store_u64(p + 24, hide ? r->domain_id : r->store_id, j->order);
     cdb_store_u64(p + 32, hide ? 0u : r->entry_id, j->order);
     cdb_store_u32(p + 40, r->key_version, j->order);
-    if (r->payload_len) /* the payload may already sit in place inside buf */
-        memmove(p + CDB_RECORD_HEADER_SIZE + ids, r->payload, r->payload_len);
+    /* #75: src is the plaintext (may alias buf) or the stack-local compressed
+     * form; memmove handles the aliasing either way. */
+    if (plen)
+        memmove(p + CDB_RECORD_HEADER_SIZE + ids, src, plen);
     if (hide) { /* the real target, inside the encryption (spec 14.4.2) */
         size_t n = cdb_varint_encode(r->store_id, p + CDB_RECORD_HEADER_SIZE);
         cdb_varint_encode(r->entry_id, p + CDB_RECORD_HEADER_SIZE + n);
@@ -180,7 +297,7 @@ cdb_status cdb_journal_append_crypto(cdb_journal *j, cdb_record *r, uint8_t *buf
     /* #65: the writer's principal as the body's 8-byte tail, after the payload
      * and any hidden-target varints; covered by the trailer CRC / AEAD tag. */
     if (has_principal)
-        cdb_store_u64(p + CDB_RECORD_HEADER_SIZE + ids + r->payload_len, r->principal, j->order);
+        cdb_store_u64(p + CDB_RECORD_HEADER_SIZE + ids + plen, r->principal, j->order);
 
     trailer = p + size - CDB_RECORD_TRAILER_SIZE;
 
@@ -308,6 +425,16 @@ cdb_status cdb_journal_read_crypto(cdb_journal *j, uint64_t offset, uint8_t *buf
             r->payload_len = payload_len - (uint32_t)sizeof(uint64_t);
             r->principal = cdb_load_u64(buf + CDB_RECORD_HEADER_SIZE + r->payload_len, j->order);
         }
+    }
+
+    /* #75: verify/decrypt and strip ran first; r->payload/r->payload_len is now
+     * the (possibly compressed) op+model body. Decompress iff the record is
+     * marked, fail-closed on a bad or over-large stream (decrypt-then-decompress,
+     * the inverse of append's compress-then-encrypt). An unflagged (old-format)
+     * record is returned untouched. */
+    if (r->flags & CDB_RECORD_FLAG_BODY_CODEC) {
+        if ((s = journal_decompress_payload(j, r, buf, buf_size)) != CDB_OK)
+            return s;
     }
 
     *next = offset + size;

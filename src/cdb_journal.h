@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "combolite/cdb_common.h"
+#include "combolite/cdb_env.h"
 #include "combolite/cdb_storage.h"
 
 #define CDB_JOURNAL_HEADER_SIZE 80u
@@ -56,6 +57,12 @@
     0x10u /* commit record: the transaction holds a rollback record (14.4.9) */
 #define CDB_RECORD_FLAG_PRINCIPAL \
     0x20u /* #65: the record body carries the writer's principal (8-byte suffix) */
+/* #75: the record body (the op+model payload, before the hidden-target varints
+ * and the #65 principal suffix) is cdb_codec(LZMA2)-compressed. Set by append
+ * only when compression was enabled, available and actually shrank the payload;
+ * read decompresses iff it is set. 0x02 (CDB_RECORD_FLAG_COMPRESSED) stays a
+ * reserved spec-level marker and is intentionally not reused by this slice. */
+#define CDB_RECORD_FLAG_BODY_CODEC 0x40u
 
 /* Data-change operation codes (spec 14.4.5). */
 #define CDB_OP_INSERT 1u
@@ -114,13 +121,22 @@ typedef struct cdb_commit_info {
     uint32_t track_mask;    /* companion types the transaction touched */
 } cdb_commit_info;
 
-/* An open journal file. The storage handle is copied by value. */
+/* An open journal file. The storage handle is copied by value.
+ *
+ * #75: codec_env/compress/page_size drive optional body compression. They
+ * default to NULL/0 (set by the memset in create/open), which is exactly
+ * today's behaviour: append writes payloads raw and read never decompresses
+ * an unflagged record. The cdb_db caller fills them in after create/open so
+ * the journal stays self-contained and fails open with no env or codec. */
 typedef struct cdb_journal {
     cdb_storage st;
     cdb_byte_order order;
     cdb_journal_header hdr;
     uint64_t end;      /* offset where the next record goes */
     uint64_t next_seq; /* delta sequence of the next record */
+    const cdb_env *codec_env; /* #75: env allocator for codec work memory; NULL => no compression */
+    int compress;             /* #75: enable body compression; 0 => always store raw */
+    size_t page_size;         /* #75: for cdb_codec_worth_trying gating; 0 => any non-empty payload */
 } cdb_journal;
 
 /* Writes a companion header (spec 14.4.1) at offset 0 of st, without a
