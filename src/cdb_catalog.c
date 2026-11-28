@@ -737,6 +737,28 @@ cdb_status cdb_catalog_set_vector(cdb_catalog *cat, uint64_t store_id, const voi
     return finish(cat, cat->pager->catroot.next_object_id);
 }
 
+/* Persists a store's encryption domain (audit #72 CR5 slice 1): sets
+ * cdb_store_info.domain_id and commits, mirroring cdb_catalog_set_vector's
+ * stage-and-commit flow (load_store, dropped-check, set field, save_store,
+ * finish). A dropped or unknown store fails closed with CDB_E_NOT_FOUND so a
+ * membership is never recorded against a store that cannot hold it. The key
+ * itself is never touched here: domain_id is a non-secret identifier naming the
+ * enclave, not any key material. */
+cdb_status cdb_catalog_set_domain(cdb_catalog *cat, uint64_t store_id, uint64_t domain_id)
+{
+    cdb_store_info info;
+    uint8_t ref[REF_SIZE];
+    cdb_status s;
+    if ((s = load_store(cat, store_id, &info, ref)) != CDB_OK)
+        return s;
+    if (info.flags & CDB_STORE_DROPPED)
+        return CDB_E_NOT_FOUND;
+    info.domain_id = domain_id;
+    if ((s = save_store(cat, &info, ref, 0)) != CDB_OK)
+        return s;
+    return finish(cat, cat->pager->catroot.next_object_id);
+}
+
 cdb_status cdb_catalog_set_full_text(cdb_catalog *cat, uint64_t store_id, const void *settings,
                                      size_t len)
 {
