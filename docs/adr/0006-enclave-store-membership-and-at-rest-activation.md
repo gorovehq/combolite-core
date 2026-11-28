@@ -53,7 +53,7 @@ writes for that store are AEAD-encrypted. Several stores may share one enclave (
 - `enclave_id == 0` or `store_id` invalid → `CDB_E_INVALID_ARG`.
 - enclave not open (`enclave_index(db, enclave_id) < 0`) → `CDB_E_SECURITY` (never assign a store
   to a domain whose key is not loaded — that would write pages under a key the session can't derive).
-- store not found / dropped → `CDB_E_NOTFOUND`.
+- store not found / dropped → `CDB_E_NOT_FOUND`.
 - **store is non-empty** (has committed records) → `CDB_E_STATE`. Retroactively joining a store
   that already holds plaintext pages would leave a mixed plaintext/ciphertext store and imply a
   re-encryption pass. This slice **forbids** it (fail-closed, simple, no silent partial
@@ -87,9 +87,10 @@ Same fail-closed contract (empty store, master key present, keys stay app-side).
 
 - **Per-model `domain_id` wiring** (the original #72 framing) — rejected: the central
   `store_domain` tagging already covers every model, so per-model edits are unnecessary churn and
-  more surface for the large-file-edit corruption shape (cf. jev-driver#161/#174).
+  a larger edit surface for no benefit.
 - **Persist the enclave key / key_ref in the DB for automatic reopen** — rejected: keys must stay
-  with the app/KMS (master §5, least privilege). The app re-supplies `key_ref` on open. Persisting
+  with the app/KMS (least privilege; keys never touch the database file). The app re-supplies
+  `key_ref` on open. Persisting
   a non-secret *key reference hint* for ergonomics is a possible future nicety, not this slice.
 - **Allow joining a non-empty store with lazy re-encryption** — deferred: correct but needs an
   online re-encrypt / crypto-shred pass with its own fault-injection proof; out of scope here.
