@@ -13,6 +13,18 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ### Fixed
 
+- **Five more unguarded `(float)` narrowing casts in `src/cdb_math.c` hardened
+  against silent overflow (#81, same class as #79/#80; CWE-197/-681).** A computed
+  `double` narrowed to `float`, written to `*out`, and returned `CDB_OK` without an
+  `isfinite` guard shipped `Inf`/`NaN` behind the success code. `cdb_math_vec_dot`,
+  `cdb_math_vec_distance`, `cdb_math_mat_det` (2×2 and 3×3), and `cdb_math_mat_trace`
+  now cast to a local, return `CDB_E_OVERFLOW` on a non-finite result, and write
+  `*out` only on success (mirrors #80). Finite results are unchanged. Found by the
+  jev-gate narrowing-cast co-signal (jev-gate #534). Proof:
+  `tests/test_math_overflow.c` — one overflow regression per site (`CDB_E_OVERFLOW`,
+  `*out` untouched) plus a finite-unchanged case; red→green against the pre-guard
+  code; full `ctest` green under `core-cpu-debug` (ASan + UBSan).
+
 - **Disjoint-writer false collisions eliminated: the reconciled-write-set ring is
   wired into the live commit path (#60 B1) — `#33` DATA-LOSS-CRITICAL gate
   narrowed, not relaxed (`src/cdb_db.c`, `src/cdb_pager.c`/`.h`,
