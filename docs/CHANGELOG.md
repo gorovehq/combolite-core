@@ -11,6 +11,26 @@ Issue and pull-request numbers refer to the `gorovehq/combolite-core` tracker.
 
 ## [Unreleased]
 
+### Added
+
+- **Journal record bodies are now optionally compressed (#75, slice 1 of 2; spec
+  §15.3).** The `cdb_codec` (LZMA2) compression already wired for column chunks and
+  document bodies (#56 FR2) now also applies to journal record payloads. On append
+  a payload is compressed when compression is enabled (`doc_compress`), the codec
+  is available, and the result actually shrinks it; the record is marked
+  `CDB_RECORD_FLAG_BODY_CODEC` and read decompresses it. **Compress-then-encrypt**:
+  a payload is compressed before AEAD encryption, so encrypted journals still
+  shrink and ciphertext is never fed to the codec. **Fail-open**: with no codec,
+  no env allocator, an incompressible payload, or compression off, the payload is
+  stored raw (flag clear) exactly as before — never larger than plaintext. A record
+  that claims compression but fails to decompress fails closed (`CDB_E_CORRUPT`);
+  old unflagged records read unchanged. `tests/test_journal_compress_75.c` proves
+  stored-smaller + round-trip, compress-then-encrypt round-trip with tamper failing
+  closed, incompressible/tiny raw fallback, unflagged back-compat, and the
+  no-codec/no-env fall-open path. red→green on the compression; full `ctest` green
+  under `core-cpu-debug` (ASan + UBSan). **Page-body (pager) compression is
+  deferred to slice 2.**
+
 ### Fixed
 
 - **Five more unguarded `(float)` narrowing casts in `src/cdb_math.c` hardened

@@ -266,6 +266,20 @@ static void own_mark_committed(cdb_db *db)
 
 /* -------------------------------------------------------- journal */
 
+/* #75: wires a journal's body-compression state after it is created or opened.
+ * codec_env is the database env only when it supplies an allocator (as
+ * doc_codec_mem requires); compression keys off the existing cfg.doc_compress
+ * with no new config field; page_size gates worth-trying. With no allocator or
+ * doc_compress off the journal falls open to raw, today's behaviour. */
+static void journal_setup_codec(cdb_db *db, cdb_journal *j)
+{
+    j->codec_env = NULL;
+    if (db->env.ops != NULL && db->env.ops->alloc != NULL && db->env.ops->free != NULL)
+        j->codec_env = &db->env;
+    j->compress = db->cfg.doc_compress != 0;
+    j->page_size = db->pager.page_size;
+}
+
 /* Creates an empty journal file at path, writes its header and syncs it.
  * The new file becomes db->journal / db->journal_st. unsealed_seq is the
  * archive committed sequence this journal's records will apply on top of
@@ -286,6 +300,7 @@ static cdb_status new_journal(cdb_db *db, const char *path, uint64_t unsealed_se
         return s;
     if ((s = cdb_journal_create(&db->journal, &db->journal_st, db->pager.order, &jh)) != CDB_OK)
         return s;
+    journal_setup_codec(db, &db->journal);
     return cdb_storage_sync(&db->journal_st);
 }
 
@@ -831,6 +846,8 @@ static cdb_status open_journal(cdb_db *db, unsigned slot)
         return s;
     if ((s = cdb_journal_open(&db->rj, &db->rj_st, db->pager.order)) != CDB_OK)
         cdb_storage_close(&db->rj_st);
+    else
+        journal_setup_codec(db, &db->rj); /* #75: enable body (de)compression on the recovery journal */
     return s;
 }
 
