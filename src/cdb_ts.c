@@ -789,7 +789,7 @@ static cdb_status ts_series_in(cdb_db *db, uint64_t store, const char *name, siz
 
 /* #63 Item 1 (FR1/FR2): creating a time-series series is a schema event, so
  * record a redacted CDB_AUDIT_SCHEMA carrying only the store and the new series
- * id (never tags/field values, master §5). Mirrors db_governance_audit and the
+ * id (never tags/field values). Mirrors db_governance_audit and the
  * COLLISION emit (collided() above): fire whenever the audit log is persistable
  * (has_catalog), attributed to the active principal when one is registered and
  * to principal_id=0 (unattributed) otherwise. Gating the whole emission on

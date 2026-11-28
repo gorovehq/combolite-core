@@ -890,7 +890,7 @@ static int goes_first(const struct jcursor *a, const struct jcursor *b)
 
 /* Sub-operation markers for redacted governance audit payloads (spec 12.7).
  * Only this 1-byte marker (or, for SCHEMA, the new version number) is logged —
- * never key material, schema bodies, or PII (master §5). */
+ * never key material, schema bodies, or PII. */
 #define CDB_GOV_SUBOP_MASTER_KEY 1u
 #define CDB_GOV_SUBOP_BATON_ACQUIRE 1u
 #define CDB_GOV_SUBOP_REVISION 1u
@@ -3766,7 +3766,7 @@ static cdb_status db_add_schema_in(cdb_db *db, uint64_t store_id, const void *sc
     s = finish_archive_op(db, cdb_catalog_add_schema(&db->catalog, store_id, schema, len, version));
     /* FR3/AC7 (spec 12.7): a schema change is a governance event. Record a
      * redacted SCHEMA event carrying only the store and the new version number
-     * (never the schema body, master §5), attributed to the governing principal
+     * (never the schema body), attributed to the governing principal
      * when one is registered and to principal_id=0 otherwise (F1, #37 review:
      * emit unconditionally when persistable, never gate on has_identity).
      * Best-effort, after the change has committed. */
@@ -4449,7 +4449,7 @@ static cdb_status db_rotate_master_key_in(cdb_db *db, const char *new_master_key
 
     /* FR3/AC5 (spec 12.7): a master-key rotation is a governance event. Record
      * a redacted KEY_OP in the audit series — NO key material, only a sub-op
-     * marker (master §5). Attributed-governance scope: emitted when a principal
+     * marker. Attributed-governance scope: emitted when a principal
      * identity governs the database (the audit event is attributed to it);
      * best-effort so a failed audit append cannot undo a completed rotation. */
     db_governance_audit(db, CDB_AUDIT_KEY_OP, 0, 0, CDB_GOV_SUBOP_MASTER_KEY);
