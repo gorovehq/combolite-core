@@ -43,3 +43,6 @@ core.*
 *~
 .idea/
 .vscode/
+
+# External tooling config (kept outside the product repo)
+.jev/
